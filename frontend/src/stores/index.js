@@ -16,7 +16,7 @@ export const useMainStore = defineStore('main', {
     params: {},
     batchMode: false,
     selectedNodeIds: [],
-    taskOrder: [],
+    taskNodesCache: {},  // { taskId: [node, ...] }
     currentContext: {
       windowTitle: '',
       isEmulator: false,
@@ -40,7 +40,27 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // 工作区
+    // 加载任务节点列表（用于跳转配置）
+    async loadTaskNodes(taskId) {
+      if (!taskId) return []
+      if (this.taskNodesCache[taskId]) return this.taskNodesCache[taskId]
+      try {
+        const res = await axios.get(`/api/projects/${this.currentProject}/tasks/${taskId}`)
+        const nodes = res.data.nodes || []
+        this.taskNodesCache[taskId] = nodes
+        return nodes
+      } catch (err) {
+        console.error('加载任务节点失败', err)
+        return []
+      }
+    },
+
+    // 清空缓存
+    clearTaskNodesCache() {
+      this.taskNodesCache = {}
+    },
+
+    // 工作区管理
     async setWorkspaceRoot() {
       if (!window.showDirectoryPicker) {
         ElMessage.error('当前浏览器不支持选择文件夹，请使用 Chrome/Edge 93+')
@@ -131,13 +151,13 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // 在 loadTasks 中
     async loadTasks() {
       if (!this.currentProject) return
       try {
         const res = await axios.get(`/api/projects/${this.currentProject}/tasks`)
         this.tasks = res.data.tasks || []
-        this.taskOrder = res.data.order || []   // 保存顺序
+        this.taskOrder = res.data.order || []
+        this.clearTaskNodesCache()
         if (this.tasks.length) {
           this.currentTaskId = this.tasks[0].task_id
           await this.loadTaskData(this.currentTaskId)
@@ -156,19 +176,17 @@ export const useMainStore = defineStore('main', {
     async loadTaskData(taskId) {
       if (!this.currentProject || !taskId) return
       try {
-        console.log('请求任务数据:', taskId)
         const res = await axios.get(`/api/projects/${this.currentProject}/tasks/${taskId}`)
-        console.log('任务数据返回:', res.data)
         this.currentTaskData = res.data
         this.nodes = res.data.nodes || []
         this.currentTaskId = taskId
-        console.log('节点列表已更新，数量:', this.nodes.length)
       } catch (err) {
         console.error('加载任务数据失败', err)
         this.currentTaskData = null
         this.nodes = []
       }
     },
+
     async saveCurrentTask(noReload = false) {
       if (!this.currentProject || !this.currentTaskId || !this.currentTaskData) {
         console.warn('没有可保存的任务')
@@ -228,12 +246,10 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // 节点操作
     selectNode(nodeId) {
       this.selectedNodeId = nodeId
     },
 
-    // 批量操作
     toggleBatchMode() {
       this.batchMode = !this.batchMode
       if (!this.batchMode) {
@@ -293,7 +309,6 @@ export const useMainStore = defineStore('main', {
       this.batchMode = false
     },
 
-    // 上下文
     setCurrentContext(context) {
       this.currentContext = { ...this.currentContext, ...context }
     },
@@ -307,6 +322,7 @@ export const useMainStore = defineStore('main', {
       this.currentTaskData = null
       this.nodes = []
       this.selectedNodeId = null
+      this.clearTaskNodesCache()
     }
   },
   getters: {

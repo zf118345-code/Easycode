@@ -12,8 +12,6 @@
     <div class="footer-right">
       <span>⚡ 执行状态: 空闲</span>
     </div>
-
-    <!-- 工作面板设置对话框 -->
     <PanelSettingsDialog v-model:visible="dialogVisible" />
   </footer>
 </template>
@@ -26,9 +24,7 @@ import PanelSettingsDialog from './PanelSettingsDialog.vue'
 export default {
   components: { Monitor, PanelSettingsDialog },
   data() {
-    return {
-      dialogVisible: false
-    }
+    return { dialogVisible: false }
   },
   setup() {
     const store = useMainStore()
@@ -41,7 +37,7 @@ export default {
     panelStatus() {
       const ctx = this.store.currentContext
       if (ctx && ctx.windowTitle) {
-        let label = ctx.isEmulator ? '📱' : '🪟'
+        const label = ctx.isEmulator ? '📱' : '🪟'
         return `${label} 工作面板：${ctx.windowTitle}`
       }
       return '🖥️ 工作面板：Windows 桌面'

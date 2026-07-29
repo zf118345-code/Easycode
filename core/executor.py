@@ -6,7 +6,7 @@ import shutil
 from core.registry import NodeExecutorRegistry
 from core.models import Task, Node, Jump
 
-logger = logging.getLogger("GraphExecutor")
+logger = logging.getLogger(__name__)
 
 class GraphExecutor:
     def __init__(self, project, text_log_enabled=True, image_log_enabled=True):

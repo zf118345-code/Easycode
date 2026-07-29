@@ -154,7 +154,6 @@ export default {
     return {
       dialogVisible: false,
       newTaskName: '',
-      // 编辑状态
       editingName: null,
       editNameValue: '',
       editingInterval: null,
@@ -251,6 +250,7 @@ export default {
     async saveTask() {
       try {
         await this.store.saveCurrentTask()
+        ElMessage.success('任务属性已保存')
       } catch (err) {
         ElMessage.error('保存失败')
       }
@@ -325,7 +325,7 @@ export default {
         await axios.post(`/api/projects/${this.store.currentProject}/tasks`, { task_data: data })
         ElMessage.success('任务已复制')
         await this.store.loadTasks()
-        await this.store.loadTaskOrder()
+        // 保留顺序需要重新加载 order（但这里我们通过 store.loadTasks 会重新加载）
       } catch (err) {
         ElMessage.error('复制失败')
       }
@@ -341,7 +341,7 @@ export default {
         ElMessage.info('任务执行中...')
         const res = await axios.post(`/api/projects/${project}/run`, {
           task_id: taskId,
-          start_node_id: null  // 或者不传这个字段，但后端可能要求
+          start_node_id: null
         })
         if (res.data.status === 'success') {
           ElMessage.success('任务执行完成')
@@ -373,6 +373,7 @@ export default {
   border-radius: 4px;
   overflow: hidden;
 }
+
 .panel-header {
   display: flex;
   justify-content: space-between;
@@ -386,6 +387,7 @@ export default {
   border-bottom: 1px solid #3d3d5a;
   flex-shrink: 0;
 }
+
 .task-list {
   flex: 1;
   list-style: none;
@@ -393,6 +395,8 @@ export default {
   padding: 4px 0;
   overflow-y: auto;
 }
+
+/* 任务卡片样式 */
 .task-card {
   background: #3d3d5a;
   margin: 4px 8px;
@@ -406,28 +410,33 @@ export default {
   border-color: #409EFF;
   background: #4a4a6a;
 }
+
 .task-row {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 4px;
 }
+
 .task-name-area {
   display: flex;
   align-items: center;
   gap: 6px;
   flex: 1;
 }
+
 .task-name {
   color: #cfd3e6;
   font-size: 14px;
   font-weight: 500;
 }
+
 .task-actions {
   display: flex;
   align-items: center;
   gap: 2px;
 }
+
 .action-icon {
   color: #8a8fa8;
   padding: 4px;
@@ -451,6 +460,7 @@ export default {
 .drag-handle:hover {
   color: #cfd3e6;
 }
+
 .task-meta-row {
   display: flex;
   justify-content: space-between;
@@ -459,18 +469,22 @@ export default {
   color: #8a8fa8;
   margin-top: 2px;
 }
+
 .meta-item {
   display: flex;
   align-items: center;
   gap: 4px;
 }
+
 .meta-label {
   color: #6a6a8a;
 }
+
 .meta-value {
   color: #cfd3e6;
   cursor: default;
 }
+
 .inline-input {
   width: 50px;
   height: 22px;
@@ -480,6 +494,7 @@ export default {
   padding: 0 4px;
   font-size: 12px;
 }
+
 /* 编辑按钮默认隐藏，悬停时显示 */
 .edit-icon,
 .meta-edit-icon {
@@ -497,6 +512,7 @@ export default {
 .meta-edit-icon:hover {
   color: #cfd3e6;
 }
+
 .empty {
   flex: 1;
   display: flex;

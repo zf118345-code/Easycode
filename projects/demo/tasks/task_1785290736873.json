@@ -73,6 +73,35 @@
         "return_on_complete": false
       },
       "position": null
+    },
+    {
+      "node_id": "node_1785328834698",
+      "node_name": "鼠标点击",
+      "node_type": "click",
+      "params": {
+        "position": [
+          0,
+          0
+        ],
+        "is_relative": true,
+        "button": "left"
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
     }
   ]
 }

@@ -9,7 +9,9 @@
   >
     <el-form :model="localContext" label-width="100px" size="small">
       <el-form-item label="窗口标题">
-        <el-input v-model="localContext.windowTitle" placeholder="输入窗口标题（为空则使用桌面）" />
+        <el-select v-model="localContext.windowTitle" filterable placeholder="选择或输入窗口标题" @focus="fetchWindows">
+          <el-option v-for="w in windowList" :key="w.hwnd" :label="w.title" :value="w.title" />
+        </el-select>
       </el-form-item>
       <el-form-item label="模拟器模式">
         <el-switch v-model="localContext.isEmulator" />
@@ -42,35 +44,37 @@
 import { useMainStore } from '@/stores'
 import { ref, watch, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
 
 export default {
   name: 'PanelSettingsDialog',
-  props: {
-    visible: {
-      type: Boolean,
-      default: false
-    }
-  },
+  props: { visible: { type: Boolean, default: false } },
   emits: ['update:visible'],
   setup(props, { emit }) {
     const store = useMainStore()
     const localContext = ref({ ...store.currentContext })
+    const windowList = ref([])
 
-    // 计算属性用于 el-dialog 的 v-model
     const dialogVisible = computed({
       get: () => props.visible,
       set: (val) => emit('update:visible', val)
     })
 
-    // 当对话框打开时，从 store 加载当前上下文
-    watch(
-      () => props.visible,
-      (val) => {
-        if (val) {
-          localContext.value = { ...store.currentContext }
-        }
+    watch(() => props.visible, (val) => {
+      if (val) {
+        localContext.value = { ...store.currentContext }
+        fetchWindows()
       }
-    )
+    })
+
+    const fetchWindows = async () => {
+      try {
+        const res = await axios.get('/api/windows')
+        windowList.value = res.data.windows || []
+      } catch (err) {
+        console.error('获取窗口列表失败', err)
+      }
+    }
 
     const applyContext = () => {
       store.setCurrentContext(localContext.value)
@@ -78,16 +82,9 @@ export default {
       dialogVisible.value = false
     }
 
-    const onClose = () => {
-      dialogVisible.value = false
-    }
+    const onClose = () => { dialogVisible.value = false }
 
-    return {
-      localContext,
-      dialogVisible,
-      applyContext,
-      onClose
-    }
+    return { localContext, dialogVisible, windowList, applyContext, onClose, fetchWindows }
   }
 }
 </script>

@@ -1,25 +1,16 @@
 <template>
   <div class="node-list-panel">
-    <!-- 顶部工具栏 -->
     <div class="panel-header">
       <span class="title">节点列表</span>
       <div class="header-actions">
-        <el-button
-          size="small"
-          :type="store.batchMode ? 'primary' : 'default'"
-          @click="store.toggleBatchMode()"
-        >
+        <el-button size="small" :type="store.batchMode ? 'primary' : 'default'" @click="store.toggleBatchMode()">
           {{ store.batchMode ? '退出批量' : '批量操作' }}
         </el-button>
         <el-dropdown @command="createNode">
           <el-button size="small" type="primary"> + 新建 <el-icon><ArrowDown /></el-icon> </el-button>
           <template #dropdown>
             <el-dropdown-menu>
-              <el-dropdown-item
-                v-for="(def, type) in store.params"
-                :key="type"
-                :command="type"
-              >
+              <el-dropdown-item v-for="(def, type) in store.params" :key="type" :command="type">
                 {{ def.label || type }}
               </el-dropdown-item>
             </el-dropdown-menu>
@@ -28,7 +19,6 @@
       </div>
     </div>
 
-    <!-- 批量工具栏 -->
     <div v-if="store.batchMode" class="batch-toolbar">
       <el-checkbox :model-value="selectAll" @change="store.selectAllNodes()">全选</el-checkbox>
       <span class="batch-info">已选 {{ store.selectedNodeIds.length }} 个节点</span>
@@ -36,110 +26,41 @@
       <el-button size="small" type="danger" @click="store.batchDeleteNodes()">🗑 批量删除</el-button>
     </div>
 
-    <!-- 节点列表 -->
-    <draggable
-      v-model="store.nodes"
-      item-key="node_id"
-      class="node-list"
-      handle=".drag-handle"
-      @end="onDragEnd"
-    >
+    <draggable v-model="store.nodes" item-key="node_id" class="node-list" handle=".drag-handle" @end="onDragEnd">
       <template #item="{ element: node, index }">
-        <div
-          class="node-item"
-          :class="{
-            active: store.selectedNodeId === node.node_id,
-            'batch-mode': store.batchMode
-          }"
-          @click="store.selectNode(node.node_id)"
-        >
-          <!-- 批量复选框 -->
-          <el-checkbox
-            v-if="store.batchMode"
-            :model-value="store.selectedNodeIds.includes(node.node_id)"
-            @change.stop="store.toggleNodeSelection(node.node_id)"
-            class="batch-checkbox"
-          />
-
-          <!-- 第一行：延迟 + 循环 -->
+        <div class="node-item" :class="{ active: store.selectedNodeId === node.node_id, 'batch-mode': store.batchMode }" @click="store.selectNode(node.node_id)">
+          <el-checkbox v-if="store.batchMode" :model-value="store.selectedNodeIds.includes(node.node_id)" @change.stop="store.toggleNodeSelection(node.node_id)" class="batch-checkbox" />
           <div class="node-row first-row">
             <div class="left-group">
               <el-icon><Timer /></el-icon>
               <span class="label">延迟：</span>
-              <span v-if="editingDelay !== node.node_id" class="value" @dblclick="startEditDelay(node)">
-                {{ node.delay_before }} ms
-              </span>
-              <el-input
-                v-else
-                v-model="editDelayValue"
-                size="small"
-                type="number"
-                @blur="finishEditDelay(node)"
-                @keyup.enter="finishEditDelay(node)"
-                class="inline-input"
-                ref="delayInput"
-              />
-              <el-button link size="small" class="edit-icon" @click.stop="startEditDelay(node)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
+              <span v-if="editingDelay !== node.node_id" class="value" @dblclick="startEditDelay(node)">{{ node.delay_before }} ms</span>
+              <el-input v-else v-model="editDelayValue" size="small" type="number" @blur="finishEditDelay(node)" @keyup.enter="finishEditDelay(node)" class="inline-input" ref="delayInput" />
+              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditDelay(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
             <div class="right-group">
               <span class="label">循环：</span>
-              <span v-if="editingLoop !== node.node_id" class="value" @dblclick="startEditLoop(node)">
-                {{ node.loop_count === -1 ? '无限' : node.loop_count }}
-              </span>
-              <el-input
-                v-else
-                v-model="editLoopValue"
-                size="small"
-                type="number"
-                @blur="finishEditLoop(node)"
-                @keyup.enter="finishEditLoop(node)"
-                class="inline-input"
-                ref="loopInput"
-              />
-              <el-button link size="small" class="edit-icon" @click.stop="startEditLoop(node)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
+              <span v-if="editingLoop !== node.node_id" class="value" @dblclick="startEditLoop(node)">{{ node.loop_count === -1 ? '无限' : node.loop_count }}</span>
+              <el-input v-else v-model="editLoopValue" size="small" type="number" @blur="finishEditLoop(node)" @keyup.enter="finishEditLoop(node)" class="inline-input" ref="loopInput" />
+              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditLoop(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
           </div>
-
-          <!-- 第二行：序号 + 图标 + 名称 + 操作 -->
           <div class="node-row second-row">
             <div class="left-group">
               <span class="index">{{ index + 1 }}.</span>
-              <el-icon class="node-icon" :style="{ color: getNodeColor(node.node_type) }">
-                <component :is="getNodeIcon(node.node_type)" />
-              </el-icon>
-              <span v-if="editingName !== node.node_id" class="node-name" @dblclick="startEditName(node)">
-                {{ node.node_name }}
-              </span>
-              <el-input
-                v-else
-                v-model="editNameValue"
-                size="small"
-                maxlength="10"
-                @blur="finishEditName(node)"
-                @keyup.enter="finishEditName(node)"
-                class="inline-input"
-                ref="nameInput"
-              />
-              <el-button link size="small" class="edit-icon" @click.stop="startEditName(node)">
-                <el-icon><Edit /></el-icon>
-              </el-button>
+              <el-icon class="node-icon" :style="{ color: getNodeColor(node.node_type) }"><component :is="getNodeIcon(node.node_type)" /></el-icon>
+              <span v-if="editingName !== node.node_id" class="node-name" @dblclick="startEditName(node)">{{ node.node_name }}</span>
+              <el-input v-else v-model="editNameValue" size="small" maxlength="10" @blur="finishEditName(node)" @keyup.enter="finishEditName(node)" class="inline-input" ref="nameInput" />
+              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditName(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
             <div class="right-group">
               <el-icon class="drag-handle"><Rank /></el-icon>
               <el-dropdown @command="(cmd) => handleNodeMenu(cmd, node)">
-                <el-button link size="small">
-                  <el-icon><More /></el-icon>
-                </el-button>
+                <el-button type="text" size="small"><el-icon><More /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="run">▶ 从当前节点执行</el-dropdown-item>
-                    <el-dropdown-item command="disable">
-                      {{ node.enabled ? '⏸ 禁用节点' : '▶ 启用节点' }}
-                    </el-dropdown-item>
+                    <el-dropdown-item command="disable">{{ node.enabled ? '⏸ 禁用节点' : '▶ 启用节点' }}</el-dropdown-item>
                     <el-dropdown-item divided command="delete">🗑 删除节点</el-dropdown-item>
                   </el-dropdown-menu>
                 </template>
@@ -149,10 +70,8 @@
         </div>
       </template>
     </draggable>
-
     <div v-if="!store.nodes.length" class="empty">暂无节点</div>
 
-    <!-- 批量延迟对话框 -->
     <el-dialog title="批量设置延迟" v-model="batchDelayDialog" width="400px" append-to-body>
       <el-form>
         <el-form-item label="延迟(ms)">
@@ -171,31 +90,21 @@
 import draggable from 'vuedraggable'
 import { useMainStore } from '@/stores'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  Timer, Edit, Rank, More, ArrowDown,
-  Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting
-} from '@element-plus/icons-vue'
+import { Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting } from '@element-plus/icons-vue'
+import axios from 'axios'
 
 export default {
-  components: {
-    draggable,
-    Timer, Edit, Rank, More, ArrowDown,
-    Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting
-  },
+  components: { draggable, Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting },
   setup() {
     const store = useMainStore()
     return { store }
   },
   data() {
     return {
-      editingName: null,
-      editNameValue: '',
-      editingDelay: null,
-      editDelayValue: '',
-      editingLoop: null,
-      editLoopValue: '',
-      batchDelayDialog: false,
-      batchDelayValue: 0,
+      editingName: null, editNameValue: '',
+      editingDelay: null, editDelayValue: '',
+      editingLoop: null, editLoopValue: '',
+      batchDelayDialog: false, batchDelayValue: 0
     }
   },
   computed: {
@@ -205,164 +114,82 @@ export default {
         const selected = this.store.selectedNodeIds || []
         return nodes.length > 0 && selected.length === nodes.length
       },
-      set(val) {
-        this.store.selectAllNodes()
-      }
+      set(val) { this.store.selectAllNodes() }
     }
   },
   watch: {
-    'store.batchMode'(val) {
-      if (!val) this.store.selectedNodeIds = []
-    }
+    'store.batchMode'(val) { if (!val) this.store.selectedNodeIds = [] }
   },
   methods: {
     getNodeIcon(type) {
-      const map = {
-        click: 'Position',
-        wait: 'Clock',
-        log: 'Document',
-        set_window: 'Folder',
-        resize_window: 'Grid',
-        reset_window: 'Setting',
-        image_recognition: 'Search',
-        branch: 'Share',
-        script_call: 'VideoPlay'
-      }
+      const map = { click: 'Position', wait: 'Clock', log: 'Document', set_window: 'Folder', resize_window: 'Grid', reset_window: 'Setting', image_recognition: 'Search', branch: 'Share', script_call: 'VideoPlay' }
       return map[type] || 'Document'
     },
     getNodeColor(type) {
-      const map = {
-        click: '#409EFF',
-        wait: '#E6A23C',
-        log: '#909399',
-        set_window: '#67C23A',
-        resize_window: '#67C23A',
-        reset_window: '#67C23A',
-        image_recognition: '#F56C6C',
-        branch: '#9B59B6',
-        script_call: '#1ABC9C'
-      }
+      const map = { click: '#409EFF', wait: '#E6A23C', log: '#909399', set_window: '#67C23A', resize_window: '#67C23A', reset_window: '#67C23A', image_recognition: '#F56C6C', branch: '#9B59B6', script_call: '#1ABC9C' }
       return map[type] || '#909399'
     },
-
     startEditName(node) {
       this.editingName = node.node_id
       this.editNameValue = node.node_name
-      this.$nextTick(() => {
-        const input = this.$refs.nameInput
-        if (input) input.focus()
-      })
+      this.$nextTick(() => { const input = this.$refs.nameInput; if (input) input.focus() })
     },
     finishEditName(node) {
       const name = this.editNameValue.trim()
-      if (name.length > 10) {
-        ElMessage.warning('节点名称不能超过10个字符')
-        this.editingName = null
-        return
-      }
-      if (name) {
-        node.node_name = name
-        this.saveNode(node)
-      }
+      if (name.length > 10) { ElMessage.warning('节点名称不能超过10个字符'); this.editingName = null; return }
+      if (name) { node.node_name = name; this.saveNode(node) }
       this.editingName = null
     },
-
     startEditDelay(node) {
-      this.editingDelay = node.node_id
-      this.editDelayValue = node.delay_before
-      this.$nextTick(() => {
-        const input = this.$refs.delayInput
-        if (input) input.focus()
-      })
+      this.editingDelay = node.node_id; this.editDelayValue = node.delay_before
+      this.$nextTick(() => { const input = this.$refs.delayInput; if (input) input.focus() })
     },
     finishEditDelay(node) {
-      let val = parseInt(this.editDelayValue)
-      if (isNaN(val) || val < 0) val = 0
-      node.delay_before = val
-      this.saveNode(node)
-      this.editingDelay = null
+      let val = parseInt(this.editDelayValue); if (isNaN(val) || val < 0) val = 0
+      node.delay_before = val; this.saveNode(node); this.editingDelay = null
     },
-
     startEditLoop(node) {
-      this.editingLoop = node.node_id
-      this.editLoopValue = node.loop_count
-      this.$nextTick(() => {
-        const input = this.$refs.loopInput
-        if (input) input.focus()
-      })
+      this.editingLoop = node.node_id; this.editLoopValue = node.loop_count
+      this.$nextTick(() => { const input = this.$refs.loopInput; if (input) input.focus() })
     },
     finishEditLoop(node) {
-      let val = parseInt(this.editLoopValue)
-      if (isNaN(val) || val < -1) val = 1
-      node.loop_count = val
-      this.saveNode(node)
-      this.editingLoop = null
+      let val = parseInt(this.editLoopValue); if (isNaN(val) || val < -1) val = 1
+      node.loop_count = val; this.saveNode(node); this.editingLoop = null
     },
-
     async saveNode(node) {
       try {
         const taskData = this.store.currentTaskData
         if (taskData) {
           const target = taskData.nodes.find(n => n.node_id === node.node_id)
-          if (target) {
-            Object.assign(target, {
-              node_name: node.node_name,
-              delay_before: node.delay_before,
-              loop_count: node.loop_count,
-              enabled: node.enabled,
-              params: node.params
-            })
-          }
+          if (target) Object.assign(target, { node_name: node.node_name, delay_before: node.delay_before, loop_count: node.loop_count, enabled: node.enabled, params: node.params })
           await this.store.saveCurrentTask(true)
         }
-      } catch (err) {
-        console.error('保存节点失败', err)
-        ElMessage.error('保存失败')
-      }
+      } catch (err) { console.error('保存节点失败', err); ElMessage.error('保存失败') }
     },
-
     async onDragEnd() {
-      console.log('节点拖拽结束，当前顺序:', this.store.nodes.map(n => n.node_id))
-      const taskData = this.store.currentTaskData
-      if (taskData) {
-        taskData.nodes = this.store.nodes
-        await this.store.saveCurrentTask(true)
-      }
+      try {
+        const taskData = this.store.currentTaskData
+        if (taskData) { taskData.nodes = this.store.nodes; await this.store.saveCurrentTask(true) }
+      } catch (err) { console.error('拖拽排序失败', err); ElMessage.error('保存顺序失败') }
     },
-
     handleNodeMenu(command, node) {
       switch (command) {
         case 'run': this.runFromNode(node); break
-        case 'disable':
-          node.enabled = !node.enabled
-          this.saveNode(node)
-          break
+        case 'disable': node.enabled = !node.enabled; this.saveNode(node); break
         case 'delete': this.deleteNode(node); break
       }
     },
     async runFromNode(node) {
-  const project = this.store.currentProject
-  const taskId = this.store.currentTaskId
-  if (!project || !taskId) {
-    ElMessage.warning('请先选择项目和任务')
-    return
-  }
-  try {
-    ElMessage.info(`从节点 ${node.node_name} 开始执行...`)
-    const res = await axios.post(`/api/projects/${project}/run`, {
-      task_id: taskId,
-      start_node_id: node.node_id
-    })
-    if (res.data.status === 'success') {
-      ElMessage.success('执行完成')
-    } else {
-      ElMessage.error('执行失败: ' + (res.data.message || '未知错误'))
-    }
-  } catch (err) {
-    console.error('执行错误', err)
-    ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message))
-  }
-},
+      const project = this.store.currentProject
+      const taskId = this.store.currentTaskId
+      if (!project || !taskId) { ElMessage.warning('请先选择项目和任务'); return }
+      try {
+        ElMessage.info(`从节点 ${node.node_name} 开始执行...`)
+        const res = await axios.post(`/api/projects/${project}/run`, { task_id: taskId, start_node_id: node.node_id })
+        if (res.data.status === 'success') { ElMessage.success('执行完成') }
+        else { ElMessage.error('执行失败: ' + (res.data.message || '未知错误')) }
+      } catch (err) { ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message)); console.error(err) }
+    },
     async deleteNode(node) {
       try {
         await ElMessageBox.confirm(`确定要删除节点 "${node.node_name}" 吗？`, '确认删除', { type: 'warning' })
@@ -370,26 +197,15 @@ export default {
         if (idx > -1) {
           this.store.nodes.splice(idx, 1)
           const taskData = this.store.currentTaskData
-          if (taskData) {
-            taskData.nodes = this.store.nodes
-            await this.store.saveCurrentTask(true)
-          }
-          if (this.store.selectedNodeId === node.node_id) {
-            this.store.selectNode(null)
-          }
+          if (taskData) { taskData.nodes = this.store.nodes; await this.store.saveCurrentTask(true) }
+          if (this.store.selectedNodeId === node.node_id) this.store.selectNode(null)
           ElMessage.success('节点已删除')
         }
-      } catch (err) {
-        if (err !== 'cancel') console.error('删除失败', err)
-      }
+      } catch (err) { if (err !== 'cancel') console.error('删除失败', err) }
     },
-
     async createNode(nodeType) {
       const def = this.store.params[nodeType]
-      if (!def) {
-        ElMessage.warning(`未知节点类型: ${nodeType}`)
-        return
-      }
+      if (!def) { ElMessage.warning(`未知节点类型: ${nodeType}`); return }
       const nodeId = `node_${Date.now()}`
       const newNode = {
         node_id: nodeId,
@@ -405,38 +221,26 @@ export default {
       }
       const nodeDefaults = this.store.params[nodeType]?.params || {}
       for (const [key, config] of Object.entries(nodeDefaults)) {
-        if (config.default !== undefined) {
-          newNode.params[key] = config.default
-        } else if (config.type === 'dict') {
+        if (config.default !== undefined) { newNode.params[key] = config.default }
+        else if (config.type === 'dict') {
           const subDefaults = {}
           for (const [subKey, subConfig] of Object.entries(config.sub || {})) {
             if (subConfig.default !== undefined) subDefaults[subKey] = subConfig.default
           }
           if (Object.keys(subDefaults).length) newNode.params[key] = subDefaults
-        } else if (config.type === 'list_dict') {
-          newNode.params[key] = []
-        }
+        } else if (config.type === 'list_dict') { newNode.params[key] = [] }
       }
       this.store.nodes.push(newNode)
       const taskData = this.store.currentTaskData
-      if (taskData) {
-        taskData.nodes = this.store.nodes
-        await this.store.saveCurrentTask(true)
-      }
+      if (taskData) { taskData.nodes = this.store.nodes; await this.store.saveCurrentTask(true) }
       ElMessage.success(`已添加节点: ${newNode.node_name}`)
     },
-
-    showBatchDelayDialog() {
-      this.batchDelayValue = 0
-      this.batchDelayDialog = true
-    },
-    async confirmBatchDelay() {
-      await this.store.batchSetDelay(this.batchDelayValue)
-      this.batchDelayDialog = false
-    }
+    showBatchDelayDialog() { this.batchDelayValue = 0; this.batchDelayDialog = true },
+    async confirmBatchDelay() { await this.store.batchSetDelay(this.batchDelayValue); this.batchDelayDialog = false }
   }
 }
 </script>
+
 
 <style scoped>
 .node-list-panel {
