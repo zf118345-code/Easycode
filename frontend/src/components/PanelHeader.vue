@@ -1,0 +1,48 @@
+<template>
+  <div class="panel-header">
+    <span class="title">{{ title }}</span>
+    <div class="actions">
+      <el-dropdown
+        v-for="(action, idx) in actions"
+        :key="idx"
+        trigger="click"
+        @command="(cmd) => $emit('action', { panelId, method: cmd })"
+      >
+        <el-button :icon="action.icon" size="small" circle />
+        <el-dropdown-menu slot="dropdown">
+          <el-dropdown-item v-for="item in action.items" :key="item.label" :command="item.method">
+            {{ item.label }}
+          </el-dropdown-item>
+        </el-dropdown-menu>
+      </el-dropdown>
+    </div>
+  </div>
+</template>
+
+<script>
+export default {
+  props: ['title', 'actions', 'panelId']
+}
+</script>
+
+<style scoped>
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36px;
+  padding: 0 12px;
+  background: #32324a;
+  border-radius: 4px 4px 0 0;
+  flex-shrink: 0;
+}
+.title {
+  color: #cfd3e6;
+  font-weight: 500;
+  font-size: 13px;
+}
+.actions {
+  display: flex;
+  gap: 4px;
+}
+</style>

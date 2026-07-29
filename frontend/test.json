@@ -1,0 +1,31 @@
+{
+  "title": "节点列表",
+  "action_list":[
+    {
+      "icon": "add",
+      "list": [
+        {
+          "label": "在当前节点后新建",
+          "method": "createNode(参数)"
+        },
+        {
+          "label": "在最后位置新建",
+          "method": "createNode(最后)"
+        }
+      ]
+    },
+    {
+      "icon": "checkbox",
+      "list": [
+        {
+          "label": "（举例）多选模式",
+          "method": "SetValue(xxx)"
+        },
+        {
+          "label": "（举例）打开窗口",
+          "method": "callwindow(设置页面)"
+        }
+      ]
+    }
+  ]
+}

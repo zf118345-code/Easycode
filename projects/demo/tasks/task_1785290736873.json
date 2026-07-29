@@ -1,0 +1,78 @@
+{
+  "task_id": "task_1785290736873",
+  "task_name": "扫荡试炼塔",
+  "loop_count": 2,
+  "loop_interval": 4,
+  "nodes": [
+    {
+      "node_id": "node_1785323133713",
+      "node_name": "图像识别",
+      "node_type": "image_recognition",
+      "params": {
+        "image_source": "EnterPage/SelfModel_Tower",
+        "region_type": "fullwindow",
+        "region_value": [
+          690,
+          200,
+          150,
+          350
+        ],
+        "region_is_relative": true,
+        "threshold": 85,
+        "timeout": 3000,
+        "gray_scale": false,
+        "on_success_action": "click_center",
+        "on_success": {
+          "type": "next",
+          "target": "",
+          "target_node": ""
+        },
+        "on_failure": {
+          "type": "next",
+          "target": "",
+          "target_node": ""
+        }
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    },
+    {
+      "node_id": "node_1785323226705",
+      "node_name": "日志输出",
+      "node_type": "log",
+      "params": {
+        "message": "测试一下"
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    }
+  ]
+}

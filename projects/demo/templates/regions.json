@@ -1,0 +1,62 @@
+{
+  "EnterPage/SelfModel": [
+    970,
+    140,
+    140,
+    140
+  ],
+  "EnterPage/PkModel": [
+    750,
+    140,
+    140,
+    140
+  ],
+  "EnterPage/MultiplayerModel": [
+    750,
+    380,
+    140,
+    140
+  ],
+  "EnterPage/SpecialModel": [
+    970,
+    380,
+    140,
+    140
+  ],
+  "EnterPage/SelfModel_Dawn": [
+    380,
+    200,
+    150,
+    350
+  ],
+  "EnterPage/SelfModel_Tower": [
+    690,
+    200,
+    150,
+    350
+  ],
+  "EnterPage/SelfModel_Magic": [
+    1015,
+    200,
+    150,
+    350
+  ],
+  "EnterPage/SelfModel_Void": [
+    390,
+    200,
+    150,
+    350
+  ],
+  "EnterPage/SelfModel_Forget": [
+    715,
+    200,
+    150,
+    350
+  ],
+  "EnterPage/test": [
+    854,
+    470,
+    64,
+    57
+  ]
+}

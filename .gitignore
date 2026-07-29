@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+env/
+*.log
+debug_screenshots/
+*.db
+
+# Node.js
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/*.log
+
+# IDE
+.vscode/
+.idea/
+*.iml
+.DS_Store
+
+# 项目数据（可选）
+projects/
