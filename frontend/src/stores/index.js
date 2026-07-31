@@ -5,9 +5,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 export const useMainStore = defineStore('main', {
   state: () => ({
-    workspaceHandle: null,
-    projects: [],
-    currentProject: null,
+    // ===== 核心：当前项目路径 =====
+    currentProjectPath: localStorage.getItem('currentProjectPath') || null,
+    currentProjectName: null,
+    recentProjects: JSON.parse(localStorage.getItem('recentProjects') || '[]'),
+
+    // ===== 任务相关 =====
     tasks: [],
     currentTaskId: null,
     currentTaskData: null,
@@ -16,7 +19,9 @@ export const useMainStore = defineStore('main', {
     params: {},
     batchMode: false,
     selectedNodeIds: [],
-    taskNodesCache: {},  // { taskId: [node, ...] }
+    taskNodesCache: {},
+
+    // ===== 工作面板上下文 =====
     currentContext: {
       windowTitle: '',
       isEmulator: false,
@@ -29,7 +34,9 @@ export const useMainStore = defineStore('main', {
       offsetRight: 0
     }
   }),
+
   actions: {
+    // ==================== 参数加载 ====================
     async loadParams() {
       if (Object.keys(this.params).length) return
       try {
@@ -40,121 +47,54 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // 加载任务节点列表（用于跳转配置）
-    async loadTaskNodes(taskId) {
-      if (!taskId) return []
-      if (this.taskNodesCache[taskId]) return this.taskNodesCache[taskId]
+    // ==================== 项目加载 ====================
+    async loadProjectByPath(projectPath) {
+      if (!projectPath) {
+        throw new Error('项目路径不能为空')
+      }
+      // 验证路径是否存在
       try {
-        const res = await axios.get(`/api/projects/${this.currentProject}/tasks/${taskId}`)
-        const nodes = res.data.nodes || []
-        this.taskNodesCache[taskId] = nodes
-        return nodes
-      } catch (err) {
-        console.error('加载任务节点失败', err)
-        return []
-      }
-    },
-
-    // 清空缓存
-    clearTaskNodesCache() {
-      this.taskNodesCache = {}
-    },
-
-    // 工作区管理
-    async setWorkspaceRoot() {
-      if (!window.showDirectoryPicker) {
-        ElMessage.error('当前浏览器不支持选择文件夹，请使用 Chrome/Edge 93+')
-        return
-      }
-      try {
-        const handle = await window.showDirectoryPicker({ mode: 'readwrite' })
-        this.workspaceHandle = handle
-        await this.scanProjects()
-        if (this.projects.length) {
-          this.currentProject = this.projects[0]
-          await this.loadProjectData()
-          this.saveWorkspace(handle.name, this.currentProject)
-        }
-        ElMessage.success(`工作区已设置，发现 ${this.projects.length} 个项目`)
-      } catch (err) {
-        if (err.name !== 'AbortError') {
-          ElMessage.error('选择工作区失败: ' + err.message)
-        }
-      }
-    },
-
-    saveWorkspace(workspaceName, projectName) {
-      localStorage.setItem('lastWorkspace', workspaceName)
-      localStorage.setItem('lastProject', projectName)
-    },
-
-    async scanProjects() {
-      if (!this.workspaceHandle) return
-      this.projects = []
-      for await (const [name, handle] of this.workspaceHandle.entries()) {
-        if (handle.kind === 'directory') {
-          try {
-            await handle.getFileHandle('project.json')
-            this.projects.push(name)
-          } catch {}
-        }
-      }
-    },
-
-    async loadProjectData() {
-      if (!this.workspaceHandle || !this.currentProject) return
-      try {
-        const projectHandle = await this.workspaceHandle.getDirectoryHandle(this.currentProject)
-        try {
-          const tasksHandle = await projectHandle.getDirectoryHandle('tasks')
-          await this.uploadDirectory(tasksHandle, this.currentProject, 'tasks')
-        } catch {}
-        try {
-          const templatesHandle = await projectHandle.getDirectoryHandle('templates')
-          await this.uploadDirectory(templatesHandle, this.currentProject, 'templates')
-        } catch {}
-        try {
-          const fileHandle = await projectHandle.getFileHandle('project.json')
-          const file = await fileHandle.getFile()
-          await this.uploadFile(this.currentProject, 'project.json', file)
-        } catch {}
-        await this.loadTasks()
-      } catch (err) {
-        console.error('加载项目数据失败', err)
-        ElMessage.error('加载项目数据失败: ' + err.message)
-      }
-    },
-
-    async uploadDirectory(dirHandle, projectName, relativeBase) {
-      for await (const [name, handle] of dirHandle.entries()) {
-        const relPath = `${relativeBase}/${name}`
-        if (handle.kind === 'directory') {
-          await this.uploadDirectory(handle, projectName, relPath)
-        } else {
-          const file = await handle.getFile()
-          await this.uploadFile(projectName, relPath, file)
-        }
-      }
-    },
-
-    async uploadFile(projectName, relativePath, file) {
-      const formData = new FormData()
-      formData.append('project_name', projectName)
-      formData.append('relative_path', relativePath)
-      formData.append('file', file)
-      try {
-        await axios.post('/api/projects/import/file', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
+        const verifyRes = await axios.get('/api/projects/verify', {
+          params: { project_path: projectPath }
         })
+        if (!verifyRes.data.exists) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
       } catch (err) {
-        console.error(`上传文件失败: ${relativePath}`, err)
+        if (err.response?.status === 404) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
+        throw err
       }
+
+      // 存储路径
+      this.currentProjectPath = projectPath
+      this.currentProjectName = projectPath.split(/[\\/]/).pop()
+      localStorage.setItem('currentProjectPath', projectPath)
+      this.addRecentProject(projectPath, this.currentProjectName)
+
+      // 加载任务数据
+      await this.loadTasks()
+      return true
     },
 
+    // ==================== 最近项目 ====================
+    addRecentProject(path, name) {
+      const entry = { path, name, lastOpened: Date.now() }
+      this.recentProjects = [
+        entry,
+        ...this.recentProjects.filter(p => p.path !== path)
+      ].slice(0, 10)
+      localStorage.setItem('recentProjects', JSON.stringify(this.recentProjects))
+    },
+
+    // ==================== 任务管理 ====================
     async loadTasks() {
-      if (!this.currentProject) return
+      if (!this.currentProjectPath) return
       try {
-        const res = await axios.get(`/api/projects/${this.currentProject}/tasks`)
+        const res = await axios.get('/api/tasks', {
+          params: { project_path: this.currentProjectPath }
+        })
         this.tasks = res.data.tasks || []
         this.taskOrder = res.data.order || []
         this.clearTaskNodesCache()
@@ -174,9 +114,11 @@ export const useMainStore = defineStore('main', {
     },
 
     async loadTaskData(taskId) {
-      if (!this.currentProject || !taskId) return
+      if (!this.currentProjectPath || !taskId) return
       try {
-        const res = await axios.get(`/api/projects/${this.currentProject}/tasks/${taskId}`)
+        const res = await axios.get(`/api/tasks/${taskId}`, {
+          params: { project_path: this.currentProjectPath }
+        })
         this.currentTaskData = res.data
         this.nodes = res.data.nodes || []
         this.currentTaskId = taskId
@@ -188,13 +130,14 @@ export const useMainStore = defineStore('main', {
     },
 
     async saveCurrentTask(noReload = false) {
-      if (!this.currentProject || !this.currentTaskId || !this.currentTaskData) {
+      if (!this.currentProjectPath || !this.currentTaskId || !this.currentTaskData) {
         console.warn('没有可保存的任务')
         return
       }
       try {
         this.currentTaskData.nodes = this.nodes
-        await axios.put(`/api/projects/${this.currentProject}/tasks/${this.currentTaskId}`, {
+        await axios.put(`/api/tasks/${this.currentTaskId}`, {
+          project_path: this.currentProjectPath,
           task_data: this.currentTaskData
         })
         if (!noReload) {
@@ -209,16 +152,19 @@ export const useMainStore = defineStore('main', {
     },
 
     async saveTaskOrder(order) {
-      if (!this.currentProject) return
+      if (!this.currentProjectPath) return
       try {
-        await axios.post(`/api/projects/${this.currentProject}/tasks/order`, { order })
+        await axios.post('/api/tasks/order', {
+          project_path: this.currentProjectPath,
+          order
+        })
       } catch (err) {
         console.error('保存任务顺序失败', err)
       }
     },
 
     async createNewTask(taskName) {
-      if (!this.currentProject) throw new Error('请先选择项目')
+      if (!this.currentProjectPath) throw new Error('请先打开项目')
       if (this.tasks.some(t => t.task_name === taskName)) {
         throw new Error('任务名称已存在')
       }
@@ -229,7 +175,8 @@ export const useMainStore = defineStore('main', {
         nodes: []
       }
       try {
-        const res = await axios.post(`/api/projects/${this.currentProject}/tasks`, {
+        const res = await axios.post('/api/tasks', {
+          project_path: this.currentProjectPath,
           task_data: newTaskData
         })
         await this.loadTasks()
@@ -246,16 +193,115 @@ export const useMainStore = defineStore('main', {
       }
     },
 
+    async deleteTask(taskId) {
+      if (!this.currentProjectPath) return
+      try {
+        await axios.delete(`/api/tasks/${taskId}`, {
+          params: { project_path: this.currentProjectPath }
+        })
+        await this.loadTasks()
+        if (this.tasks.length) {
+          await this.loadTaskData(this.tasks[0].task_id)
+        }
+      } catch (err) {
+        console.error('删除任务失败', err)
+        throw err
+      }
+    },
+
+    // ==================== 执行任务 ====================
+    async runTask(taskId, startNodeId = null) {
+      if (!this.currentProjectPath) {
+        throw new Error('请先打开项目')
+      }
+      try {
+        const res = await axios.post('/api/run', {
+          project_path: this.currentProjectPath,
+          task_id: taskId,
+          start_node_id: startNodeId
+        })
+        return res.data
+      } catch (err) {
+        console.error('执行任务失败', err)
+        throw err
+      }
+    },
+
+    // ==================== 模板区域 ====================
+    async getRegions() {
+      if (!this.currentProjectPath) return {}
+      try {
+        const res = await axios.get('/api/regions', {
+          params: { project_path: this.currentProjectPath }
+        })
+        return res.data
+      } catch (err) {
+        console.error('获取区域配置失败', err)
+        return {}
+      }
+    },
+
+    async updateRegion(relativePath, region) {
+      if (!this.currentProjectPath) return
+      try {
+        await axios.post('/api/regions', {
+          project_path: this.currentProjectPath,
+          relative_path: relativePath,
+          region
+        })
+      } catch (err) {
+        console.error('更新区域失败', err)
+        throw err
+      }
+    },
+
+    async syncTemplates() {
+      if (!this.currentProjectPath) return
+      try {
+        const res = await axios.post('/api/templates/sync', {
+          project_path: this.currentProjectPath
+        })
+        return res.data
+      } catch (err) {
+        console.error('同步模板失败', err)
+        throw err
+      }
+    },
+
+    // ==================== 任务节点列表 ====================
+    async loadTaskNodes(taskId) {
+      if (!taskId) return []
+      if (this.taskNodesCache[taskId]) return this.taskNodesCache[taskId]
+      try {
+        const res = await axios.get(`/api/tasks/${taskId}/nodes`, {
+          params: { project_path: this.currentProjectPath }
+        })
+        const nodes = res.data || []
+        this.taskNodesCache[taskId] = nodes
+        return nodes
+      } catch (err) {
+        console.error('加载任务节点失败', err)
+        return []
+      }
+    },
+
+    clearTaskNodesCache() {
+      this.taskNodesCache = {}
+    },
+
+    // ==================== 节点选择 ====================
     selectNode(nodeId) {
       this.selectedNodeId = nodeId
     },
 
+    // ==================== 批量操作 ====================
     toggleBatchMode() {
       this.batchMode = !this.batchMode
       if (!this.batchMode) {
         this.selectedNodeIds = []
       }
     },
+
     toggleNodeSelection(nodeId) {
       const idx = this.selectedNodeIds.indexOf(nodeId)
       if (idx > -1) {
@@ -264,6 +310,7 @@ export const useMainStore = defineStore('main', {
         this.selectedNodeIds.push(nodeId)
       }
     },
+
     selectAllNodes() {
       const allIds = this.nodes.map(n => n.node_id)
       if (this.selectedNodeIds.length === allIds.length) {
@@ -272,6 +319,7 @@ export const useMainStore = defineStore('main', {
         this.selectedNodeIds = allIds
       }
     },
+
     async batchDeleteNodes() {
       if (!this.selectedNodeIds.length) return
       try {
@@ -290,6 +338,7 @@ export const useMainStore = defineStore('main', {
         if (err !== 'cancel') console.error(err)
       }
     },
+
     async batchSetDelay(delayMs) {
       if (!this.selectedNodeIds.length) return
       const delay = parseInt(delayMs)
@@ -309,13 +358,16 @@ export const useMainStore = defineStore('main', {
       this.batchMode = false
     },
 
+    // ==================== 工作面板上下文 ====================
     setCurrentContext(context) {
       this.currentContext = { ...this.currentContext, ...context }
     },
+
     getCurrentContext() {
       return this.currentContext
     },
 
+    // ==================== 重置 ====================
     resetTaskState() {
       this.tasks = []
       this.currentTaskId = null
@@ -325,6 +377,7 @@ export const useMainStore = defineStore('main', {
       this.clearTaskNodesCache()
     }
   },
+
   getters: {
     selectedNode: (state) => state.nodes.find(n => n.node_id === state.selectedNodeId),
   }

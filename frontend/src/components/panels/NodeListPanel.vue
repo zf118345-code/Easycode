@@ -180,16 +180,24 @@ export default {
       }
     },
     async runFromNode(node) {
-      const project = this.store.currentProject
-      const taskId = this.store.currentTaskId
-      if (!project || !taskId) { ElMessage.warning('请先选择项目和任务'); return }
-      try {
-        ElMessage.info(`从节点 ${node.node_name} 开始执行...`)
-        const res = await axios.post(`/api/projects/${project}/run`, { task_id: taskId, start_node_id: node.node_id })
-        if (res.data.status === 'success') { ElMessage.success('执行完成') }
-        else { ElMessage.error('执行失败: ' + (res.data.message || '未知错误')) }
-      } catch (err) { ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message)); console.error(err) }
-    },
+  const taskId = this.store.currentTaskId
+  if (!taskId) {
+    ElMessage.warning('请先选择一个任务')
+    return
+  }
+  try {
+    ElMessage.info(`从节点 ${node.node_name} 开始执行...`)
+    const result = await this.store.runTask(taskId, node.node_id)
+    if (result.status === 'started') {
+      ElMessage.success('执行已启动')
+    } else {
+      ElMessage.error('执行失败: ' + (result.message || '未知错误'))
+    }
+  } catch (err) {
+    ElMessage.error('执行请求失败: ' + (err.message || '未知错误'))
+    console.error(err)
+  }
+},
     async deleteNode(node) {
       try {
         await ElMessageBox.confirm(`确定要删除节点 "${node.node_name}" 吗？`, '确认删除', { type: 'warning' })

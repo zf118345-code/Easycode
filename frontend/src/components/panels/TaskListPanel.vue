@@ -332,25 +332,17 @@ export default {
     },
 
     async runTask(taskId) {
-      const project = this.store.currentProject
-      if (!project) {
-        ElMessage.warning('请先选择项目')
-        return
-      }
       try {
         ElMessage.info('任务执行中...')
-        const res = await axios.post(`/api/projects/${project}/run`, {
-          task_id: taskId,
-          start_node_id: null
-        })
-        if (res.data.status === 'success') {
-          ElMessage.success('任务执行完成')
+        const result = await this.store.runTask(taskId, null)
+        if (result.status === 'started') {
+          ElMessage.success('任务已启动，请查看执行状态')
         } else {
-          ElMessage.error('执行失败: ' + (res.data.message || '未知错误'))
+          ElMessage.error('执行失败: ' + (result.message || '未知错误'))
         }
       } catch (err) {
-        console.error('执行错误', err)
-        ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message))
+        ElMessage.error('执行请求失败: ' + (err.message || '未知错误'))
+        console.error(err)
       }
     },
 
