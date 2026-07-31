@@ -12,12 +12,17 @@
     <div class="footer-right">
       <span>⚡ 执行状态: 空闲</span>
     </div>
-    <PanelSettingsDialog v-model:visible="dialogVisible" />
+
+    <PanelSettingsDialog
+      v-model:visible="dialogVisible"
+      @apply="handleApplyContext"
+    />
   </footer>
 </template>
 
 <script>
 import { useMainStore } from '@/stores'
+import { ElMessage } from 'element-plus'  // ← 添加这行
 import { Monitor } from '@element-plus/icons-vue'
 import PanelSettingsDialog from './PanelSettingsDialog.vue'
 
@@ -46,6 +51,14 @@ export default {
   methods: {
     showPanelDialog() {
       this.dialogVisible = true
+    },
+    async handleApplyContext(context) {
+      try {
+        await this.store.setCurrentContext(context)
+        ElMessage.success('工作面板已更新并保存')
+      } catch (err) {
+        ElMessage.error('保存失败: ' + err.message)
+      }
     }
   }
 }

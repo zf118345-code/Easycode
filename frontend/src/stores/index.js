@@ -47,37 +47,6 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // ==================== 项目加载 ====================
-    async loadProjectByPath(projectPath) {
-      if (!projectPath) {
-        throw new Error('项目路径不能为空')
-      }
-      // 验证路径是否存在
-      try {
-        const verifyRes = await axios.get('/api/projects/verify', {
-          params: { project_path: projectPath }
-        })
-        if (!verifyRes.data.exists) {
-          throw new Error(`项目路径不存在: ${projectPath}`)
-        }
-      } catch (err) {
-        if (err.response?.status === 404) {
-          throw new Error(`项目路径不存在: ${projectPath}`)
-        }
-        throw err
-      }
-
-      // 存储路径
-      this.currentProjectPath = projectPath
-      this.currentProjectName = projectPath.split(/[\\/]/).pop()
-      localStorage.setItem('currentProjectPath', projectPath)
-      this.addRecentProject(projectPath, this.currentProjectName)
-
-      // 加载任务数据
-      await this.loadTasks()
-      return true
-    },
-
     // ==================== 最近项目 ====================
     addRecentProject(path, name) {
       const entry = { path, name, lastOpened: Date.now() }
@@ -87,6 +56,8 @@ export const useMainStore = defineStore('main', {
       ].slice(0, 10)
       localStorage.setItem('recentProjects', JSON.stringify(this.recentProjects))
     },
+
+
 
     // ==================== 任务管理 ====================
     async loadTasks() {
@@ -359,12 +330,91 @@ export const useMainStore = defineStore('main', {
     },
 
     // ==================== 工作面板上下文 ====================
-    setCurrentContext(context) {
-      this.currentContext = { ...this.currentContext, ...context }
-    },
 
     getCurrentContext() {
       return this.currentContext
+    },
+
+   // ==================== 上下文管理（前后端同步） ====================
+
+    async loadContext() {
+      /* 加载后端保存的上下文 */
+      if (!this.currentProjectPath) return
+      try {
+        const res = await axios.get('/api/context', {
+          params: { project_path: this.currentProjectPath }
+        })
+        if (res.data) {
+          // 将后端返回的字段映射到前端格式
+          this.currentContext = {
+            windowTitle: res.data.windowTitle || '',
+            isEmulator: res.data.isEmulator || false,
+            deviceId: res.data.deviceId || '',
+            androidWidth: res.data.androidWidth || 0,
+            androidHeight: res.data.androidHeight || 0,
+            offsetTop: res.data.offsetTop || 0,
+            offsetBottom: res.data.offsetBottom || 0,
+            offsetLeft: res.data.offsetLeft || 0,
+            offsetRight: res.data.offsetRight || 0
+          }
+        }
+      } catch (err) {
+        console.error('加载上下文失败', err)
+      }
+    },
+
+    async saveContext() {
+      /* 保存上下文到后端 */
+      if (!this.currentProjectPath) return
+      try {
+        await axios.post('/api/context', {
+          project_path: this.currentProjectPath,
+          context: this.currentContext
+        })
+      } catch (err) {
+        console.error('保存上下文失败', err)
+        throw err
+      }
+    },
+
+    // 修改 setCurrentContext，增加同步到后端的功能
+    async setCurrentContext(context) {
+      this.currentContext = { ...this.currentContext, ...context }
+      // 同步到后端
+      await this.saveContext()
+    },
+
+    // 修改 loadProjectByPath，加载项目后也加载上下文
+    async loadProjectByPath(projectPath) {
+      if (!projectPath) {
+        throw new Error('项目路径不能为空')
+      }
+      // 验证路径是否存在
+      try {
+        const verifyRes = await axios.get('/api/projects/verify', {
+          params: { project_path: projectPath }
+        })
+        if (!verifyRes.data.exists) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
+      } catch (err) {
+        if (err.response?.status === 404) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
+        throw err
+      }
+
+      // 存储路径
+      this.currentProjectPath = projectPath
+      this.currentProjectName = projectPath.split(/[\\/]/).pop()
+      localStorage.setItem('currentProjectPath', projectPath)
+      this.addRecentProject(projectPath, this.currentProjectName)
+
+      // 加载任务数据
+      await this.loadTasks()
+      // 加载保存的上下文
+      await this.loadContext()
+      return true
     },
 
     // ==================== 重置 ====================

@@ -1,7 +1,7 @@
 <template>
   <div id="app">
     <!-- 主界面 -->
-    <template v-if="store.currentProjectPath">
+    <template v-if="store.currentProjectPath && projectLoaded">
       <AppHeader />
       <div class="main-content">
         <PanelContainer />
@@ -9,11 +9,18 @@
       <AppFooter />
     </template>
 
-    <!-- 欢迎界面（无项目） -->
+    <!-- 欢迎界面（无项目或加载失败） -->
     <div v-else class="welcome">
       <div class="welcome-content">
         <h1>⚡ 节点自动化</h1>
         <p>请打开一个项目文件夹</p>
+
+        <!-- 缓存路径提示 -->
+        <div v-if="cachedPath" class="cached-hint">
+          <el-icon><InfoFilled /></el-icon>
+          <span>上次打开：{{ cachedPath }}</span>
+        </div>
+
         <div class="open-section">
           <el-input
             v-model="projectPathInput"
@@ -28,6 +35,7 @@
             </el-button>
           </div>
         </div>
+
         <div v-if="store.recentProjects.length" class="recent">
           <span>最近打开：</span>
           <el-link
@@ -45,18 +53,35 @@
 </template>
 
 <script>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useMainStore } from '@/stores'
 import { ElMessage } from 'element-plus'
+import { InfoFilled } from '@element-plus/icons-vue'
 import AppHeader from './components/AppHeader.vue'
 import AppFooter from './components/AppFooter.vue'
 import PanelContainer from './components/PanelContainer.vue'
 
 export default {
-  components: { AppHeader, AppFooter, PanelContainer },
+  components: { AppHeader, AppFooter, PanelContainer, InfoFilled },
   setup() {
     const store = useMainStore()
     const projectPathInput = ref('')
+    const projectLoaded = ref(false)
+
+    const cachedPath = computed(() => store.currentProjectPath || '')
+
+    const loadProject = async (path) => {
+      if (!path) return false
+      try {
+        await store.loadProjectByPath(path)
+        projectLoaded.value = true
+        return true
+      } catch (err) {
+        ElMessage.error('打开项目失败: ' + err.message)
+        projectLoaded.value = false
+        return false
+      }
+    }
 
     const handleOpenProject = async () => {
       const path = projectPathInput.value.trim()
@@ -64,21 +89,18 @@ export default {
         ElMessage.warning('请输入项目路径')
         return
       }
-      try {
-        await store.loadProjectByPath(path)
+      const ok = await loadProject(path)
+      if (ok) {
         projectPathInput.value = ''
         ElMessage.success(`已打开项目: ${store.currentProjectName}`)
-      } catch (err) {
-        ElMessage.error('打开项目失败: ' + err.message)
       }
     }
 
     const handleOpenRecent = async (path) => {
-      try {
-        await store.loadProjectByPath(path)
+      const ok = await loadProject(path)
+      if (ok) {
         ElMessage.success(`已打开项目: ${store.currentProjectName}`)
-      } catch (err) {
-        ElMessage.error('打开项目失败: ' + err.message)
+      } else {
         // 从最近列表中移除无效路径
         store.recentProjects = store.recentProjects.filter(p => p.path !== path)
         localStorage.setItem('recentProjects', JSON.stringify(store.recentProjects))
@@ -87,15 +109,22 @@ export default {
 
     onMounted(async () => {
       await store.loadParams()
-      // 如果有保存的项目路径，自动加载
+
+      // 如果有缓存的路径，填入输入框
       if (store.currentProjectPath) {
+        projectPathInput.value = store.currentProjectPath
+        // 尝试自动加载
         try {
           await store.loadProjectData()
-          ElMessage.success(`已自动打开项目: ${store.currentProjectName}`)
+          await store.loadContext()
+          projectLoaded.value = true
+          ElMessage.success(`已自动加载项目: ${store.currentProjectName}`)
         } catch (err) {
-          ElMessage.error('自动加载项目失败，请重新打开')
+          // 自动加载失败，回到欢迎界面，但保留路径在输入框中
+          ElMessage.warning('自动加载项目失败，请检查路径后重新打开')
           store.currentProjectPath = null
-          localStorage.removeItem('currentProjectPath')
+          projectLoaded.value = false
+          // 不删除 localStorage，路径还保留着，用户可以看到
         }
       }
     })
@@ -103,6 +132,8 @@ export default {
     return {
       store,
       projectPathInput,
+      cachedPath,
+      projectLoaded,
       handleOpenProject,
       handleOpenRecent
     }
@@ -156,6 +187,17 @@ html, body, #app {
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+.cached-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #8a8fa8;
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+.cached-hint .el-icon {
+  color: #409EFF;
 }
 .recent {
   margin-top: 30px;

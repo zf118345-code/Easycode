@@ -36,13 +36,13 @@
               <span class="label">延迟：</span>
               <span v-if="editingDelay !== node.node_id" class="value" @dblclick="startEditDelay(node)">{{ node.delay_before }} ms</span>
               <el-input v-else v-model="editDelayValue" size="small" type="number" @blur="finishEditDelay(node)" @keyup.enter="finishEditDelay(node)" class="inline-input" ref="delayInput" />
-              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditDelay(node)"><el-icon><Edit /></el-icon></el-button>
+              <el-button link size="small" class="edit-icon" @click.stop="startEditDelay(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
             <div class="right-group">
               <span class="label">循环：</span>
               <span v-if="editingLoop !== node.node_id" class="value" @dblclick="startEditLoop(node)">{{ node.loop_count === -1 ? '无限' : node.loop_count }}</span>
               <el-input v-else v-model="editLoopValue" size="small" type="number" @blur="finishEditLoop(node)" @keyup.enter="finishEditLoop(node)" class="inline-input" ref="loopInput" />
-              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditLoop(node)"><el-icon><Edit /></el-icon></el-button>
+              <el-button link size="small" class="edit-icon" @click.stop="startEditLoop(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
           </div>
           <div class="node-row second-row">
@@ -51,12 +51,12 @@
               <el-icon class="node-icon" :style="{ color: getNodeColor(node.node_type) }"><component :is="getNodeIcon(node.node_type)" /></el-icon>
               <span v-if="editingName !== node.node_id" class="node-name" @dblclick="startEditName(node)">{{ node.node_name }}</span>
               <el-input v-else v-model="editNameValue" size="small" maxlength="10" @blur="finishEditName(node)" @keyup.enter="finishEditName(node)" class="inline-input" ref="nameInput" />
-              <el-button type="text" size="small" class="edit-icon" @click.stop="startEditName(node)"><el-icon><Edit /></el-icon></el-button>
+              <el-button link size="small" class="edit-icon" @click.stop="startEditName(node)"><el-icon><Edit /></el-icon></el-button>
             </div>
             <div class="right-group">
               <el-icon class="drag-handle"><Rank /></el-icon>
               <el-dropdown @command="(cmd) => handleNodeMenu(cmd, node)">
-                <el-button type="text" size="small"><el-icon><More /></el-icon></el-button>
+                <el-button link size="small"><el-icon><More /></el-icon></el-button>
                 <template #dropdown>
                   <el-dropdown-menu>
                     <el-dropdown-item command="run">▶ 从当前节点执行</el-dropdown-item>

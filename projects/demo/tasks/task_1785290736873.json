@@ -63,8 +63,8 @@
       "node_type": "click",
       "params": {
         "position": [
-          800,
-          300
+          1,
+          1
         ],
         "is_relative": true,
         "button": "left"
@@ -154,13 +154,7 @@
         "target_node": null,
         "return_on_complete": false
       },
-      "position": null,
-      "_originalRegionValue": [
-        637,
-        3,
-        63,
-        80
-      ]
+      "position": null
     }
   ]
 }

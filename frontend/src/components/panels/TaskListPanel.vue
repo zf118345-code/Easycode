@@ -260,14 +260,17 @@ export default {
       if (!this.store.currentTaskId) return
       try {
         await ElMessageBox.confirm('确定要删除当前任务吗？', '确认删除', { type: 'warning' })
-        await axios.delete(`/api/projects/${this.store.currentProject}/tasks/${this.store.currentTaskId}`)
+        await this.store.deleteTask(this.store.currentTaskId)
         ElMessage.success('任务已删除')
-        await this.store.loadTasks()
+        // 自动加载第一个任务
         if (this.store.tasks.length) {
           await this.store.loadTaskData(this.store.tasks[0].task_id)
         }
       } catch (err) {
-        if (err !== 'cancel') ElMessage.error('删除失败')
+        if (err !== 'cancel') {
+          ElMessage.error('删除失败: ' + (err.message || '未知错误'))
+          console.error(err)
+        }
       }
     },
 
@@ -332,19 +335,19 @@ export default {
     },
 
     async runTask(taskId) {
-      try {
-        ElMessage.info('任务执行中...')
-        const result = await this.store.runTask(taskId, null)
-        if (result.status === 'started') {
-          ElMessage.success('任务已启动，请查看执行状态')
-        } else {
-          ElMessage.error('执行失败: ' + (result.message || '未知错误'))
-        }
-      } catch (err) {
-        ElMessage.error('执行请求失败: ' + (err.message || '未知错误'))
-        console.error(err)
-      }
-    },
+  try {
+    ElMessage.info('任务执行中...')
+    const result = await this.store.runTask(taskId, null)
+    if (result.status === 'started') {
+      ElMessage.success('任务已启动，请查看执行状态')
+    } else {
+      ElMessage.error('执行失败: ' + (result.message || '未知错误'))
+    }
+  } catch (err) {
+    ElMessage.error('执行请求失败: ' + (err.message || '未知错误'))
+    console.error(err)
+  }
+},
 
     // ====== 拖拽排序 ======
     async onDragEnd() {

@@ -9,8 +9,18 @@
   >
     <el-form :model="localContext" label-width="100px" size="small">
       <el-form-item label="窗口标题">
-        <el-select v-model="localContext.windowTitle" filterable placeholder="选择或输入窗口标题" @focus="fetchWindows">
-          <el-option v-for="w in windowList" :key="w.hwnd" :label="w.title" :value="w.title" />
+        <el-select
+          v-model="localContext.windowTitle"
+          filterable
+          placeholder="选择或输入窗口标题"
+          @focus="fetchWindows"
+        >
+          <el-option
+            v-for="w in windowList"
+            :key="w.hwnd"
+            :label="w.title"
+            :value="w.title"
+          />
         </el-select>
       </el-form-item>
       <el-form-item label="模拟器模式">
@@ -49,7 +59,7 @@ import axios from 'axios'
 export default {
   name: 'PanelSettingsDialog',
   props: { visible: { type: Boolean, default: false } },
-  emits: ['update:visible'],
+  emits: ['update:visible', 'apply'],
   setup(props, { emit }) {
     const store = useMainStore()
     const localContext = ref({ ...store.currentContext })
@@ -77,8 +87,8 @@ export default {
     }
 
     const applyContext = () => {
-      store.setCurrentContext(localContext.value)
-      ElMessage.success('工作面板已更新')
+      // 发出 apply 事件，由父组件处理保存
+      emit('apply', localContext.value)
       dialogVisible.value = false
     }
 

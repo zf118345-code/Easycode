@@ -234,10 +234,18 @@ async def save_task_order(request: TaskOrderRequest):
 
 @app.post("/api/run")
 async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
-    """启动任务执行（后台）"""
+    """启动任务执行（后台），自动应用保存的上下文"""
     project_path = request.project_path
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目不存在")
+
+    # 读取保存的上下文
+    context_path = os.path.join(project_path, CONTEXT_FILE)
+    saved_context = {}
+    if os.path.exists(context_path):
+        with open(context_path, "r", encoding="utf-8") as f:
+            saved_context = json.load(f)
+    print(f"执行任务加载的上下文: {saved_context}")
     try:
         project = load_project(project_path)
     except Exception as e:
@@ -263,7 +271,14 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
         pyautogui.FAILSAFE = False
         try:
             try:
-                executor = GraphExecutor(project, project_dir=project_path, text_log_enabled=True, image_log_enabled=True)
+                # 创建执行器，传入保存的上下文
+                executor = GraphExecutor(
+                    project,
+                    project_dir=project_path,
+                    text_log_enabled=True,
+                    image_log_enabled=True,
+                    initial_context=saved_context  # 新增参数
+                )
                 print(f"开始执行任务: {request.task_id}, 起始节点: {request.start_node_id}")
                 executor.run(request.task_id, request.start_node_id)
                 execution_status[execution_id] = {"status": "success", "message": "执行完成"}
@@ -433,6 +448,57 @@ async def save_screenshot(
     with open(regions_path, "w", encoding="utf-8") as f:
         json.dump(regions, f, indent=2, ensure_ascii=False)
     return {"status": "success", "path": rel_path}
+
+# ==================== 上下文管理 ====================
+
+CONTEXT_FILE = "context.json"
+
+@app.get("/api/context")
+async def get_context(project_path: str):
+    """获取项目的工作面板上下文"""
+    context_path = os.path.join(project_path, CONTEXT_FILE)
+    if os.path.exists(context_path):
+        with open(context_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            # 返回时也映射回前端格式（可选，但为了前端显示，建议做）
+            return {
+                "windowTitle": data.get("window_title", ""),
+                "isEmulator": data.get("is_emulator", False),
+                "deviceId": data.get("device_id", ""),
+                "androidWidth": data.get("android_width", 0),
+                "androidHeight": data.get("android_height", 0),
+                "offsetTop": data.get("offset_top", 0),
+                "offsetBottom": data.get("offset_bottom", 0),
+                "offsetLeft": data.get("offset_left", 0),
+                "offsetRight": data.get("offset_right", 0)
+            }
+    return {}
+
+@app.post("/api/context")
+async def save_context(request: dict):
+    """保存项目的工作面板上下文"""
+    project_path = request.get("project_path")
+    context = request.get("context")
+    if not project_path or context is None:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    # 字段映射：前端驼峰 -> 后端下划线
+    mapped_context = {
+        "window_title": context.get("windowTitle", ""),
+        "is_emulator": context.get("isEmulator", False),
+        "device_id": context.get("deviceId", ""),
+        "android_width": context.get("androidWidth", 0),
+        "android_height": context.get("androidHeight", 0),
+        "offset_top": context.get("offsetTop", 0),
+        "offset_bottom": context.get("offsetBottom", 0),
+        "offset_left": context.get("offsetLeft", 0),
+        "offset_right": context.get("offsetRight", 0)
+    }
+
+    context_path = os.path.join(project_path, CONTEXT_FILE)
+    with open(context_path, "w", encoding="utf-8") as f:
+        json.dump(mapped_context, f, indent=2, ensure_ascii=False)
+    return {"status": "success"}
 
 # ==================== 导入项目（保留兼容） ====================
 @app.post("/api/projects/import/file")
