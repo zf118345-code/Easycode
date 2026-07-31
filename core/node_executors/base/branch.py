@@ -41,7 +41,8 @@ class BranchNodeExecutor(BaseNodeExecutor):
             threshold = cand.get("threshold", default_threshold)
             if isinstance(threshold, int):
                 threshold = threshold / 100.0
-            template_path = resource_path(os.path.join("templates", template_name + ".png"))
+            templates_dir = os.path.join(context.project_dir, "templates")
+            template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
             if not os.path.exists(template_path):
                 context.log(f"模板不存在: {template_path}", "warning")
                 continue

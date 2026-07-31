@@ -1,4 +1,3 @@
-# api.py
 import os
 import json
 import time
@@ -15,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
+
+import core.node_executors  # 这行必须存在
 
 from core.project_loader import load_project
 from core.params import ALL_PARAMS
@@ -65,6 +66,28 @@ async def list_projects():
     projects = [d for d in os.listdir(projects_dir) if os.path.isdir(os.path.join(projects_dir, d))]
     return {"projects": projects}
 
+
+# ========== 项目根目录管理 ==========
+PROJECTS_ROOT_FILE = "projects_root.json"
+
+@app.get("/api/projects/root")
+async def get_projects_root():
+    """获取保存的项目根目录"""
+    if os.path.exists(PROJECTS_ROOT_FILE):
+        with open(PROJECTS_ROOT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return {"root": data.get("root", "")}
+    return {"root": ""}
+
+@app.post("/api/projects/root")
+async def set_projects_root(request: dict):
+    """保存项目根目录"""
+    root = request.get("root")
+    if not root:
+        raise HTTPException(status_code=400, detail="root is required")
+    with open(PROJECTS_ROOT_FILE, "w", encoding="utf-8") as f:
+        json.dump({"root": root}, f, indent=2)
+    return {"status": "success", "root": root}
 
 @app.get("/api/projects/{project_name}/tasks")
 async def list_tasks(project_name: str):
@@ -192,57 +215,74 @@ async def delete_task(project_name: str, task_id: str):
     return {"status": "success"}
 
 
+# ========== 执行任务（关键） ==========
 @app.post("/api/projects/{project_name}/run")
 async def run_task(project_name: str, request: RunRequest, background_tasks: BackgroundTasks):
-    project_path = os.path.join("projects", project_name)
+    # 1. 读取保存的项目根目录
+    root_path = ""
+    if os.path.exists(PROJECTS_ROOT_FILE):
+        with open(PROJECTS_ROOT_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            root_path = data.get("root", "")
+
+    if not root_path:
+        raise HTTPException(status_code=400, detail="未设置项目根目录，请先选择项目仓库路径")
+
+    # 2. 构建项目绝对路径
+    project_path = os.path.join(root_path, project_name)
     if not os.path.exists(project_path):
-        raise HTTPException(status_code=404, detail="项目不存在")
+        raise HTTPException(status_code=404, detail=f"项目不存在: {project_path}")
+
+    # 3. 加载项目数据
     try:
         project = load_project(project_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
 
+    # 4. 生成执行ID
     execution_id = f"{request.task_id}_{int(time.time() * 1000)}"
     execution_status[execution_id] = {"status": "running", "message": "执行中..."}
     execution_logs[execution_id] = []
 
+    # 5. 后台执行函数
     def execute_background():
+        import logging
+        from io import StringIO
+        log_stream = StringIO()
+        handler = logging.StreamHandler(log_stream)
+        handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        handler.setFormatter(formatter)
+        root_logger = logging.getLogger()
+        root_logger.addHandler(handler)
+
+        import pyautogui
+        original_failsafe = pyautogui.FAILSAFE
+        pyautogui.FAILSAFE = False
         try:
-            executor = GraphExecutor(project, text_log_enabled=True, image_log_enabled=True)
-
-            # 保存日志
-            def log_capture(msg, level="info"):
-                execution_logs[execution_id].append({"time": time.time(), "level": level, "message": msg})
-
-            # 临时替换 logger
-            import logging
-            original_info = logging.info
-            original_error = logging.error
-
-            def info_wrapper(msg, *args, **kwargs):
-                log_capture(msg, "info")
-                original_info(msg, *args, **kwargs)
-
-            def error_wrapper(msg, *args, **kwargs):
-                log_capture(msg, "error")
-                original_error(msg, *args, **kwargs)
-
-            logging.info = info_wrapper
-            logging.error = error_wrapper
             try:
-                executor.run(request.task_id)
+                # 创建执行器，传入项目路径
+                executor = GraphExecutor(project, project_dir=project_path, text_log_enabled=True,
+                                         image_log_enabled=True)
+                print(f"开始执行任务: {request.task_id}, 起始节点: {request.start_node_id}")
+                executor.run(request.task_id, request.start_node_id)
                 execution_status[execution_id] = {"status": "success", "message": "执行完成"}
+                print("执行完成")
             except Exception as e:
+                print(f"执行异常: {e}")
                 execution_status[execution_id] = {"status": "error", "message": str(e)}
-            finally:
-                logging.info = original_info
-                logging.error = original_error
-        except Exception as e:
-            execution_status[execution_id] = {"status": "error", "message": str(e)}
+        finally:
+            logs = log_stream.getvalue()
+            if logs:
+                execution_logs[execution_id] = logs.splitlines()
+            else:
+                execution_logs[execution_id] = ["（无日志）"]
+            pyautogui.FAILSAFE = original_failsafe
+            root_logger.removeHandler(handler)
 
+    # 6. 启动后台任务
     background_tasks.add_task(execute_background)
     return {"execution_id": execution_id, "status": "started"}
-
 
 @app.get("/api/projects/{project_name}/execution/{execution_id}")
 async def get_execution_status(project_name: str, execution_id: str):

@@ -20,6 +20,13 @@
     <div class="header-actions">
       <el-button type="primary" size="small" @click="runTask">▶ 运行</el-button>
     </div>
+    <div class="project-selector">
+    <el-input v-model="rootPath" placeholder="输入项目根目录" size="small" style="width:200px;" />
+    <el-button size="small" type="primary" @click="saveRootPath">保存</el-button>
+    <el-select v-model="store.currentProject" >
+      ...
+    </el-select>
+  </div>
     <ScreenshotTool ref="screenshotTool" />
   </header>
 </template>
@@ -33,7 +40,7 @@ import axios from 'axios'
 
 export default {
   components: { Menu, ScreenshotTool },
-  data() { return { activeMenu: 'file' } },
+  data() { return { activeMenu: 'file' , rootPath: ''} },
   setup() {
     const store = useMainStore()
     return { store }
@@ -42,11 +49,22 @@ export default {
     workspaceStatus() { return this.store.workspaceHandle ? '📁 工作区已设置' : '📂 设置工作区' }
   },
   methods: {
+    async saveRootPath() {
+        if (!this.rootPath) return
+        await axios.post('/api/projects/root', { root: this.rootPath })
+        ElMessage.success('根目录已保存')
+        await this.store.loadTasks()
+    },
     async setWorkspace() {
-      await this.store.setWorkspaceRoot()
-      if (this.store.workspaceHandle && this.store.currentProject) {
-        await this.store.loadProjectData()
-      }
+        await this.store.setWorkspaceRoot()
+        if (this.store.workspaceHandle && this.store.currentProject) {
+            // 自动获取路径的逻辑太复杂，让用户手动输入
+            this.rootPath = await prompt('请输入项目根目录（如 D:/MyProjects）')
+            if (this.rootPath) {
+                await this.saveRootPath()
+            }
+            await this.store.loadProjectData()
+        }
     },
     async onProjectChange(project) {
       if (!project) return

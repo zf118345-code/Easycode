@@ -5,21 +5,127 @@
   "loop_interval": 4,
   "nodes": [
     {
-      "node_id": "node_1785323133713",
+      "node_id": "node_1785328834698",
+      "node_name": "鼠标点击",
+      "node_type": "click",
+      "params": {
+        "position": [
+          300,
+          300
+        ],
+        "is_relative": true,
+        "button": "left"
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    },
+    {
+      "node_id": "node_1785465492390",
+      "node_name": "等待",
+      "node_type": "wait",
+      "params": {
+        "seconds": 2
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    },
+    {
+      "node_id": "node_1785465512174",
+      "node_name": "鼠标点击",
+      "node_type": "click",
+      "params": {
+        "position": [
+          800,
+          300
+        ],
+        "is_relative": true,
+        "button": "left"
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    },
+    {
+      "node_id": "node_1785465779998",
+      "node_name": "等待",
+      "node_type": "wait",
+      "params": {
+        "seconds": 2
+      },
+      "delay_before": 0,
+      "loop_count": 1,
+      "enabled": true,
+      "on_success": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "on_failure": {
+        "type": "next",
+        "target": null,
+        "target_node": null,
+        "return_on_complete": false
+      },
+      "position": null
+    },
+    {
+      "node_id": "node_1785465786654",
       "node_name": "图像识别",
       "node_type": "image_recognition",
       "params": {
-        "image_source": "EnterPage/SelfModel_Tower",
+        "image_source": "test",
         "region_type": "fullwindow",
         "region_value": [
-          690,
-          200,
-          150,
-          350
+          637,
+          3,
+          63,
+          80
         ],
         "region_is_relative": true,
-        "threshold": 85,
-        "timeout": 3000,
+        "threshold": 0.3,
+        "timeout": 8000,
         "gray_scale": false,
         "on_success_action": "click_center",
         "on_success": {
@@ -48,60 +154,13 @@
         "target_node": null,
         "return_on_complete": false
       },
-      "position": null
-    },
-    {
-      "node_id": "node_1785323226705",
-      "node_name": "日志输出",
-      "node_type": "log",
-      "params": {
-        "message": "测试一下"
-      },
-      "delay_before": 0,
-      "loop_count": 1,
-      "enabled": true,
-      "on_success": {
-        "type": "next",
-        "target": null,
-        "target_node": null,
-        "return_on_complete": false
-      },
-      "on_failure": {
-        "type": "next",
-        "target": null,
-        "target_node": null,
-        "return_on_complete": false
-      },
-      "position": null
-    },
-    {
-      "node_id": "node_1785328834698",
-      "node_name": "鼠标点击",
-      "node_type": "click",
-      "params": {
-        "position": [
-          0,
-          0
-        ],
-        "is_relative": true,
-        "button": "left"
-      },
-      "delay_before": 0,
-      "loop_count": 1,
-      "enabled": true,
-      "on_success": {
-        "type": "next",
-        "target": null,
-        "target_node": null,
-        "return_on_complete": false
-      },
-      "on_failure": {
-        "type": "next",
-        "target": null,
-        "target_node": null,
-        "return_on_complete": false
-      },
-      "position": null
+      "position": null,
+      "_originalRegionValue": [
+        637,
+        3,
+        63,
+        80
+      ]
     }
   ]
 }

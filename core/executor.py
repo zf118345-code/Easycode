@@ -9,8 +9,9 @@ from core.models import Task, Node, Jump
 logger = logging.getLogger(__name__)
 
 class GraphExecutor:
-    def __init__(self, project, text_log_enabled=True, image_log_enabled=True):
+    def __init__(self, project,project_dir=None, text_log_enabled=True, image_log_enabled=True):
         self.project = project
+        self.project_dir = project_dir  # 新增
         self.tasks = project.tasks
         self.variables = project.variables.copy()
         self.current_task = None
@@ -41,11 +42,11 @@ class GraphExecutor:
     def set_image_log_enabled(self, enabled):
         self.image_log_enabled = enabled
 
-    def run(self, entry_task_id="main_task"):
+    def run(self, entry_task_id="main_task", start_node_id=None):
         if self.text_log_enabled:
             logger.info(f"执行任务: {self.tasks[entry_task_id].task_name} (ID: {entry_task_id})")
         try:
-            self._execute_task(entry_task_id)
+            self._execute_task(entry_task_id, start_node_id)
         except StopIteration:
             if self.text_log_enabled:
                 logger.info("流程正常结束")

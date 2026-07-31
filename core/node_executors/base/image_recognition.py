@@ -21,7 +21,6 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         if "image_source" in params and isinstance(params["image_source"], str):
             template_name = params["image_source"]
         else:
-            # 兼容旧数据：image_source 是字典 {"type": "file", "data": "xxx"}
             image_source = params.get("image_source", {})
             template_name = image_source.get("data", "")
             if image_source.get("type") != "file" and not template_name:
@@ -32,16 +31,22 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
             context.log("未指定模板图片名称", "error")
             return {"success": False, "error": "template name missing"}
 
-        template_path = resource_path(os.path.join("templates", template_name + ".png"))
-        if not os.path.exists(template_path):
-            # 兼容旧数据：尝试根目录
-            fallback_path = resource_path(os.path.join("templates", os.path.basename(template_name) + ".png"))
-            if os.path.exists(fallback_path):
-                context.log(f"模板文件在根目录找到，使用备选: {fallback_path}", "warning")
-                template_path = fallback_path
-            else:
-                context.log(f"模板文件不存在: {template_path}", "error")
-                return {"success": False, "error": "template not found"}
+        # 使用项目路径构建模板目录
+        templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
+        possible_paths = [
+            os.path.normpath(os.path.join(templates_dir, template_name + ".png")),
+            os.path.normpath(os.path.join(templates_dir, template_name + ".PNG")),
+        ]
+
+        template_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                template_path = p
+                break
+
+        if template_path is None:
+            context.log(f"模板文件不存在，尝试过的路径: {possible_paths}", "error")
+            return {"success": False, "error": "template not found"}
 
         try:
             template = load_image(template_path)
@@ -50,8 +55,6 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
             return {"success": False, "error": "template not found"}
 
         # ----- 2. 搜索区域（兼容新旧结构） -----
-        # 新结构：region_type, region_value, region_is_relative
-        # 旧结构：region 字典
         if "region_type" in params:
             region_type = params.get("region_type", "fullwindow")
             region_value = params.get("region_value", [0, 0, 0, 0])
@@ -80,38 +83,77 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
 
         # ----- 3. 参数：阈值、超时、灰度 -----
         threshold = params.get("threshold", 85) / 100.0
-        timeout = params.get("timeout", 3000) / 1000.0
+        timeout = params.get("timeout", 3000) / 1000.0  # 转换为秒
         gray_scale = params.get("gray_scale", False)
 
-        # ----- 4. 执行匹配 -----
+        # ----- 4. 执行匹配（详细日志） -----
         start_time = time.time()
         found = False
         pos = None
         max_val = 0.0
+        attempt = 0
+
+        # 打印详细调试信息
+        print("\n" + "="*60)
+        print("【图像识别调试】")
+        print(f"模板名称: {template_name}")
+        print(f"模板尺寸: {template.shape if template is not None else 'None'}")
+        print(f"搜索区域 (region_rect): {region_rect}")
+        print(f"窗口区域 (context.get_window_rect()): {context.get_window_rect()}")
+        print(f"阈值 (threshold): {threshold:.2f}")
+        print(f"超时时间 (timeout): {timeout} 秒")
+        print(f"灰度匹配: {gray_scale}")
+        print("="*60)
 
         while time.time() - start_time < timeout:
-            screenshot = pyautogui.screenshot(region=region_rect)
-            screen = np.array(screenshot)
-            if gray_scale:
-                screen_gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
-                template_gray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
-                result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
-            else:
-                result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
-            _, max_val, _, max_loc = cv2.minMaxLoc(result)
-            if max_val >= threshold:
-                found = True
-                h, w = template.shape[:2]
-                if region_rect:
-                    x = region_rect[0] + max_loc[0] + w // 2
-                    y = region_rect[1] + max_loc[1] + h // 2
+            attempt += 1
+            try:
+                screenshot = pyautogui.screenshot(region=region_rect)
+                screen = np.array(screenshot)
+                print(f"第 {attempt} 次截图，截图尺寸: {screen.shape if screen is not None else 'None'}")
+
+                if gray_scale:
+                    if len(screen.shape) == 3:
+                        screen_gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
+                    else:
+                        screen_gray = screen
+                    if len(template.shape) == 3:
+                        template_gray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
+                    else:
+                        template_gray = template
+                    result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
                 else:
-                    x = max_loc[0] + w // 2
-                    y = max_loc[1] + h // 2
-                pos = (x, y)
+                    result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
+
+                _, max_val, _, max_loc = cv2.minMaxLoc(result)
+                print(f"  匹配分数: {max_val:.4f}")
+
+                if max_val >= threshold:
+                    found = True
+                    h, w = template.shape[:2]
+                    if region_rect:
+                        x = region_rect[0] + max_loc[0] + w // 2
+                        y = region_rect[1] + max_loc[1] + h // 2
+                    else:
+                        x = max_loc[0] + w // 2
+                        y = max_loc[1] + h // 2
+                    pos = (x, y)
+                    print(f">>> 匹配成功！分数: {max_val:.4f}，位置: {pos}")
+                    break
+            except Exception as e:
+                print(f"匹配异常: {e}")
                 break
+
             time.sleep(0.1)
 
+        # 循环结束，打印最终结果
+        if found:
+            print(f"最终结果: 匹配成功，最高分数: {max_val:.4f}，位置: {pos}")
+        else:
+            print(f"最终结果: 匹配失败，最高分数: {max_val:.4f}，尝试次数: {attempt}")
+        print("="*60 + "\n")
+
+        # 保存调试截图（如果启用）
         if context.image_log_enabled:
             self._save_debug_screenshot(screen, template_name, context)
 
@@ -119,16 +161,13 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         if found:
             context.log(f"匹配成功: {template_name}, 位置: {pos}, 置信度: {max_val:.2f}")
 
-            # ----- 5a. 执行成功操作（on_success_action） -----
-            # 新结构：on_success_action 是字符串 "noop" 或 "click_center"
-            # 旧结构：on_success_action 是字典 {"type": "click_center", "click_count": 1, "var_name": ""}
+            # 成功操作
             action = params.get("on_success_action")
             if isinstance(action, str):
                 action_type = action
-                click_count = 1  # 默认点击1次
+                click_count = 1
                 var_name = ""
             else:
-                # 兼容旧数据
                 action_conf = params.get("on_success_action", {})
                 action_type = action_conf.get("type", "noop")
                 click_count = action_conf.get("click_count", 1)
@@ -140,16 +179,13 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
                 if var_name:
                     context.variables[var_name] = pos
 
-            # ----- 5b. 读取跳转配置（on_success / on_failure） -----
-            # 新结构：on_success 是字典 {"type": "next", "target": "", "target_node": ""}
-            # 旧结构：没有 on_success，使用默认 next
+            # 成功跳转
             success_jump = params.get("on_success", {})
             if success_jump:
                 jump_type = success_jump.get("type", "next")
                 target = success_jump.get("target", "")
                 target_node = success_jump.get("target_node", "")
             else:
-                # 如果不存在，使用默认跳转（next）
                 jump_type = "next"
                 target = ""
                 target_node = ""
@@ -163,7 +199,7 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         else:
             context.log(f"匹配超时: {template_name}, 最高置信度: {max_val:.2f}")
 
-            # ----- 失败跳转（on_failure） -----
+            # 失败跳转
             failure_jump = params.get("on_failure", {})
             if failure_jump:
                 jump_type = failure_jump.get("type", "next")
