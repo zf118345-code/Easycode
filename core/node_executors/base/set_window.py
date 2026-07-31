@@ -1,11 +1,14 @@
-# core/node_executors/set_window.py
+# core/node_executors/base/set_window.py
 import win32gui
 import win32con
 import subprocess
 import re
+import logging
 from core.registry import NodeExecutorRegistry
 from core.node_executors.base_class import BaseNodeExecutor
 from core.emulator_presets import get_emulator_offset
+
+logger = logging.getLogger(__name__)
 
 @NodeExecutorRegistry.register("set_window")
 class SetWindowNodeExecutor(BaseNodeExecutor):
@@ -156,45 +159,75 @@ class ResetWindowNodeExecutor(BaseNodeExecutor):
 @NodeExecutorRegistry.register("resize_window")
 class ResizeWindowNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
+        """
+        根据内容区域的目标尺寸调整窗口大小。
+        参数：
+            target_content_width: 目标内容宽度
+            target_content_height: 目标内容高度
+        计算：客户区尺寸 = 内容尺寸 + 偏移量（内容偏移 + 边框）
+        """
         if context.window_hwnd is None:
             context.log("未设置窗口，无法调整大小", "error")
             return {"success": False, "error": "no window set"}
+
         params = node.params
         target_w = params.get("target_content_width")
         target_h = params.get("target_content_height")
-        if not target_w or not target_h:
+        if target_w is None or target_h is None:
             context.log("resize_window 需要 target_content_width 和 target_content_height", "error")
             return {"success": False, "error": "missing target dimensions"}
+
         hwnd = context.window_hwnd
+        # 获取原始客户区尺寸和偏移
         original_rect = context.variables.get("window_original_rect")
         content_offset = context.variables.get("window_content_offset", {})
         if not original_rect:
             client_rect = win32gui.GetClientRect(hwnd)
             left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
             right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-            original_rect = (left, top, right-left, bottom-top)
+            original_rect = (left, top, right - left, bottom - top)
             context.variables["window_original_rect"] = original_rect
+
+        # 读取偏移（确保所有值存在）
         offset_left = content_offset.get("left", 0)
         offset_right = content_offset.get("right", 0)
         offset_top = content_offset.get("top", 0)
         offset_bottom = content_offset.get("bottom", 0)
+
+        # 目标客户区尺寸 = 目标内容 + 偏移
         client_w = target_w + offset_left + offset_right
         client_h = target_h + offset_top + offset_bottom
+
+        # 获取当前窗口位置（保留位置不变）
         window_rect = win32gui.GetWindowRect(hwnd)
         pos_x, pos_y = window_rect[0], window_rect[1]
+
+        # 计算边框宽度和高度（外边框 - 客户区）
         cur_client_rect = win32gui.GetClientRect(hwnd)
         cur_window_rect = win32gui.GetWindowRect(hwnd)
         border_w = (cur_window_rect[2] - cur_window_rect[0]) - cur_client_rect[2]
         border_h = (cur_window_rect[3] - cur_window_rect[1]) - cur_client_rect[3]
+
+        # 最终外边框尺寸
         outer_w = client_w + border_w
         outer_h = client_h + border_h
+
         try:
-            win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h, win32con.SWP_NOZORDER)
+            win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h,
+                                  win32con.SWP_NOZORDER)
+            # 验证调整结果
             new_client_rect = win32gui.GetClientRect(hwnd)
             if abs(new_client_rect[2] - client_w) > 3 or abs(new_client_rect[3] - client_h) > 3:
                 context.log(f"调整窗口失败，目标客户区 {client_w}x{client_h}，实际 {new_client_rect[2]}x{new_client_rect[3]}", "warning")
                 return {"success": False, "error": "resize verification failed"}
             context.log(f"窗口已调整: 客户区 {client_w}x{client_h}，内容区 {target_w}x{target_h}")
+            # 更新上下文中的窗口区域
+            left, top = win32gui.ClientToScreen(hwnd, (0, 0))
+            right, bottom = win32gui.ClientToScreen(hwnd, (client_w, client_h))
+            context.window_rect = (left + offset_left, top + offset_top,
+                                   client_w - offset_left - offset_right,
+                                   client_h - offset_top - offset_bottom)
+            context.variables["window_rect"] = context.window_rect
             return {"success": True}
         except Exception as e:
             context.log(f"调整窗口异常: {e}", "error")

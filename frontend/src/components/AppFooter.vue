@@ -22,7 +22,7 @@
 
 <script>
 import { useMainStore } from '@/stores'
-import { ElMessage } from 'element-plus'  // ← 添加这行
+import { ElMessage } from 'element-plus'
 import { Monitor } from '@element-plus/icons-vue'
 import PanelSettingsDialog from './PanelSettingsDialog.vue'
 
@@ -37,7 +37,7 @@ export default {
   },
   computed: {
     currentProject() {
-      return this.store.currentProject || '未选择'
+      return this.store.currentProjectName || '未选择'
     },
     panelStatus() {
       const ctx = this.store.currentContext

@@ -453,52 +453,64 @@ async def save_screenshot(
 
 CONTEXT_FILE = "context.json"
 
-@app.get("/api/context")
-async def get_context(project_path: str):
-    """获取项目的工作面板上下文"""
-    context_path = os.path.join(project_path, CONTEXT_FILE)
-    if os.path.exists(context_path):
-        with open(context_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # 返回时也映射回前端格式（可选，但为了前端显示，建议做）
-            return {
-                "windowTitle": data.get("window_title", ""),
-                "isEmulator": data.get("is_emulator", False),
-                "deviceId": data.get("device_id", ""),
-                "androidWidth": data.get("android_width", 0),
-                "androidHeight": data.get("android_height", 0),
-                "offsetTop": data.get("offset_top", 0),
-                "offsetBottom": data.get("offset_bottom", 0),
-                "offsetLeft": data.get("offset_left", 0),
-                "offsetRight": data.get("offset_right", 0)
-            }
-    return {}
-
 @app.post("/api/context")
 async def save_context(request: dict):
-    """保存项目的工作面板上下文"""
     project_path = request.get("project_path")
     context = request.get("context")
     if not project_path or context is None:
         raise HTTPException(status_code=400, detail="缺少必要参数")
 
-    # 字段映射：前端驼峰 -> 后端下划线
+    print("\n" + "=" * 60)
+    print("[保存上下文] 收到请求:")
+    print(f"project_path: {project_path}")
+    print("context:")
+    print(json.dumps(context, indent=2, ensure_ascii=False))
+    print("=" * 60 + "\n")
+
+    # 字段映射
     mapped_context = {
         "window_title": context.get("windowTitle", ""),
         "is_emulator": context.get("isEmulator", False),
-        "device_id": context.get("deviceId", ""),
-        "android_width": context.get("androidWidth", 0),
-        "android_height": context.get("androidHeight", 0),
         "offset_top": context.get("offsetTop", 0),
         "offset_bottom": context.get("offsetBottom", 0),
         "offset_left": context.get("offsetLeft", 0),
-        "offset_right": context.get("offsetRight", 0)
+        "offset_right": context.get("offsetRight", 0),
+        "target_content_width": context.get("targetContentWidth", 0),
+        "target_content_height": context.get("targetContentHeight", 0)
     }
+
+    print("映射后的数据 (存储到文件):")
+    print(json.dumps(mapped_context, indent=2, ensure_ascii=False))
+    print("="*60 + "\n")
 
     context_path = os.path.join(project_path, CONTEXT_FILE)
     with open(context_path, "w", encoding="utf-8") as f:
         json.dump(mapped_context, f, indent=2, ensure_ascii=False)
     return {"status": "success"}
+
+
+@app.get("/api/context")
+async def get_context(project_path: str):
+    """获取项目的工作面板上下文（映射回前端格式）"""
+    context_path = os.path.join(project_path, CONTEXT_FILE)
+    if not os.path.exists(context_path):
+        # 如果文件不存在，返回空上下文
+        return {}
+
+    with open(context_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    # 将后端下划线格式映射回前端驼峰格式
+    return {
+        "windowTitle": data.get("window_title", ""),
+        "isEmulator": data.get("is_emulator", False),
+        "offsetTop": data.get("offset_top", 0),
+        "offsetBottom": data.get("offset_bottom", 0),
+        "offsetLeft": data.get("offset_left", 0),
+        "offsetRight": data.get("offset_right", 0),
+        "targetContentWidth": data.get("target_content_width", 0),
+        "targetContentHeight": data.get("target_content_height", 0)
+    }
 
 # ==================== 导入项目（保留兼容） ====================
 @app.post("/api/projects/import/file")
@@ -514,6 +526,83 @@ async def import_file(
     with open(file_path, "wb") as f:
         shutil.copyfileobj(file.file, f)
     return {"status": "success"}
+
+
+# ==================== 模板目录管理（新增） ====================
+@app.get("/api/templates/tree")
+async def get_templates_tree(project_path: str):
+    """获取项目 templates 目录的树形结构"""
+    templates_dir = os.path.join(project_path, "templates")
+    if not os.path.exists(templates_dir):
+        return {"tree": []}
+
+    def build_tree(dir_path, relative_path=""):
+        result = []
+        try:
+            for item in os.listdir(dir_path):
+                item_path = os.path.join(dir_path, item)
+                if os.path.isdir(item_path):
+                    child_rel_path = os.path.join(relative_path, item).replace("\\", "/")
+                    result.append({
+                        "name": item,
+                        "type": "directory",
+                        "id": child_rel_path,
+                        "children": build_tree(item_path, child_rel_path)
+                    })
+                # 跳过文件，不添加到树中
+        except Exception as e:
+            print(f"读取目录失败: {dir_path}, 错误: {e}")
+        return result
+
+    tree = build_tree(templates_dir, "")
+    return {"tree": tree}
+
+@app.get("/api/templates/preview")
+async def get_template_preview(project_path: str, relative_path: str = ""):
+    """获取 templates 下指定目录的图片预览列表（base64）"""
+    templates_dir = os.path.join(project_path, "templates")
+    target_dir = os.path.join(templates_dir, relative_path)
+
+    if not os.path.exists(target_dir):
+        return {"images": []}
+
+    images = []
+    try:
+        for item in os.listdir(target_dir):
+            item_path = os.path.join(target_dir, item)
+            if os.path.isfile(item_path) and item.lower().endswith(".png"):
+                with open(item_path, "rb") as f:
+                    img_data = base64.b64encode(f.read()).decode("utf-8")
+                    images.append({
+                        "name": item,
+                        "data": f"data:image/png;base64,{img_data}"
+                    })
+    except Exception as e:
+        print(f"读取预览失败: {e}")
+
+    return {"images": images}
+
+@app.post("/api/templates/mkdir")
+async def create_directory(request: dict):
+    """在项目 templates 目录下创建新文件夹"""
+    project_path = request.get("project_path")
+    relative_path = request.get("relative_path", "")
+    dir_name = request.get("dir_name")
+
+    if not project_path or not dir_name:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    templates_dir = os.path.join(project_path, "templates")
+    target_dir = os.path.join(templates_dir, relative_path, dir_name)
+
+    if os.path.exists(target_dir):
+        raise HTTPException(status_code=400, detail="目录已存在")
+
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        return {"status": "success", "path": os.path.join(relative_path, dir_name)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建目录失败: {str(e)}")
 
 # ---------- 启动 ----------
 if __name__ == "__main__":

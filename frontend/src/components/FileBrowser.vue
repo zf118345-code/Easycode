@@ -1,7 +1,6 @@
 <template>
   <div class="file-browser">
     <div class="browser-container">
-      <!-- 左侧目录树 -->
       <div class="tree-wrapper">
         <div class="tree-header">
           <span>📁 模板目录</span>
@@ -27,7 +26,6 @@
         </el-tree>
       </div>
 
-      <!-- 右侧预览 -->
       <div class="preview-wrapper">
         <div class="preview-header">
           <span>📷 图片预览</span>
@@ -42,7 +40,7 @@
             @click="selectImage(img)"
             @dblclick="confirmSelection"
           >
-            <img :src="img.url" :alt="img.name" />
+            <img :src="img.data" :alt="img.name" />
             <div class="preview-name">{{ img.name }}</div>
           </div>
         </div>
@@ -64,16 +62,15 @@
 import { ref, onMounted, watch } from 'vue'
 import { useMainStore } from '@/stores'
 import { ElMessage } from 'element-plus'
+import axios from 'axios'
 import { Folder } from '@element-plus/icons-vue'
 
 export default {
   name: 'FileBrowser',
   components: { Folder },
   props: {
-    modelValue: {
-      type: String,
-      default: ''
-    }
+    modelValue: { type: String, default: '' },
+    projectPath: { type: String, default: '' }
   },
   emits: ['update:modelValue', 'select', 'close'],
   setup(props, { emit }) {
@@ -81,95 +78,61 @@ export default {
     const loading = ref(false)
     const treeData = ref([])
     const treeProps = { children: 'children', label: 'name' }
-    const currentPath = ref('')
+    const currentPath = ref('/')
+    const currentRelativePath = ref('')
     const images = ref([])
     const selectedImage = ref('')
-    const currentDirHandle = ref(null)
-    const templatesHandle = ref(null)
 
     const loadTree = async () => {
-      if (!store.workspaceHandle || !store.currentProject) {
-        ElMessage.warning('请先设置工作区并选择项目')
+      const path = props.projectPath || store.currentProjectPath
+      if (!path) {
+        ElMessage.warning('请先打开项目')
         return
       }
       loading.value = true
       try {
-        const projectHandle = await store.workspaceHandle.getDirectoryHandle(store.currentProject)
-        let templates
-        try {
-          templates = await projectHandle.getDirectoryHandle('templates')
-        } catch {
-          templates = await projectHandle.getDirectoryHandle('templates', { create: true })
-        }
-        templatesHandle.value = templates
-        currentDirHandle.value = templates
+        const res = await axios.get('/api/templates/tree', {
+          params: { project_path: path }
+        })
+        treeData.value = [{
+          name: 'templates',
+          id: '',
+          children: res.data.tree || []
+        }]
         currentPath.value = '/'
-        // 构建树
-        const rootNode = await buildTree(templates, '')
-        rootNode.name = 'templates'
-        rootNode.id = ''
-        treeData.value = [rootNode]
-        // 加载根目录图片
-        await loadImages(templates)
+        currentRelativePath.value = ''
+        await loadPreview('')
       } catch (err) {
-        console.error('加载目录失败', err)
         ElMessage.error('加载目录失败')
+        console.error(err)
       } finally {
         loading.value = false
       }
     }
 
-    const buildTree = async (dirHandle, relativePath) => {
-      const node = {
-        name: dirHandle.name || '根目录',
-        id: relativePath || '',
-        children: []
-      }
-      for await (const [name, handle] of dirHandle.entries()) {
-        if (handle.kind === 'directory') {
-          const childPath = relativePath ? `${relativePath}/${name}` : name
-          const childNode = await buildTree(handle, childPath)
-          childNode.name = name
-          childNode.id = childPath
-          node.children.push(childNode)
-        }
-      }
-      node.children.sort((a, b) => a.name.localeCompare(b.name))
-      return node
-    }
-
-    const loadImages = async (dirHandle) => {
-      images.value = []
+    const loadPreview = async (relativePath) => {
+      const path = props.projectPath || store.currentProjectPath
+      if (!path) return
       try {
-        for await (const [name, handle] of dirHandle.entries()) {
-          if (handle.kind === 'file' && name.toLowerCase().endsWith('.png')) {
-            const file = await handle.getFile()
-            const url = URL.createObjectURL(file)
-            images.value.push({ name, url, handle })
+        const res = await axios.get('/api/templates/preview', {
+          params: {
+            project_path: path,
+            relative_path: relativePath
           }
-        }
-        images.value.sort((a, b) => a.name.localeCompare(b.name))
+        })
+        images.value = res.data.images || []
       } catch (err) {
-        console.warn('加载预览失败:', err)
+        console.error('加载预览失败', err)
+        images.value = []
       }
     }
 
-    const onNodeClick = async (data) => {
-      try {
-        let targetHandle = templatesHandle.value
-        if (data.id !== '') {
-          const pathParts = data.id.split('/').filter(Boolean)
-          for (const part of pathParts) {
-            targetHandle = await targetHandle.getDirectoryHandle(part)
-          }
-        }
-        currentDirHandle.value = targetHandle
-        currentPath.value = data.id === '' ? '/' : `/${data.id}`
-        await loadImages(targetHandle)
-        selectedImage.value = ''
-      } catch (err) {
-        ElMessage.error('切换目录失败')
-      }
+    const onNodeClick = async (data, node) => {
+      const relPath = data.id || ''
+      currentRelativePath.value = relPath
+      currentPath.value = relPath ? `/${relPath}` : '/'
+      await loadPreview(relPath)
+      selectedImage.value = ''
     }
 
     const selectImage = (img) => {
@@ -179,10 +142,10 @@ export default {
     const confirmSelection = () => {
       if (selectedImage.value) {
         const baseName = selectedImage.value.replace('.png', '')
-        let fullPath = currentPath.value === '/' ? '' : currentPath.value.slice(1)
-        const relPath = fullPath ? `${fullPath}/${baseName}` : baseName
-        emit('update:modelValue', relPath)
-        emit('select', relPath)
+        const relPath = currentRelativePath.value
+        const fullPath = relPath ? `${relPath}/${baseName}` : baseName
+        emit('update:modelValue', fullPath)
+        emit('select', fullPath)
         closeDialog()
       }
     }
@@ -195,16 +158,12 @@ export default {
       emit('close')
     }
 
-    // 清理 object URLs
-    const revokeUrls = () => {
-      images.value.forEach(img => URL.revokeObjectURL(img.url))
-    }
-
-    onMounted(() => {
+    // 监听项目路径变化
+    watch(() => props.projectPath, () => {
       loadTree()
     })
 
-    watch(() => store.currentProject, () => {
+    onMounted(() => {
       loadTree()
     })
 
@@ -256,15 +215,12 @@ export default {
   flex-shrink: 0;
   color: #cfd3e6;
 }
-.tree-header .el-button {
-  padding: 2px 8px;
-}
-.tree-wrapper .loading {
+.tree-body .loading {
   color: #8a8fa8;
   text-align: center;
   padding: 20px;
 }
-.tree-wrapper .el-tree {
+.tree-body .el-tree {
   flex: 1;
   overflow: auto;
   background: transparent;

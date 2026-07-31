@@ -116,17 +116,17 @@
       "node_type": "image_recognition",
       "params": {
         "image_source": "test",
-        "region_type": "fullwindow",
+        "region_type": "recorded",
         "region_value": [
-          637,
-          3,
-          63,
-          80
+          775,
+          107,
+          84,
+          115
         ],
         "region_is_relative": true,
-        "threshold": 0.3,
-        "timeout": 8000,
-        "gray_scale": false,
+        "threshold": 85,
+        "timeout": 3000,
+        "gray_scale": true,
         "on_success_action": "click_center",
         "on_success": {
           "type": "next",

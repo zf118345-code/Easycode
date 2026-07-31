@@ -5,12 +5,9 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 
 export const useMainStore = defineStore('main', {
   state: () => ({
-    // ===== 核心：当前项目路径 =====
     currentProjectPath: localStorage.getItem('currentProjectPath') || null,
     currentProjectName: null,
     recentProjects: JSON.parse(localStorage.getItem('recentProjects') || '[]'),
-
-    // ===== 任务相关 =====
     tasks: [],
     currentTaskId: null,
     currentTaskData: null,
@@ -20,14 +17,9 @@ export const useMainStore = defineStore('main', {
     batchMode: false,
     selectedNodeIds: [],
     taskNodesCache: {},
-
-    // ===== 工作面板上下文 =====
     currentContext: {
       windowTitle: '',
       isEmulator: false,
-      deviceId: '',
-      androidWidth: 0,
-      androidHeight: 0,
       offsetTop: 0,
       offsetBottom: 0,
       offsetLeft: 0,
@@ -36,7 +28,6 @@ export const useMainStore = defineStore('main', {
   }),
 
   actions: {
-    // ==================== 参数加载 ====================
     async loadParams() {
       if (Object.keys(this.params).length) return
       try {
@@ -47,7 +38,77 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // ==================== 最近项目 ====================
+    // ====== 上下文管理 ======
+    async loadContext() {
+      if (!this.currentProjectPath) return
+      try {
+        const res = await axios.get('/api/context', {
+          params: { project_path: this.currentProjectPath }
+        })
+        if (res.data) {
+          this.currentContext = {
+            windowTitle: res.data.windowTitle || '',
+            isEmulator: res.data.isEmulator || false,
+            offsetTop: res.data.offsetTop || 0,
+            offsetBottom: res.data.offsetBottom || 0,
+            offsetLeft: res.data.offsetLeft || 0,
+            offsetRight: res.data.offsetRight || 0,
+            targetContentWidth: res.data.targetContentWidth || 0,
+            targetContentHeight: res.data.targetContentHeight || 0
+          }
+        }
+      } catch (err) {
+        console.error('加载上下文失败', err)
+      }
+    },
+
+    async saveContext() {
+      if (!this.currentProjectPath) return
+      try {
+        const payload = {
+          project_path: this.currentProjectPath,
+          context: this.currentContext
+        }
+        console.log('[保存上下文] 发送到后端的数据:', JSON.stringify(payload, null, 2))
+        await axios.post('/api/context', payload)
+      } catch (err) {
+        console.error('保存上下文失败', err)
+        throw err
+      }
+    },
+
+    async setCurrentContext(context) {
+      this.currentContext = { ...this.currentContext, ...context }
+      await this.saveContext()
+    },
+
+    // ====== 项目加载 ======
+    async loadProjectByPath(projectPath) {
+      if (!projectPath) throw new Error('项目路径不能为空')
+      try {
+        const verifyRes = await axios.get('/api/projects/verify', {
+          params: { project_path: projectPath }
+        })
+        if (!verifyRes.data.exists) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
+      } catch (err) {
+        if (err.response?.status === 404) {
+          throw new Error(`项目路径不存在: ${projectPath}`)
+        }
+        throw err
+      }
+
+      this.currentProjectPath = projectPath
+      this.currentProjectName = projectPath.split(/[\\/]/).pop()
+      localStorage.setItem('currentProjectPath', projectPath)
+      this.addRecentProject(projectPath, this.currentProjectName)
+
+      await this.loadTasks()
+      await this.loadContext()
+      return true
+    },
+
     addRecentProject(path, name) {
       const entry = { path, name, lastOpened: Date.now() }
       this.recentProjects = [
@@ -57,9 +118,7 @@ export const useMainStore = defineStore('main', {
       localStorage.setItem('recentProjects', JSON.stringify(this.recentProjects))
     },
 
-
-
-    // ==================== 任务管理 ====================
+    // ====== 任务管理（所有接口均传递 project_path） ======
     async loadTasks() {
       if (!this.currentProjectPath) return
       try {
@@ -180,7 +239,6 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // ==================== 执行任务 ====================
     async runTask(taskId, startNodeId = null) {
       if (!this.currentProjectPath) {
         throw new Error('请先打开项目')
@@ -198,7 +256,6 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // ==================== 模板区域 ====================
     async getRegions() {
       if (!this.currentProjectPath) return {}
       try {
@@ -239,7 +296,6 @@ export const useMainStore = defineStore('main', {
       }
     },
 
-    // ==================== 任务节点列表 ====================
     async loadTaskNodes(taskId) {
       if (!taskId) return []
       if (this.taskNodesCache[taskId]) return this.taskNodesCache[taskId]
@@ -260,28 +316,20 @@ export const useMainStore = defineStore('main', {
       this.taskNodesCache = {}
     },
 
-    // ==================== 节点选择 ====================
     selectNode(nodeId) {
       this.selectedNodeId = nodeId
     },
 
-    // ==================== 批量操作 ====================
+    // 批量操作
     toggleBatchMode() {
       this.batchMode = !this.batchMode
-      if (!this.batchMode) {
-        this.selectedNodeIds = []
-      }
+      if (!this.batchMode) this.selectedNodeIds = []
     },
-
     toggleNodeSelection(nodeId) {
       const idx = this.selectedNodeIds.indexOf(nodeId)
-      if (idx > -1) {
-        this.selectedNodeIds.splice(idx, 1)
-      } else {
-        this.selectedNodeIds.push(nodeId)
-      }
+      if (idx > -1) this.selectedNodeIds.splice(idx, 1)
+      else this.selectedNodeIds.push(nodeId)
     },
-
     selectAllNodes() {
       const allIds = this.nodes.map(n => n.node_id)
       if (this.selectedNodeIds.length === allIds.length) {
@@ -290,7 +338,6 @@ export const useMainStore = defineStore('main', {
         this.selectedNodeIds = allIds
       }
     },
-
     async batchDeleteNodes() {
       if (!this.selectedNodeIds.length) return
       try {
@@ -309,7 +356,6 @@ export const useMainStore = defineStore('main', {
         if (err !== 'cancel') console.error(err)
       }
     },
-
     async batchSetDelay(delayMs) {
       if (!this.selectedNodeIds.length) return
       const delay = parseInt(delayMs)
@@ -329,95 +375,6 @@ export const useMainStore = defineStore('main', {
       this.batchMode = false
     },
 
-    // ==================== 工作面板上下文 ====================
-
-    getCurrentContext() {
-      return this.currentContext
-    },
-
-   // ==================== 上下文管理（前后端同步） ====================
-
-    async loadContext() {
-      /* 加载后端保存的上下文 */
-      if (!this.currentProjectPath) return
-      try {
-        const res = await axios.get('/api/context', {
-          params: { project_path: this.currentProjectPath }
-        })
-        if (res.data) {
-          // 将后端返回的字段映射到前端格式
-          this.currentContext = {
-            windowTitle: res.data.windowTitle || '',
-            isEmulator: res.data.isEmulator || false,
-            deviceId: res.data.deviceId || '',
-            androidWidth: res.data.androidWidth || 0,
-            androidHeight: res.data.androidHeight || 0,
-            offsetTop: res.data.offsetTop || 0,
-            offsetBottom: res.data.offsetBottom || 0,
-            offsetLeft: res.data.offsetLeft || 0,
-            offsetRight: res.data.offsetRight || 0
-          }
-        }
-      } catch (err) {
-        console.error('加载上下文失败', err)
-      }
-    },
-
-    async saveContext() {
-      /* 保存上下文到后端 */
-      if (!this.currentProjectPath) return
-      try {
-        await axios.post('/api/context', {
-          project_path: this.currentProjectPath,
-          context: this.currentContext
-        })
-      } catch (err) {
-        console.error('保存上下文失败', err)
-        throw err
-      }
-    },
-
-    // 修改 setCurrentContext，增加同步到后端的功能
-    async setCurrentContext(context) {
-      this.currentContext = { ...this.currentContext, ...context }
-      // 同步到后端
-      await this.saveContext()
-    },
-
-    // 修改 loadProjectByPath，加载项目后也加载上下文
-    async loadProjectByPath(projectPath) {
-      if (!projectPath) {
-        throw new Error('项目路径不能为空')
-      }
-      // 验证路径是否存在
-      try {
-        const verifyRes = await axios.get('/api/projects/verify', {
-          params: { project_path: projectPath }
-        })
-        if (!verifyRes.data.exists) {
-          throw new Error(`项目路径不存在: ${projectPath}`)
-        }
-      } catch (err) {
-        if (err.response?.status === 404) {
-          throw new Error(`项目路径不存在: ${projectPath}`)
-        }
-        throw err
-      }
-
-      // 存储路径
-      this.currentProjectPath = projectPath
-      this.currentProjectName = projectPath.split(/[\\/]/).pop()
-      localStorage.setItem('currentProjectPath', projectPath)
-      this.addRecentProject(projectPath, this.currentProjectName)
-
-      // 加载任务数据
-      await this.loadTasks()
-      // 加载保存的上下文
-      await this.loadContext()
-      return true
-    },
-
-    // ==================== 重置 ====================
     resetTaskState() {
       this.tasks = []
       this.currentTaskId = null

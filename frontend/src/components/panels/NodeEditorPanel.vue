@@ -8,10 +8,12 @@
 
       <el-divider content-position="left">参数配置</el-divider>
       <div class="params-container">
+        <!-- 遍历所有参数，并控制 region_value 的显示 -->
         <template v-for="(config, paramName) in allParams" :key="paramName">
+          <!-- 如果是 region_value，根据 region_type 决定是否显示 -->
           <div
             v-if="paramName === 'region_value'"
-            v-show="shouldShowRegionValue"
+            v-show="store.selectedNode.params.region_type !== 'fullwindow'"
             class="param-item"
           >
             <ParamRenderer
@@ -22,6 +24,7 @@
               @update="(val) => updateParam(paramName, val)"
             />
           </div>
+          <!-- 其他参数正常渲染（但排除 on_success 和 on_failure，由跳转区域单独处理） -->
           <div
             v-else-if="paramName !== 'on_success' && paramName !== 'on_failure'"
             class="param-item"
@@ -36,6 +39,7 @@
           </div>
         </template>
 
+        <!-- 跳转配置（仅判断节点） -->
         <template v-if="isJudgmentNode">
           <div v-for="jumpKey in ['on_success', 'on_failure']" :key="jumpKey" class="jump-section">
             <el-divider content-position="left">
@@ -84,10 +88,9 @@
 
 <script>
 import { useMainStore } from '@/stores'
-import { computed, watch, onBeforeUnmount, ref } from 'vue'
+import { computed, watch, onBeforeUnmount } from 'vue'
 import ParamRenderer from '@/components/ParamRenderer.vue'
 import { ElMessage } from 'element-plus'
-import axios from 'axios'
 
 const JUDGMENT_NODE_TYPES = ['image_recognition', 'branch']
 
@@ -96,7 +99,6 @@ export default {
   components: { ParamRenderer },
   setup() {
     const store = useMainStore()
-    const loadingNodes = ref({})
 
     const paramDefs = computed(() => {
       const node = store.selectedNode
@@ -120,7 +122,7 @@ export default {
       tasks: store.tasks || [],
       nodes: store.nodes || [],
       currentTaskId: store.currentTaskId,
-      currentProject: store.currentProject,
+      currentProject: store.currentProjectPath,   // 改为 project_path
       taskNodesCache: store.taskNodesCache || {}
     }))
 
@@ -162,10 +164,8 @@ export default {
         if (!jumpData) return ['']
         const taskId = jumpData.target
         if (!taskId) return ['']
-        // 从 store 缓存获取
         const cached = store.taskNodesCache?.[taskId]
         if (cached) return cached.map(n => n.node_id)
-        // 异步加载
         try {
           const nodes = await store.loadTaskNodes(taskId)
           return nodes.map(n => n.node_id)
@@ -215,7 +215,6 @@ export default {
       }
       if (subKey === 'target' && node.params[jumpKey].type === 'task') {
         node.params[jumpKey].target_node = ''
-        // 预加载目标任务的节点列表
         if (value) {
           await store.loadTaskNodes(value)
         }
@@ -232,31 +231,41 @@ export default {
       }
     }
 
+    // ====== 修复：加载 regions 使用 store.getRegions ======
+    const loadRegionFromStorage = async (node) => {
+      if (!store.currentProjectPath) {
+        ElMessage.warning('请先打开项目')
+        return
+      }
+      const templateName = node.params.image_source
+      if (!templateName) {
+        ElMessage.warning('请先选择模板图片')
+        return
+      }
+      try {
+        const regions = await store.getRegions()
+        if (regions[templateName]) {
+          node.params.region_value = regions[templateName]
+          node._originalRegionValue = [...regions[templateName]]
+        } else {
+          node.params.region_value = [0, 0, 0, 0]
+          node._originalRegionValue = [0, 0, 0, 0]
+          ElMessage.warning('未找到该图片的区域配置，将使用全屏匹配')
+        }
+      } catch (err) {
+        console.error('加载区域配置失败', err)
+        ElMessage.error('加载区域配置失败')
+      }
+    }
+
+    // 监听 region_type 变化
     const unwatchRegionType = watch(
       () => store.selectedNode?.params?.region_type,
       async (newVal, oldVal) => {
         const node = store.selectedNode
         if (!node) return
         if (newVal === 'recorded' && newVal !== oldVal) {
-          const templateName = node.params.image_source
-          if (!templateName) {
-            ElMessage.warning('请先选择模板图片')
-            return
-          }
-          try {
-            const res = await axios.get(`/api/projects/${store.currentProject}/regions`)
-            const regions = res.data || {}
-            if (regions[templateName]) {
-              node.params.region_value = regions[templateName]
-              node._originalRegionValue = [...regions[templateName]]
-            } else {
-              node.params.region_value = [0, 0, 0, 0]
-              node._originalRegionValue = [0, 0, 0, 0]
-              ElMessage.warning('未找到该图片的区域配置，将使用全屏匹配')
-            }
-          } catch (err) {
-            console.error('加载区域配置失败', err)
-          }
+          await loadRegionFromStorage(node)
         }
       }
     )

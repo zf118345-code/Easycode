@@ -26,21 +26,16 @@
       <el-form-item label="模拟器模式">
         <el-switch v-model="localContext.isEmulator" />
       </el-form-item>
-      <template v-if="localContext.isEmulator">
-        <el-form-item label="设备 ID">
-          <el-input v-model="localContext.deviceId" placeholder="如 127.0.0.1:5555" />
-        </el-form-item>
-        <el-form-item label="分辨率">
-          <el-input-number v-model="localContext.androidWidth" :min="0" controls-position="right" style="width:100px;" />
-          <span style="margin:0 8px;">x</span>
-          <el-input-number v-model="localContext.androidHeight" :min="0" controls-position="right" style="width:100px;" />
-        </el-form-item>
-      </template>
       <el-form-item label="裁剪 (T,B,L,R)">
         <el-input-number v-model="localContext.offsetTop" :min="0" controls-position="right" style="width:80px;" />
         <el-input-number v-model="localContext.offsetBottom" :min="0" controls-position="right" style="width:80px;" />
         <el-input-number v-model="localContext.offsetLeft" :min="0" controls-position="right" style="width:80px;" />
         <el-input-number v-model="localContext.offsetRight" :min="0" controls-position="right" style="width:80px;" />
+      </el-form-item>
+      <el-form-item label="目标内容尺寸">
+        <el-input-number v-model="localContext.targetContentWidth" :min="0" placeholder="宽" style="width:100px;" />
+        <span style="margin:0 4px;">×</span>
+        <el-input-number v-model="localContext.targetContentHeight" :min="0" placeholder="高" style="width:100px;" />
       </el-form-item>
     </el-form>
     <template #footer>
@@ -62,7 +57,16 @@ export default {
   emits: ['update:visible', 'apply'],
   setup(props, { emit }) {
     const store = useMainStore()
-    const localContext = ref({ ...store.currentContext })
+    const localContext = ref({
+      windowTitle: store.currentContext.windowTitle || '',
+      isEmulator: store.currentContext.isEmulator || false,
+      offsetTop: store.currentContext.offsetTop || 0,
+      offsetBottom: store.currentContext.offsetBottom || 0,
+      offsetLeft: store.currentContext.offsetLeft || 0,
+      offsetRight: store.currentContext.offsetRight || 0,
+      targetContentWidth: store.currentContext.targetContentWidth || 0,
+      targetContentHeight: store.currentContext.targetContentHeight || 0
+    })
     const windowList = ref([])
 
     const dialogVisible = computed({
@@ -72,7 +76,16 @@ export default {
 
     watch(() => props.visible, (val) => {
       if (val) {
-        localContext.value = { ...store.currentContext }
+        localContext.value = {
+          windowTitle: store.currentContext.windowTitle || '',
+          isEmulator: store.currentContext.isEmulator || false,
+          offsetTop: store.currentContext.offsetTop || 0,
+          offsetBottom: store.currentContext.offsetBottom || 0,
+          offsetLeft: store.currentContext.offsetLeft || 0,
+          offsetRight: store.currentContext.offsetRight || 0,
+          targetContentWidth: store.currentContext.targetContentWidth || 0,
+          targetContentHeight: store.currentContext.targetContentHeight || 0
+        }
         fetchWindows()
       }
     })
@@ -87,7 +100,6 @@ export default {
     }
 
     const applyContext = () => {
-      // 发出 apply 事件，由父组件处理保存
       emit('apply', localContext.value)
       dialogVisible.value = false
     }

@@ -45,16 +45,13 @@ import ScreenshotTool from './ScreenshotTool.vue'
 export default {
   components: { Menu, ScreenshotTool },
   data() {
-    return {
-      activeMenu: 'file'
-    }
+    return { activeMenu: 'file' }
   },
   setup() {
     const store = useMainStore()
     return { store }
   },
   methods: {
-    // ====== 切换项目 ======
     async switchProject() {
       try {
         const { value: path } = await ElMessageBox.prompt('请输入新的项目完整路径', '切换项目', {
@@ -67,7 +64,6 @@ export default {
         if (path) {
           await this.store.loadProjectByPath(path)
           ElMessage.success(`已切换到项目: ${this.store.currentProjectName}`)
-          // 刷新节点列表
           this.store.selectedNodeId = null
         }
       } catch (err) {
@@ -76,19 +72,13 @@ export default {
         }
       }
     },
-
-    // ====== 菜单选择 ======
     onMenuSelect(index) {
       this.activeMenu = index
       if (index === 'screenshot') this.openScreenshot()
     },
-
-    // ====== 截图工具 ======
     openScreenshot() {
       this.$refs.screenshotTool.open()
     },
-
-    // ====== 运行任务 ======
     async runTask() {
       if (!this.store.currentTaskId) {
         ElMessage.warning('请先选择一个任务')
@@ -107,11 +97,7 @@ export default {
         console.error(err)
       }
     },
-
-    // ====== 菜单 ======
-    toggleMenu() {
-      // 预留
-    }
+    toggleMenu() {}
   }
 }
 </script>

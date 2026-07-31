@@ -3,6 +3,8 @@ import time
 import logging
 import os
 import shutil
+import win32gui
+import win32con
 from core.registry import NodeExecutorRegistry
 from core.models import Task, Node, Jump
 
@@ -11,82 +13,28 @@ logger = logging.getLogger(__name__)
 class GraphExecutor:
     def __init__(self, project, project_dir=None, text_log_enabled=True, image_log_enabled=True, initial_context=None):
         self.project = project
-        self.project_dir = project_dir  # 新增
         self.tasks = project.tasks
         self.variables = project.variables.copy()
         self.current_task = None
         self.current_task_id = None
         self.current_node_index = 0
         self._stop = False
-        self.window_hwnd = None
-        self.window_rect = None
         self.text_log_enabled = text_log_enabled
         self.image_log_enabled = image_log_enabled
         self._clear_debug_dir()
+
+        # 窗口上下文
         self.is_emulator = False
-        self.device_id = None
-        self.android_width = None
-        self.android_height = None
+        self.device_id = None       # 由 set_window 节点动态设置
+        self.android_width = None   # 由 set_window 节点动态设置
+        self.android_height = None  # 由 set_window 节点动态设置
+        self.window_hwnd = None
+        self.window_rect = None
+        self.project_dir = project_dir
 
         # 应用保存的上下文
         if initial_context:
             self._apply_context(initial_context)
-
-    def _apply_context(self, context):
-        """应用保存的上下文到执行器"""
-        # 支持两种命名方式
-        window_title = context.get("window_title") or context.get("windowTitle", "")
-        if not window_title:
-            print("上下文中没有窗口标题，跳过窗口设置")
-            return
-
-        import win32gui
-        import win32con
-        hwnd = win32gui.FindWindow(None, window_title)
-        if not hwnd:
-            print(f"未找到窗口: {window_title}")
-            return
-
-        # 激活窗口
-        try:
-            if win32gui.IsIconic(hwnd):
-                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-            win32gui.SetForegroundWindow(hwnd)
-            win32gui.BringWindowToTop(hwnd)
-            print(f"窗口已激活: {window_title}")
-        except Exception as e:
-            print(f"激活窗口失败: {e}")
-
-        # 获取客户区
-        client_rect = win32gui.GetClientRect(hwnd)
-        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-
-        # 应用裁剪（支持两种命名）
-        offset_top = context.get("offset_top") or context.get("offsetTop", 0)
-        offset_bottom = context.get("offset_bottom") or context.get("offsetBottom", 0)
-        offset_left = context.get("offset_left") or context.get("offsetLeft", 0)
-        offset_right = context.get("offset_right") or context.get("offsetRight", 0)
-
-        new_left = left + offset_left
-        new_top = top + offset_top
-        new_width = (right - left) - offset_left - offset_right
-        new_height = (bottom - top) - offset_top - offset_bottom
-
-        if new_width > 0 and new_height > 0:
-            self.window_rect = (new_left, new_top, new_width, new_height)
-            self.window_hwnd = hwnd
-            print(f"应用上下文窗口: {window_title}, 区域: {self.window_rect}")
-        else:
-            print(f"裁剪后区域无效: {new_width}x{new_height}")
-
-        # 模拟器模式（支持两种命名）
-        self.is_emulator = context.get("is_emulator") or context.get("isEmulator", False)
-        if self.is_emulator:
-            self.device_id = context.get("device_id") or context.get("deviceId", "")
-            self.android_width = context.get("android_width") or context.get("androidWidth", 0)
-            self.android_height = context.get("android_height") or context.get("androidHeight", 0)
-            print(f"应用上下文: 模拟器模式, 设备: {self.device_id}, 分辨率: {self.android_width}x{self.android_height}")
 
     def _clear_debug_dir(self):
         debug_dir = "debug_screenshots"
@@ -229,3 +177,121 @@ class GraphExecutor:
             logger.warning(msg)
         elif level == "error":
             logger.error(msg)
+
+    # ====== 应用上下文（核心方法） ======
+    def _apply_context(self, context):
+        """应用保存的上下文到执行器"""
+        import json
+        print("\n" + "=" * 60)
+        print("📥 [应用上下文] 执行器收到的上下文数据:")
+        print(json.dumps(context, indent=2, ensure_ascii=False))
+        print("=" * 60 + "\n")
+
+        # 支持两种命名方式：下划线 和 驼峰
+        window_title = context.get("window_title") or context.get("windowTitle", "")
+        if not window_title:
+            print("⚠️ [应用上下文] 上下文中没有窗口标题，跳过窗口设置")
+            return
+
+        print(f"🔍 [应用上下文] 尝试查找窗口: {window_title}")
+        hwnd = win32gui.FindWindow(None, window_title)
+        if not hwnd:
+            print(f"❌ [应用上下文] 未找到窗口: {window_title}")
+            return
+
+        # 激活窗口
+        try:
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            win32gui.BringWindowToTop(hwnd)
+            print(f"✅ [应用上下文] 窗口已激活: {window_title}")
+        except Exception as e:
+            print(f"⚠️ [应用上下文] 激活窗口失败: {e}")
+
+        # 获取客户区
+        client_rect = win32gui.GetClientRect(hwnd)
+        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
+
+        # 应用裁剪
+        offset_top = context.get("offset_top") or context.get("offsetTop", 0)
+        offset_bottom = context.get("offset_bottom") or context.get("offsetBottom", 0)
+        offset_left = context.get("offset_left") or context.get("offsetLeft", 0)
+        offset_right = context.get("offset_right") or context.get("offsetRight", 0)
+
+        new_left = left + offset_left
+        new_top = top + offset_top
+        new_width = (right - left) - offset_left - offset_right
+        new_height = (bottom - top) - offset_top - offset_bottom
+
+        print(f"📐 [应用上下文] 窗口原始客户区: 左上({left},{top}) 宽{right - left} 高{bottom - top}")
+        print(
+            f"📐 [应用上下文] 裁剪偏移: top={offset_top}, bottom={offset_bottom}, left={offset_left}, right={offset_right}")
+        print(f"📐 [应用上下文] 裁剪后区域: 左上({new_left},{new_top}) 宽{new_width} 高{new_height}")
+
+        if new_width > 0 and new_height > 0:
+            self.window_rect = (new_left, new_top, new_width, new_height)
+            self.window_hwnd = hwnd
+            print(f"✅ [应用上下文] 窗口区域已设置: {self.window_rect}")
+            # ====== 关键修复：存储 content_offset 到 variables ======
+            self.variables["window_content_offset"] = {
+                "top": offset_top,
+                "bottom": offset_bottom,
+                "left": offset_left,
+                "right": offset_right
+            }
+            print(f"📌 [应用上下文] 已存储 content_offset: {self.variables['window_content_offset']}")
+        else:
+            print(f"❌ [应用上下文] 裁剪后区域无效: {new_width}x{new_height}")
+
+        # 模拟器模式
+        self.is_emulator = context.get("is_emulator") or context.get("isEmulator", False)
+        if self.is_emulator:
+            print(f"📱 [应用上下文] 模拟器模式: 已启用（设备信息由 set_window 节点自动检测）")
+
+        # ====== 新增：如果上下文中包含目标内容尺寸，则 resize 窗口 ======
+        target_w = context.get("target_content_width") or context.get("targetContentWidth")
+        target_h = context.get("target_content_height") or context.get("targetContentHeight")
+        if target_w and target_h and hwnd:
+            print(f"📏 [应用上下文] 检测到目标内容尺寸: {target_w}x{target_h}，开始调整窗口...")
+            try:
+                # 获取当前窗口位置
+                window_rect = win32gui.GetWindowRect(hwnd)
+                pos_x, pos_y = window_rect[0], window_rect[1]
+
+                # 获取边框尺寸
+                cur_client_rect = win32gui.GetClientRect(hwnd)
+                cur_window_rect = win32gui.GetWindowRect(hwnd)
+                border_w = (cur_window_rect[2] - cur_window_rect[0]) - cur_client_rect[2]
+                border_h = (cur_window_rect[3] - cur_window_rect[1]) - cur_client_rect[3]
+
+                # 目标客户区尺寸 = 内容尺寸 + 偏移
+                client_w = target_w + offset_left + offset_right
+                client_h = target_h + offset_top + offset_bottom
+
+                outer_w = client_w + border_w
+                outer_h = client_h + border_h
+
+                print(f"📏 [应用上下文] 边框尺寸: 宽{border_w} 高{border_h}")
+                print(f"📏 [应用上下文] 目标客户区: {client_w}x{client_h}")
+                print(f"📏 [应用上下文] 目标外边框: {outer_w}x{outer_h}")
+
+                win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h,
+                                      win32con.SWP_NOZORDER)
+                print(
+                    f"✅ [应用上下文] 窗口已调整: 外边框 {outer_w}x{outer_h}，客户区 {client_w}x{client_h}，内容区 {target_w}x{target_h}")
+
+                # 更新 window_rect
+                new_left, new_top = win32gui.ClientToScreen(hwnd, (0, 0))
+                new_right, new_bottom = win32gui.ClientToScreen(hwnd, (client_w, client_h))
+                self.window_rect = (new_left + offset_left, new_top + offset_top,
+                                    client_w - offset_left - offset_right,
+                                    client_h - offset_top - offset_bottom)
+                print(f"✅ [应用上下文] 更新后的窗口区域: {self.window_rect}")
+            except Exception as e:
+                print(f"❌ [应用上下文] resize 失败: {e}")
+        else:
+            print("ℹ️ [应用上下文] 上下文中未设置目标内容尺寸，跳过 resize")
+
+        print("=" * 60 + "\n")
