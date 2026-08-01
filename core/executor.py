@@ -132,22 +132,29 @@ class GraphExecutor:
     def _handle_jump(self, jump):
         if self.text_log_enabled:
             logger.info(f"执行跳转: type={jump.type}, target={jump.target}, target_node={jump.target_node}")
+
         if jump.type == "next":
             self.current_node_index += 1
+
         elif jump.type == "node":
-            target_node = next((n for n in self.current_task.nodes if n.node_id == jump.target), None)
+            # 直接使用 jump.target_node（必须是有效节点ID）
+            target_node = next((n for n in self.current_task.nodes if n.node_id == jump.target_node), None)
             if target_node:
                 self.current_node_index = self.current_task.nodes.index(target_node)
             else:
                 if self.text_log_enabled:
-                    logger.error(f"未找到目标节点: {jump.target}")
+                    logger.error(f"未找到目标节点: {jump.target_node}")
+
         elif jump.type == "task":
+            # jump.target 是任务ID，jump.target_node 是可选的节点ID
             self._execute_task(jump.target, jump.target_node)
             if not jump.return_on_complete:
                 self._stop = True
+
         elif jump.type == "end":
             self._stop = True
             raise StopIteration()
+
         else:
             if self.text_log_enabled:
                 logger.error(f"未知跳转类型: {jump.type}")

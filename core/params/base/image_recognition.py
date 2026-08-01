@@ -9,19 +9,33 @@ PARAM_DEFINITIONS = {
             },
             "region_type": {
                 "type": "select",
-                "options": ["fullwindow", "recorded", "custom"],
+                "options": [
+                    {"value": "fullwindow", "label": "全屏"},
+                    {"value": "recorded", "label": "录入区域"},
+                    {"value": "custom", "label": "自定义"}
+                ],
                 "default": "fullwindow",
                 "label": "搜索区域类型"
             },
             "region_value": {
                 "type": "list_int4",
                 "default": [0, 0, 0, 0],
-                "label": "区域坐标 (x,y,w,h)"
+                "label": "区域坐标 (x,y,w,h)",
+                "visible_if": {
+                    "field": "region_type",
+                    "operator": "ne",
+                    "value": "fullwindow"
+                }
             },
             "region_is_relative": {
                 "type": "bool",
                 "default": True,
-                "label": "相对窗口"
+                "label": "相对窗口",
+                "visible_if": {
+                    "field": "region_type",
+                    "operator": "ne",
+                    "value": "fullwindow"
+                }
             },
             "threshold": {
                 "type": "int",
@@ -44,31 +58,49 @@ PARAM_DEFINITIONS = {
             },
             "on_success_action": {
                 "type": "select",
-                "options": ["noop", "click_center"],
-                "default": "noop",
+                "options": [
+                    {"value": "noop", "label": "无操作"},
+                    {"value": "click_center", "label": "点击图片中心"}
+                ],
+                "default": "click_center",
                 "label": "成功操作"
             },
             "on_success": {
                 "type": "dict",
-                "label": "成功跳转",
+                "label": "成功跳转",   # ← 修正
                 "sub": {
-                    "type": {
+                    "jump_type": {
                         "type": "select",
-                        "options": ["next", "node", "task", "end"],
+                        "options": [
+                            {"value": "next", "label": "下一个节点"},
+                            {"value": "node", "label": "跳转节点"},
+                            {"value": "task", "label": "跳转任务"},
+                            {"value": "end", "label": "结束流程"}
+                        ],
                         "default": "next",
                         "label": "跳转类型"
                     },
-                    "target": {
+                    "target_task": {
                         "type": "select",
                         "options": [],
-                        "label": "目标",
-                        "default": ""
+                        "label": "目标任务",
+                        "default": "",
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "eq",
+                            "value": "task"
+                        }
                     },
                     "target_node": {
                         "type": "select",
                         "options": [],
                         "label": "目标节点",
-                        "default": ""
+                        "default": "",
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "in",
+                            "value": ["node", "task"]
+                        }
                     }
                 }
             },
@@ -76,23 +108,38 @@ PARAM_DEFINITIONS = {
                 "type": "dict",
                 "label": "失败跳转",
                 "sub": {
-                    "type": {
+                    "jump_type": {
                         "type": "select",
-                        "options": ["next", "node", "task", "end"],
+                        "options": [
+                            {"value": "next", "label": "下一个节点"},
+                            {"value": "node", "label": "跳转节点"},
+                            {"value": "task", "label": "跳转任务"},
+                            {"value": "end", "label": "结束流程"}
+                        ],
                         "default": "next",
                         "label": "跳转类型"
                     },
-                    "target": {
+                    "target_task": {
                         "type": "select",
                         "options": [],
-                        "label": "目标",
-                        "default": ""
+                        "label": "目标任务",
+                        "default": "",
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "eq",
+                            "value": "task"
+                        }
                     },
                     "target_node": {
                         "type": "select",
                         "options": [],
                         "label": "目标节点",
-                        "default": ""
+                        "default": "",
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "in",
+                            "value": ["node", "task"]
+                        }
                     }
                 }
             }

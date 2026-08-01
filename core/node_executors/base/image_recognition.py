@@ -17,35 +17,17 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
         params = node.params
 
-        # ----- 1. 模板图片（兼容新旧结构） -----
-        if "image_source" in params and isinstance(params["image_source"], str):
-            template_name = params["image_source"]
-        else:
-            image_source = params.get("image_source", {})
-            template_name = image_source.get("data", "")
-            if image_source.get("type") != "file" and not template_name:
-                context.log("不支持的图片源类型", "error")
-                return {"success": False, "error": "unsupported image source type"}
-
+        # ===== 1. 模板图片 =====
+        template_name = params.get("image_source", "")
         if not template_name:
             context.log("未指定模板图片名称", "error")
             return {"success": False, "error": "template name missing"}
 
-        # 使用项目路径构建模板目录
         templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
-        possible_paths = [
-            os.path.normpath(os.path.join(templates_dir, template_name + ".png")),
-            os.path.normpath(os.path.join(templates_dir, template_name + ".PNG")),
-        ]
+        template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
 
-        template_path = None
-        for p in possible_paths:
-            if os.path.exists(p):
-                template_path = p
-                break
-
-        if template_path is None:
-            context.log(f"模板文件不存在，尝试过的路径: {possible_paths}", "error")
+        if not os.path.exists(template_path):
+            context.log(f"模板文件不存在: {template_path}", "error")
             return {"success": False, "error": "template not found"}
 
         try:
@@ -54,16 +36,10 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
             context.log(f"模板文件加载失败: {template_path}", "error")
             return {"success": False, "error": "template not found"}
 
-        # ----- 2. 搜索区域（兼容新旧结构） -----
-        if "region_type" in params:
-            region_type = params.get("region_type", "fullwindow")
-            region_value = params.get("region_value", [0, 0, 0, 0])
-            region_is_relative = params.get("region_is_relative", False)
-        else:
-            region_conf = params.get("region", {})
-            region_type = region_conf.get("type", "fullwindow")
-            region_value = region_conf.get("value", [0, 0, 0, 0])
-            region_is_relative = region_conf.get("is_relative", False)
+        # ===== 2. 搜索区域 =====
+        region_type = params.get("region_type", "fullwindow")
+        region_value = params.get("region_value", [0, 0, 0, 0])
+        region_is_relative = params.get("region_is_relative", False)
 
         if region_type == "fullwindow":
             region_rect = context.get_window_rect()
@@ -81,20 +57,19 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         else:
             region_rect = context.get_window_rect()
 
-        # ----- 3. 参数：阈值、超时、灰度 -----
+        # ===== 3. 参数：阈值、超时、灰度 =====
         threshold = params.get("threshold", 85) / 100.0
-        timeout = params.get("timeout", 3000) / 1000.0  # 转换为秒
+        timeout = params.get("timeout", 3000) / 1000.0
         gray_scale = params.get("gray_scale", False)
 
-        # ----- 4. 执行匹配（详细日志） -----
+        # ===== 4. 执行匹配 =====
         start_time = time.time()
         found = False
         pos = None
         max_val = 0.0
         attempt = 0
 
-        # 打印详细调试信息
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("【图像识别调试】")
         print(f"模板名称: {template_name}")
         print(f"模板尺寸: {template.shape if template is not None else 'None'}")
@@ -103,30 +78,23 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         print(f"阈值 (threshold): {threshold:.2f}")
         print(f"超时时间 (timeout): {timeout} 秒")
         print(f"灰度匹配: {gray_scale}")
-        print("="*60)
+        print("=" * 60)
 
         while time.time() - start_time < timeout:
             attempt += 1
             try:
                 screenshot = pyautogui.screenshot(region=region_rect)
                 screen = np.array(screenshot)
-                print(f"第 {attempt} 次截图，截图尺寸: {screen.shape if screen is not None else 'None'}")
 
                 if gray_scale:
-                    if len(screen.shape) == 3:
-                        screen_gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
-                    else:
-                        screen_gray = screen
-                    if len(template.shape) == 3:
-                        template_gray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
-                    else:
-                        template_gray = template
+                    screen_gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
+                    template_gray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
                     result = cv2.matchTemplate(screen_gray, template_gray, cv2.TM_CCOEFF_NORMED)
                 else:
                     result = cv2.matchTemplate(screen, template, cv2.TM_CCOEFF_NORMED)
 
                 _, max_val, _, max_loc = cv2.minMaxLoc(result)
-                print(f"  匹配分数: {max_val:.4f}")
+                print(f"第 {attempt} 次匹配，分数: {max_val:.4f}")
 
                 if max_val >= threshold:
                     found = True
@@ -146,74 +114,58 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
 
             time.sleep(0.1)
 
-        # 循环结束，打印最终结果
         if found:
             print(f"最终结果: 匹配成功，最高分数: {max_val:.4f}，位置: {pos}")
         else:
             print(f"最终结果: 匹配失败，最高分数: {max_val:.4f}，尝试次数: {attempt}")
-        print("="*60 + "\n")
+        print("=" * 60 + "\n")
 
-        # 保存调试截图（如果启用）
         if context.image_log_enabled:
             self._save_debug_screenshot(screen, template_name, context)
 
-        # ----- 5. 处理结果 -----
+        # ===== 5. 处理结果 =====
         if found:
             context.log(f"匹配成功: {template_name}, 位置: {pos}, 置信度: {max_val:.2f}")
 
             # 成功操作
-            action = params.get("on_success_action")
-            if isinstance(action, str):
-                action_type = action
-                click_count = 1
-                var_name = ""
-            else:
-                action_conf = params.get("on_success_action", {})
-                action_type = action_conf.get("type", "noop")
-                click_count = action_conf.get("click_count", 1)
-                var_name = action_conf.get("var_name", "")
-
-            if action_type == "click_center":
-                pyautogui.click(pos[0], pos[1], clicks=click_count)
-            elif action_type == "assign_variable":
-                if var_name:
-                    context.variables[var_name] = pos
+            action = params.get("on_success_action", "noop")
+            if action == "click_center":
+                pyautogui.click(pos[0], pos[1], clicks=1)
 
             # 成功跳转
             success_jump = params.get("on_success", {})
-            if success_jump:
-                jump_type = success_jump.get("type", "next")
-                target = success_jump.get("target", "")
-                target_node = success_jump.get("target_node", "")
-            else:
-                jump_type = "next"
-                target = ""
-                target_node = ""
+            jump_type = success_jump.get("jump_type", "next")
+            target_task = success_jump.get("target_task", "")
+            target_node = success_jump.get("target_node", "")
 
             return {
                 "success": True,
                 "pos": pos,
                 "confidence": max_val,
-                "jump": {"type": jump_type, "target": target, "target_node": target_node}
+                "jump": {
+                    "type": jump_type,
+                    "target": target_task,
+                    "target_node": target_node
+                }
             }
+
         else:
             context.log(f"匹配超时: {template_name}, 最高置信度: {max_val:.2f}")
 
             # 失败跳转
             failure_jump = params.get("on_failure", {})
-            if failure_jump:
-                jump_type = failure_jump.get("type", "next")
-                target = failure_jump.get("target", "")
-                target_node = failure_jump.get("target_node", "")
-            else:
-                jump_type = "next"
-                target = ""
-                target_node = ""
+            jump_type = failure_jump.get("jump_type", "next")
+            target_task = failure_jump.get("target_task", "")
+            target_node = failure_jump.get("target_node", "")
 
             return {
                 "success": False,
                 "timeout": True,
-                "jump": {"type": jump_type, "target": target, "target_node": target_node}
+                "jump": {
+                    "type": jump_type,
+                    "target": target_task,
+                    "target_node": target_node
+                }
             }
 
     def _save_debug_screenshot(self, screen, template_name, context):
@@ -225,6 +177,7 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         filepath = os.path.join(self.debug_dir, filename)
         cv2.imwrite(filepath, cv2.cvtColor(screen, cv2.COLOR_RGB2BGR))
         context.log(f"调试截图已保存: {filepath}")
+
         files = sorted(
             [f for f in os.listdir(self.debug_dir) if f.endswith(".png")],
             key=lambda x: os.path.getmtime(os.path.join(self.debug_dir, x))

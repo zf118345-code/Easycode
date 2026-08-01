@@ -512,6 +512,26 @@ async def get_context(project_path: str):
         "targetContentHeight": data.get("target_content_height", 0)
     }
 
+@app.get("/api/tasks/{task_id}/nodes")
+async def get_task_nodes(task_id: str, project_path: str):
+    """获取指定任务的节点列表（用于跳转选择）"""
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="项目不存在")
+    try:
+        project = load_project(project_path)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
+    task = project.tasks.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    nodes = []
+    for node in task.nodes:
+        nodes.append({
+            "node_id": node.node_id,
+            "node_name": node.node_name
+        })
+    return nodes
+
 # ==================== 导入项目（保留兼容） ====================
 @app.post("/api/projects/import/file")
 async def import_file(

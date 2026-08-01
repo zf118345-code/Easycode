@@ -10,6 +10,7 @@ from core.emulator_presets import get_emulator_offset
 
 logger = logging.getLogger(__name__)
 
+
 @NodeExecutorRegistry.register("set_window")
 class SetWindowNodeExecutor(BaseNodeExecutor):
 
@@ -18,12 +19,12 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         title = params.get("title")
         if not title:
             context.log("set_window 缺少 title 参数", "error")
-            return {"success": False, "error": "missing title"}
+            return self._result(False, params.get("on_failure", {}), error="missing title")
 
         hwnd = win32gui.FindWindow(None, title)
         if not hwnd:
             context.log(f"未找到窗口: {title}", "warning")
-            return {"success": False, "error": f"window not found: {title}"}
+            return self._result(False, params.get("on_failure", {}), error=f"window not found: {title}")
 
         if params.get("activate", True):
             try:
@@ -39,9 +40,9 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         client_rect = win32gui.GetClientRect(hwnd)
         left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
         right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-        original_rect = (left, top, right-left, bottom-top)
+        original_rect = (left, top, right - left, bottom - top)
 
-        # 获取内容偏移（用户配置或预设）
+        # 获取内容偏移
         content_offset = params.get("content_offset")
         if not content_offset or all(v == 0 for v in content_offset.values()):
             if params.get("is_emulator", False):
@@ -53,16 +54,15 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
             for k in ["top", "bottom", "left", "right"]:
                 content_offset.setdefault(k, 0)
 
-        # 计算内容区域
         new_left = left + content_offset["left"]
         new_top = top + content_offset["top"]
         new_width = original_rect[2] - content_offset["left"] - content_offset["right"]
         new_height = original_rect[3] - content_offset["top"] - content_offset["bottom"]
         content_rect = (new_left, new_top, new_width, new_height)
 
-        # === 关键：更新上下文 ===
+        # 更新上下文
         context.window_hwnd = hwnd
-        context.window_rect = content_rect          # 后续操作使用此区域
+        context.window_rect = content_rect
         context.variables["window_hwnd"] = hwnd
         context.variables["window_rect"] = content_rect
         context.variables["window_original_rect"] = original_rect
@@ -95,11 +95,21 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
                 context.is_emulator = False
 
         context.log(f"窗口已设置: {title}, 内容区域: {content_rect}, 模拟器: {is_emulator}")
-        return {"success": True}
+        return self._result(True, params.get("on_success", {}))
 
-    # 辅助方法保持不变
+    def _result(self, success, jump_conf, error=None):
+        result = {"success": success}
+        if error:
+            result["error"] = error
+        result["jump"] = {
+            "type": jump_conf.get("jump_type", "next"),
+            "target": jump_conf.get("target_task", ""),
+            "target_node": jump_conf.get("target_node", "")
+        }
+        return result
+
+    # ---------- 辅助方法（不变） ----------
     def _auto_detect_device(self, title):
-        import re
         match = re.search(r'(\d{4,5})$', title)
         if match:
             port = match.group(1)
@@ -112,8 +122,10 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
 
     def _check_device(self, device_id):
         try:
-            result = subprocess.run(["adb", "-s", device_id, "shell", "echo", "test"],
-                                    capture_output=True, text=True, timeout=2)
+            result = subprocess.run(
+                ["adb", "-s", device_id, "shell", "echo", "test"],
+                capture_output=True, text=True, timeout=2
+            )
             return result.returncode == 0 and "test" in result.stdout
         except:
             return False
@@ -141,7 +153,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         except:
             return None, None
 
-# 保留 reset_window 和 resize_window
+
 @NodeExecutorRegistry.register("reset_window")
 class ResetWindowNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
@@ -156,29 +168,23 @@ class ResetWindowNodeExecutor(BaseNodeExecutor):
         context.log("已切换回桌面全屏模式")
         return {"success": True}
 
+
 @NodeExecutorRegistry.register("resize_window")
 class ResizeWindowNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
-        """
-        根据内容区域的目标尺寸调整窗口大小。
-        参数：
-            target_content_width: 目标内容宽度
-            target_content_height: 目标内容高度
-        计算：客户区尺寸 = 内容尺寸 + 偏移量（内容偏移 + 边框）
-        """
+        params = node.params
+
         if context.window_hwnd is None:
             context.log("未设置窗口，无法调整大小", "error")
-            return {"success": False, "error": "no window set"}
+            return self._result(False, params.get("on_failure", {}), error="no window set")
 
-        params = node.params
         target_w = params.get("target_content_width")
         target_h = params.get("target_content_height")
         if target_w is None or target_h is None:
             context.log("resize_window 需要 target_content_width 和 target_content_height", "error")
-            return {"success": False, "error": "missing target dimensions"}
+            return self._result(False, params.get("on_failure", {}), error="missing target dimensions")
 
         hwnd = context.window_hwnd
-        # 获取原始客户区尺寸和偏移
         original_rect = context.variables.get("window_original_rect")
         content_offset = context.variables.get("window_content_offset", {})
         if not original_rect:
@@ -188,47 +194,55 @@ class ResizeWindowNodeExecutor(BaseNodeExecutor):
             original_rect = (left, top, right - left, bottom - top)
             context.variables["window_original_rect"] = original_rect
 
-        # 读取偏移（确保所有值存在）
         offset_left = content_offset.get("left", 0)
         offset_right = content_offset.get("right", 0)
         offset_top = content_offset.get("top", 0)
         offset_bottom = content_offset.get("bottom", 0)
 
-        # 目标客户区尺寸 = 目标内容 + 偏移
         client_w = target_w + offset_left + offset_right
         client_h = target_h + offset_top + offset_bottom
 
-        # 获取当前窗口位置（保留位置不变）
         window_rect = win32gui.GetWindowRect(hwnd)
         pos_x, pos_y = window_rect[0], window_rect[1]
 
-        # 计算边框宽度和高度（外边框 - 客户区）
         cur_client_rect = win32gui.GetClientRect(hwnd)
         cur_window_rect = win32gui.GetWindowRect(hwnd)
         border_w = (cur_window_rect[2] - cur_window_rect[0]) - cur_client_rect[2]
         border_h = (cur_window_rect[3] - cur_window_rect[1]) - cur_client_rect[3]
 
-        # 最终外边框尺寸
         outer_w = client_w + border_w
         outer_h = client_h + border_h
 
         try:
-            win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h,
-                                  win32con.SWP_NOZORDER)
-            # 验证调整结果
+            win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h, win32con.SWP_NOZORDER)
             new_client_rect = win32gui.GetClientRect(hwnd)
             if abs(new_client_rect[2] - client_w) > 3 or abs(new_client_rect[3] - client_h) > 3:
                 context.log(f"调整窗口失败，目标客户区 {client_w}x{client_h}，实际 {new_client_rect[2]}x{new_client_rect[3]}", "warning")
-                return {"success": False, "error": "resize verification failed"}
+                return self._result(False, params.get("on_failure", {}), error="resize verification failed")
+
             context.log(f"窗口已调整: 客户区 {client_w}x{client_h}，内容区 {target_w}x{target_h}")
-            # 更新上下文中的窗口区域
             left, top = win32gui.ClientToScreen(hwnd, (0, 0))
             right, bottom = win32gui.ClientToScreen(hwnd, (client_w, client_h))
-            context.window_rect = (left + offset_left, top + offset_top,
-                                   client_w - offset_left - offset_right,
-                                   client_h - offset_top - offset_bottom)
+            context.window_rect = (
+                left + offset_left,
+                top + offset_top,
+                client_w - offset_left - offset_right,
+                client_h - offset_top - offset_bottom
+            )
             context.variables["window_rect"] = context.window_rect
-            return {"success": True}
+            return self._result(True, params.get("on_success", {}))
+
         except Exception as e:
             context.log(f"调整窗口异常: {e}", "error")
-            return {"success": False, "error": str(e)}
+            return self._result(False, params.get("on_failure", {}), error=str(e))
+
+    def _result(self, success, jump_conf, error=None):
+        result = {"success": success}
+        if error:
+            result["error"] = error
+        result["jump"] = {
+            "type": jump_conf.get("jump_type", "next"),
+            "target": jump_conf.get("target_task", ""),
+            "target_node": jump_conf.get("target_node", "")
+        }
+        return result

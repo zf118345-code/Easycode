@@ -17,6 +17,7 @@ export const useMainStore = defineStore('main', {
     batchMode: false,
     selectedNodeIds: [],
     taskNodesCache: {},
+    taskNodesVersion: 0,
     currentContext: {
       windowTitle: '',
       isEmulator: false,
@@ -296,20 +297,30 @@ export const useMainStore = defineStore('main', {
       }
     },
 
+    // src/stores/index.js 中的 actions
     async loadTaskNodes(taskId) {
-      if (!taskId) return []
-      if (this.taskNodesCache[taskId]) return this.taskNodesCache[taskId]
-      try {
-        const res = await axios.get(`/api/tasks/${taskId}/nodes`, {
-          params: { project_path: this.currentProjectPath }
-        })
-        const nodes = res.data || []
-        this.taskNodesCache[taskId] = nodes
-        return nodes
-      } catch (err) {
-        console.error('加载任务节点失败', err)
-        return []
-      }
+        if (!taskId) return []
+        if (this.taskNodesCache[taskId]) {
+            console.log(`✅ [loadTaskNodes] 从缓存读取 ${taskId}:`, this.taskNodesCache[taskId])
+            return this.taskNodesCache[taskId]
+        }
+        try {
+            console.log(`🔄 [loadTaskNodes] 请求节点: ${taskId}`)
+            const res = await axios.get(`/api/tasks/${taskId}/nodes`, {
+                params: { project_path: this.currentProjectPath }
+            })
+            const nodes = res.data || []
+            console.log(`📦 [loadTaskNodes] 获取到节点:`, nodes)
+            this.taskNodesCache[taskId] = nodes
+            this.taskNodesVersion++  // 增加版本号
+            console.log(`📈 [loadTaskNodes] taskNodesVersion = ${this.taskNodesVersion}`)
+            return nodes
+        } catch (err) {
+            console.error('❌ [loadTaskNodes] 加载失败:', err)
+            this.taskNodesCache[taskId] = []
+            this.taskNodesVersion++
+            return []
+        }
     },
 
     clearTaskNodesCache() {

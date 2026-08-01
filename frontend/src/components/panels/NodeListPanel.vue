@@ -229,14 +229,30 @@ export default {
       }
       const nodeDefaults = this.store.params[nodeType]?.params || {}
       for (const [key, config] of Object.entries(nodeDefaults)) {
-        if (config.default !== undefined) { newNode.params[key] = config.default }
-        else if (config.type === 'dict') {
-          const subDefaults = {}
-          for (const [subKey, subConfig] of Object.entries(config.sub || {})) {
-            if (subConfig.default !== undefined) subDefaults[subKey] = subConfig.default
+          if (config.type === 'list_int2' || config.type === 'list_int4') {
+              // 确保每次创建新数组
+              newNode.params[key] = [0, 0, 0, 0].slice(0, config.type === 'list_int2' ? 2 : 4)
+          } else if (config.type === 'list_dict') {
+              newNode.params[key] = []
+          } else if (config.type === 'dict') {
+              const subDefaults = {}
+              for (const [subKey, subConfig] of Object.entries(config.sub || {})) {
+                  if (subConfig.default !== undefined) {
+                      // 同样需要深拷贝
+                      if (Array.isArray(subConfig.default)) {
+                          subDefaults[subKey] = [...subConfig.default]
+                      } else {
+                          subDefaults[subKey] = subConfig.default
+                      }
+                  }
+              }
+              if (Object.keys(subDefaults).length) {
+                  newNode.params[key] = subDefaults
+              }
+          } else if (config.default !== undefined) {
+              // 非数组/对象类型直接赋值
+              newNode.params[key] = config.default
           }
-          if (Object.keys(subDefaults).length) newNode.params[key] = subDefaults
-        } else if (config.type === 'list_dict') { newNode.params[key] = [] }
       }
       this.store.nodes.push(newNode)
       const taskData = this.store.currentTaskData
