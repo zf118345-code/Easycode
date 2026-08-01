@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pyautogui
 import os
+import subprocess
 from core.registry import NodeExecutorRegistry
 from core.node_executors.base_class import BaseNodeExecutor
 from core.utils import resource_path, load_image, match_template_cv
@@ -21,20 +22,20 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         # 1. 校验模板图片
         template_name = params.get("image_source", "")
         if not template_name:
-            context.log("未指定模板图片名称", "error")
+            context.log("❌ 未指定模板图片名称", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="template name missing")
 
         templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
         template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
 
         if not os.path.exists(template_path):
-            context.log(f"模板文件不存在: {template_path}", "error")
+            context.log(f"❌ 模板文件不存在: {template_path}", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="template not found")
 
         try:
             template = load_image(template_path)
         except Exception:
-            context.log(f"模板文件加载失败: {template_path}", "error")
+            context.log(f"❌ 模板文件加载失败: {template_path}", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="template load error")
 
         # 2. 搜索区域计算
@@ -59,7 +60,8 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
 
         start_time = time.time()
         found = False
-        pos = None
+        pos = None  # 绝对屏幕坐标 (x, y)
+        rel_pos = None
         max_val = 0.0
 
         # 4. 循环匹配逻辑
@@ -70,12 +72,13 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
 
                 if max_val >= threshold and center_offset:
                     found = True
+                    rel_pos = center_offset
                     x = region_rect[0] + center_offset[0]
                     y = region_rect[1] + center_offset[1]
                     pos = (x, y)
                     break
             except Exception as e:
-                context.log(f"匹配过程发生异常: {e}", "warning")
+                context.log(f"⚠️ 匹配过程发生异常: {e}", "warning")
                 break
 
             time.sleep(0.1)
@@ -83,11 +86,12 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         if context.image_log_enabled and 'screenshot' in locals():
             self._save_debug_screenshot(np.array(screenshot), template_name, context)
 
-        # 5. 统一结果处理
+        # 5. 统一结果与自动智能点击处理
         if found:
-            context.log(f"匹配成功: {template_name}, 位置: {pos}, 置信度: {max_val:.2f}")
+            context.log(f"🎯 匹配成功: [{template_name}] | 置信度: {max_val:.2f} | 位置: {pos}")
+
             if params.get("on_success_action") == "click_center":
-                pyautogui.click(pos[0], pos[1], clicks=1)
+                self._smart_click(pos, context)
 
             return self.build_jump_result(
                 True,
@@ -95,12 +99,49 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
                 extra={"pos": pos, "confidence": max_val}
             )
         else:
-            context.log(f"匹配超时: {template_name}, 最高置信度: {max_val:.2f}")
+            context.log(f"⏰ 匹配超时: [{template_name}] | 最高置信度: {max_val:.2f} (未达到 {threshold:.2f})")
             return self.build_jump_result(
                 False,
                 params.get("on_failure", {}),
                 error="timeout"
             )
+
+    def _smart_click(self, abs_pos, context):
+        """智能点击分发：包含动态横竖屏方向矫正映射"""
+        if context.is_emulator and context.device_id:
+            if context.android_width and context.android_height:
+                win_rect = context.get_window_rect()
+                win_w, win_h = win_rect[2], win_rect[3]
+
+                # 识别到的中心点相对于工作窗口客户区的 (x, y)
+                crop_x = abs_pos[0] - win_rect[0]
+                crop_y = abs_pos[1] - win_rect[1]
+
+                # ⭐ 动态横竖屏方向校正算法
+                raw_a_w, raw_a_h = context.android_width, context.android_height
+                if win_w > win_h:  # 横屏
+                    real_a_w = max(raw_a_w, raw_a_h)
+                    real_a_h = min(raw_a_w, raw_a_h)
+                else:  # 竖屏
+                    real_a_w = min(raw_a_w, raw_a_h)
+                    real_a_h = max(raw_a_w, raw_a_h)
+
+                # 映射到 Android 的实际物理像素
+                android_x = int((crop_x / win_w) * real_a_w)
+                android_y = int((crop_y / win_h) * real_a_h)
+
+                context.log(f"📱 图像识别 [ADB静默点击(已矫正)]: 窗口相对({crop_x},{crop_y}) -> Android物理({android_x},{android_y}) | 画幅:{real_a_w}x{real_a_h}")
+                try:
+                    cmd = ["adb", "-s", context.device_id, "shell", "input", "tap", str(android_x), str(android_y)]
+                    subprocess.run(cmd, capture_output=True, text=True, timeout=3)
+                except Exception as e:
+                    context.log(f"❌ ADB 点击异常: {e}", "error")
+            else:
+                context.log("⚠️ 未获取到 Android 分辨率，回退为 PC 物理点击", "warning")
+                pyautogui.click(abs_pos[0], abs_pos[1], clicks=1)
+        else:
+            context.log(f"🖱️ 图像识别 [PC物理点击]: 屏幕绝对坐标({abs_pos[0]}, {abs_pos[1]})")
+            pyautogui.click(abs_pos[0], abs_pos[1], clicks=1)
 
     def _save_debug_screenshot(self, screen, template_name, context):
         timestamp = int(time.time() * 1000)
@@ -112,7 +153,6 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
 
         cv2.imwrite(filepath, cv2.cvtColor(screen, cv2.COLOR_RGB2BGR))
 
-        # 滚动删除超出的老截图（保持最多 20 张）
         files = sorted(
             [f for f in os.listdir(self.debug_dir) if f.endswith(".png")],
             key=lambda x: os.path.getmtime(os.path.join(self.debug_dir, x))

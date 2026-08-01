@@ -1,73 +1,70 @@
+# core/params/base/image_recognition.py
+
 PARAM_DEFINITIONS = {
     "image_recognition": {
         "label": "图像识别",
         "params": {
             "image_source": {
                 "type": "file",
-                "label": "模板图片",
-                "default": ""
+                "default": "",
+                "label": "模板图片"
+            },
+            "threshold": {
+                "type": "int",
+                "default": 85,
+                "label": "匹配阈值 (%)",
+                "min": 1,
+                "max": 100
+            },
+            "timeout": {
+                "type": "int",
+                "default": 3000,
+                "label": "超时时间 (ms)",
+                "min": 100,
+                "step": 100
+            },
+            "gray_scale": {
+                "type": "bool",
+                "default": True,  # 默认开启灰度匹配，大幅提升匹配成功率
+                "label": "灰度匹配 (推荐开启)"
             },
             "region_type": {
                 "type": "select",
                 "options": [
-                    {"value": "fullwindow", "label": "全屏"},
+                    {"value": "fullwindow", "label": "整个工作区"},
                     {"value": "recorded", "label": "录入区域"},
-                    {"value": "custom", "label": "自定义"}
+                    {"value": "custom", "label": "自定义区域"}
                 ],
                 "default": "fullwindow",
-                "label": "搜索区域类型"
+                "label": "搜索区域"
             },
             "region_value": {
-                "type": "list_int4",
+                "type": "list_int4_picker",
                 "default": [0, 0, 0, 0],
-                "label": "区域坐标 (x,y,w,h)",
+                "label": "区域坐标 [X, Y, W, H]",
                 "visible_if": {
                     "field": "region_type",
-                    "operator": "ne",
-                    "value": "fullwindow"
+                    "operator": "in",
+                    "value": ["recorded", "custom"]
                 }
             },
             "region_is_relative": {
                 "type": "bool",
                 "default": True,
-                "label": "相对窗口",
-                "visible_if": {
-                    "field": "region_type",
-                    "operator": "ne",
-                    "value": "fullwindow"
-                }
-            },
-            "threshold": {
-                "type": "int",
-                "default": 85,
-                "min": 0,
-                "max": 100,
-                "label": "匹配阈值"
-            },
-            "timeout": {
-                "type": "int",
-                "default": 3000,
-                "min": 100,
-                "max": 30000,
-                "label": "超时时间(ms)"
-            },
-            "gray_scale": {
-                "type": "bool",
-                "default": False,
-                "label": "灰度匹配"
+                "label": "基于工作区相对坐标"
             },
             "on_success_action": {
                 "type": "select",
                 "options": [
                     {"value": "noop", "label": "无操作"},
-                    {"value": "click_center", "label": "点击图片中心"}
+                    {"value": "click_center", "label": "点击目标中心"}
                 ],
                 "default": "click_center",
-                "label": "成功操作"
+                "label": "识别成功后操作"
             },
             "on_success": {
                 "type": "dict",
-                "label": "成功跳转",   # ← 修正
+                "label": "成功跳转",
                 "sub": {
                     "jump_type": {
                         "type": "select",

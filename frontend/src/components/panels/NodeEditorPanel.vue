@@ -30,17 +30,20 @@
 
 <script>
     import { useMainStore } from '@/stores'
-    import { computed, watch, onBeforeUnmount, nextTick } from 'vue'
+    import { computed, watch, nextTick, ref } from 'vue'
     import ParamRenderer from '@/components/ParamRenderer.vue'
     import { ElMessage } from 'element-plus'
-
-    const JUDGMENT_NODE_TYPES = ['image_recognition', 'branch']
+    import { logger } from '@/utils/logger'
+    import axios from 'axios'
 
     export default {
         name: 'NodeEditorPanel',
         components: { ParamRenderer },
         setup() {
             const store = useMainStore()
+            const originalRecordedRegion = ref(null)
+
+            let isSyncingRecorded = false
 
             const paramDefs = computed(() => {
                 const node = store.selectedNode
@@ -54,11 +57,7 @@
                 return store.params[node.node_type]?.label || node.node_type
             })
 
-            // 动态增强参数定义
             const allParams = computed(() => {
-                const _depNodes = store.nodes.length
-                const _depVersion = store.taskNodesVersion
-
                 const defs = paramDefs.value
                 const result = {}
                 for (const [key, config] of Object.entries(defs)) {
@@ -95,9 +94,7 @@
                                             if (cached && cached.length) {
                                                 nodes = cached
                                             } else {
-                                                nextTick(() => {
-                                                    store.loadTaskNodes(targetTask)
-                                                })
+                                                nextTick(() => { store.loadTaskNodes(targetTask) })
                                                 return []
                                             }
                                         } else {
@@ -122,22 +119,10 @@
                 return result
             })
 
-            const getNextNodeId = (currentNodes, currentNodeId) => {
-                if (!currentNodes || !currentNodes.length) return ''
-                const currentIndex = currentNodes.findIndex(n => n.node_id === currentNodeId)
-                if (currentIndex !== -1 && currentIndex + 1 < currentNodes.length) {
-                    return currentNodes[currentIndex + 1].node_id
-                }
-                return currentNodes[0].node_id
-            }
-
-            // ⭐ 核心路由分发函数（修复入口）
             const handleParamUpdate = (paramName, value) => {
                 if (paramName === 'on_success' || paramName === 'on_failure') {
-                    // 当更新跳转配置时，对比新旧对象，分析是哪一个子属性发生了变化
                     const node = store.selectedNode
                     if (!node) return
-
                     const oldObj = node.params[paramName] || {}
                     const newObj = value || {}
 
@@ -148,11 +133,9 @@
                     } else if (oldObj.target_node !== newObj.target_node) {
                         updateJumpParam(paramName, 'target_node', newObj.target_node)
                     } else {
-                        // 其他子属性兜底更新
                         node.params[paramName] = value
                     }
                 } else {
-                    // 普通参数正常更新
                     updateParam(paramName, value)
                 }
             }
@@ -160,10 +143,68 @@
             const updateParam = (paramName, value) => {
                 const node = store.selectedNode
                 if (!node) return
+
+                if (paramName === 'region_value' && node.params.region_type === 'recorded' && !isSyncingRecorded) {
+                    if (originalRecordedRegion.value && JSON.stringify(value) !== JSON.stringify(originalRecordedRegion.value)) {
+                        node.params.region_type = 'custom'
+                        ElMessage.info('检测到坐标手动微调，已自动切换为【自定义区域】模式')
+                    }
+                }
+
                 node.params[paramName] = value
+
+                if (paramName === 'region_type' && value === 'recorded') {
+                    syncRecordedRegion()
+                }
+
+                if (paramName === 'image_source' && node.params.region_type === 'recorded') {
+                    syncRecordedRegion()
+                }
             }
 
-            // ⭐ 智能化逻辑干事核心函数
+            const syncRecordedRegion = async () => {
+                const node = store.selectedNode
+                if (!node || !store.currentProjectPath) return
+
+                const rawTemplateName = node.params.image_source
+                if (!rawTemplateName) {
+                    ElMessage.warning('请先选择模板图片')
+                    return
+                }
+
+                isSyncingRecorded = true
+
+                try {
+                    const res = await axios.get('/api/regions', {
+                        params: { project_path: store.currentProjectPath }
+                    })
+                    const regions = res.data || {}
+
+                    const cleanName = rawTemplateName.replace(/\.png$/i, '')
+                    const fileNameOnly = cleanName.split(/[\\/]/).pop()
+
+                    const rect = regions[rawTemplateName] ||
+                        regions[cleanName] ||
+                        regions[fileNameOnly] ||
+                        regions[`${fileNameOnly}.png`]
+
+                    if (rect && Array.isArray(rect) && rect.length === 4) {
+                        node.params.region_value = [...rect]
+                        originalRecordedRegion.value = [...rect]
+                        logger.info('NodeEditor', `✅ 成功回填录入坐标: [${rect}]`)
+                    } else {
+                        node.params.region_value = [0, 0, 0, 0]
+                        originalRecordedRegion.value = [0, 0, 0, 0]
+                        ElMessage.warning(`未在 regions.json 中查找到图片 [${fileNameOnly}] 的坐标`)
+                    }
+                } catch (err) {
+                    logger.error('NodeEditor', '获取区域配置失败:', err)
+                } finally {
+                    setTimeout(() => { isSyncingRecorded = false }, 300)
+                }
+            }
+
+            // ⭐ 核心优化：智能计算默认选中节点与目标任务联动逻辑
             const updateJumpParam = async (jumpKey, subKey, value) => {
                 const node = store.selectedNode
                 if (!node) return
@@ -173,67 +214,69 @@
                 }
 
                 const jumpObj = { ...node.params[jumpKey] }
-                console.group(`🚀 [智能更新执行] ${jumpKey}.${subKey} => ${value}`)
-
                 jumpObj[subKey] = value
-                const currentNodes = store.nodes || []
 
-                // 1. 切换跳转类型
+                // 1. 当切换【跳转类型 (jump_type)】时
                 if (subKey === 'jump_type') {
                     if (value === 'next' || value === 'end') {
                         jumpObj.target_task = ''
                         jumpObj.target_node = ''
                     }
-                    if (value === 'node') {
+                    // 切换为跳转节点 (node) 时：默认选中物理下一个节点，没有则是空
+                    else if (value === 'node') {
                         jumpObj.target_task = ''
-                        jumpObj.target_node = getNextNodeId(currentNodes, node.node_id)
-                    }
-                    if (value === 'task') {
-                        if (!jumpObj.target_task) {
-                            jumpObj.target_task = store.currentTaskId
+                        const currentNodes = store.nodes || []
+                        const currentIndex = currentNodes.findIndex(n => n.node_id === node.node_id)
+
+                        if (currentIndex !== -1 && currentIndex + 1 < currentNodes.length) {
+                            jumpObj.target_node = currentNodes[currentIndex + 1].node_id
+                        } else {
+                            jumpObj.target_node = ''
                         }
-                        jumpObj.target_node = getNextNodeId(currentNodes, node.node_id)
-                        if (jumpObj.target_task !== store.currentTaskId) {
-                            await store.loadTaskNodes(jumpObj.target_task)
+                    }
+                    // 切换为跳转任务 (task) 时：默认选中当前任务，并联动该任务的第一个节点
+                    else if (value === 'task') {
+                        const targetTaskId = store.currentTaskId || ''
+                        jumpObj.target_task = targetTaskId
+
+                        if (targetTaskId) {
+                            const taskNodes = await store.loadTaskNodes(targetTaskId)
+                            jumpObj.target_node = (taskNodes && taskNodes.length > 0) ? taskNodes[0].node_id : ''
+                        } else {
+                            jumpObj.target_node = ''
                         }
                     }
                 }
 
-                // 2. 切换目标任务
-                if (subKey === 'target_task' && value) {
-                    let targetNodes = []
-                    if (value === store.currentTaskId) {
-                        targetNodes = currentNodes
+                // 2. 当切换【目标任务 (target_task)】时：强行重置 target_node，清除旧任务的脏节点 ID，默认选中新任务的第一个节点
+                if (subKey === 'target_task' && jumpObj.jump_type === 'task') {
+                    if (value) {
+                        const taskNodes = await store.loadTaskNodes(value)
+                        jumpObj.target_node = (taskNodes && taskNodes.length > 0) ? taskNodes[0].node_id : ''
                     } else {
-                        await store.loadTaskNodes(value)
-                        targetNodes = store.taskNodesCache?.[value] || []
-                    }
-
-                    const oldTargetNode = jumpObj.target_node
-                    const exists = targetNodes.some(n => n.node_id === oldTargetNode)
-
-                    if (!exists) {
-                        // 旧节点在新的任务中不存在 -> 自动重置为新任务的第一个节点！
-                        const newFirstNodeId = targetNodes.length > 0 ? targetNodes[0].node_id : ''
-                        console.log(`🎯 [旧节点不在新任务中，自动校正 target_node] =>`, newFirstNodeId)
-                        jumpObj.target_node = newFirstNodeId
-                    } else {
-                        console.log(`✅ 旧节点在新任务中依然有效，保留:`, oldTargetNode)
+                        jumpObj.target_node = ''
                     }
                 }
 
-                // 深度克隆赋值，强行通知 Vue 响应式依赖
                 node.params[jumpKey] = JSON.parse(JSON.stringify(jumpObj))
-                console.log(`干事后结果:`, node.params[jumpKey])
-                console.groupEnd()
             }
+
+            watch(
+                () => store.selectedNodeId,
+                () => {
+                    const node = store.selectedNode
+                    if (node && node.params?.region_type === 'recorded') {
+                        syncRecordedRegion()
+                    }
+                },
+                { immediate: true }
+            )
 
             const saveNode = async () => {
                 try {
                     await store.saveCurrentTask(true)
                     ElMessage.success('参数已保存')
                 } catch (err) {
-                    console.error('保存失败', err)
                     ElMessage.error('保存失败')
                 }
             }
@@ -244,7 +287,6 @@
                 nodeTypeLabel,
                 handleParamUpdate,
                 updateParam,
-                updateJumpParam,
                 saveNode
             }
         }

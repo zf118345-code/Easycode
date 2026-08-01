@@ -7,7 +7,25 @@
         <div class="param-control">
             <!-- str -->
             <template v-if="config.type === 'str'">
-                <el-input v-model="localValue" :placeholder="config.label || ''" @change="emitChange" />
+                <el-input v-model="localValue" :placeholder="config.label || ''" @change="emitChange('str')" />
+            </template>
+
+            <!-- window_select -->
+            <template v-else-if="config.type === 'window_select'">
+                <el-select v-model="localValue"
+                           filterable
+                           allow-create
+                           default-first-option
+                           placeholder="下拉选择或手动输入窗口标题"
+                           style="width: 100%;"
+                           @focus="fetchWindows"
+                           @change="emitChange('window_select')">
+                    <el-option v-for="w in windowList"
+                               :key="w.hwnd"
+                               :label="w.title"
+                               :value="w.title" />
+                </el-select>
+                <div class="field-tip">💡 提示：已被最小化的窗口不会列出，请先还原窗口。</div>
             </template>
 
             <!-- int -->
@@ -17,7 +35,7 @@
                                  :max="config.max !== undefined ? config.max : Infinity"
                                  :step="config.step || 1"
                                  controls-position="right"
-                                 @change="emitChange" />
+                                 @change="emitChange('int')" />
             </template>
 
             <!-- float -->
@@ -28,17 +46,17 @@
                                  :step="config.step || 0.1"
                                  :precision="2"
                                  controls-position="right"
-                                 @change="emitChange" />
+                                 @change="emitChange('float')" />
             </template>
 
             <!-- bool -->
             <template v-else-if="config.type === 'bool'">
-                <el-switch v-model="localValue" @change="emitChange" />
+                <el-switch v-model="localValue" @change="emitChange('bool')" />
             </template>
 
             <!-- select -->
             <template v-else-if="config.type === 'select'">
-                <el-select v-model="localValue" :placeholder="config.label || '请选择'" @change="emitChange">
+                <el-select v-model="localValue" :placeholder="config.label || '请选择'" @change="emitChange('select')">
                     <el-option v-for="opt in resolvedOptions"
                                :key="opt.value"
                                :label="opt.label"
@@ -46,51 +64,53 @@
                 </el-select>
             </template>
 
-            <!-- file -->
+            <!-- file (模板图片浏览/录入) -->
             <template v-else-if="config.type === 'file'">
                 <div class="file-selector">
-                    <el-input :model-value="localValue" placeholder="请选择模板图片" readonly @click="openFileDialog">
+                    <el-input :model-value="localValue" placeholder="请选择模板图片" readonly @click="openFileBrowser('select')">
                         <template #append>
-                            <el-button @click="openFileDialog">📂 浏览</el-button>
+                            <el-button @click="openFileBrowser('select')">📂 浏览</el-button>
                         </template>
                     </el-input>
-                    <el-button type="success" size="small" @click="openScreenshot">📷 录入</el-button>
+                    <el-button type="success" size="small" @click="openScreenshot('template')">📷 录入</el-button>
                 </div>
             </template>
 
-            <!-- list_int2 -->
-            <template v-else-if="config.type === 'list_int2'">
+            <!-- list_int2 / list_int2_picker -->
+            <template v-else-if="config.type === 'list_int2' || config.type === 'list_int2_picker'">
                 <div class="list-int2">
                     <div class="coord-item">
                         <span class="coord-label">X</span>
-                        <el-input-number v-model="localValue[0]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[0]" :min="0" controls-position="right" size="small" @change="emitChange('list_int2')" />
                     </div>
                     <div class="coord-item">
                         <span class="coord-label">Y</span>
-                        <el-input-number v-model="localValue[1]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[1]" :min="0" controls-position="right" size="small" @change="emitChange('list_int2')" />
                     </div>
+                    <el-button v-if="config.type === 'list_int2_picker'" type="primary" size="small" @click="openScreenshot('point')">📍 取点</el-button>
                 </div>
             </template>
 
-            <!-- list_int4 -->
-            <template v-else-if="config.type === 'list_int4'">
+            <!-- list_int4 / list_int4_picker -->
+            <template v-else-if="config.type === 'list_int4' || config.type === 'list_int4_picker'">
                 <div class="list-int4">
                     <div class="coord-item">
                         <span class="coord-label">X</span>
-                        <el-input-number v-model="localValue[0]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[0]" :min="0" controls-position="right" size="small" @change="emitChange('list_int4')" />
                     </div>
                     <div class="coord-item">
                         <span class="coord-label">Y</span>
-                        <el-input-number v-model="localValue[1]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[1]" :min="0" controls-position="right" size="small" @change="emitChange('list_int4')" />
                     </div>
                     <div class="coord-item">
                         <span class="coord-label">W</span>
-                        <el-input-number v-model="localValue[2]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[2]" :min="0" controls-position="right" size="small" @change="emitChange('list_int4')" />
                     </div>
                     <div class="coord-item">
                         <span class="coord-label">H</span>
-                        <el-input-number v-model="localValue[3]" :min="0" controls-position="right" size="small" @change="emitChange" />
+                        <el-input-number v-model="localValue[3]" :min="0" controls-position="right" size="small" @change="emitChange('list_int4')" />
                     </div>
+                    <el-button v-if="config.type === 'list_int4_picker'" type="warning" size="small" @click="openScreenshot('region')">📐 框选</el-button>
                 </div>
             </template>
 
@@ -103,32 +123,48 @@
                                    :value="localValue ? localValue[subKey] : undefined"
                                    :label="subConfig.label || subKey"
                                    :context="localValue"
-                                   @update="(val) => { if(!localValue) localValue = {}; localValue[subKey] = val; emitChange(); }" />
+                                   @update="(val) => handleSubUpdate(subKey, val)" />
                 </div>
             </template>
         </div>
 
-        <!-- 对话框 -->
-        <el-dialog v-model="browserVisible" title="选择模板图片" width="80%" top="5vh" append-to-body :close-on-click-modal="false">
-            <FileBrowser ref="fileBrowserRef" :project-path="projectPath" @select="onFileSelected" @close="browserVisible = false" />
+        <!-- ⭐ 层级 1050 比截图蒙层(1000)高一级，保证遮罩与显示顺畅 -->
+        <el-dialog v-model="browserVisible"
+                   :title="fileBrowserMode === 'save' ? '选择保存目录并输入图片名称' : '选择模板图片'"
+                   width="80%"
+                   top="5vh"
+                   append-to-body
+                   :z-index="1050"
+                   :close-on-click-modal="false"
+                   @close="handleBrowserClose">
+            <FileBrowser ref="fileBrowserRef"
+                         :project-path="projectPath"
+                         :mode="fileBrowserMode"
+                         @select="onFileSelected"
+                         @save="onFileSave"
+                         @close="browserVisible = false" />
         </el-dialog>
 
-        <ScreenshotTool ref="screenshotTool" @saved="onScreenshotSaved" />
+        <!-- 截图蒙层工具 -->
+        <ScreenshotTool ref="screenshotTool"
+                        @template-crop-selected="onTemplateCropSelected"
+                        @point-selected="onPointSelected"
+                        @region-selected="onRegionSelected" />
     </div>
 </template>
 
 <script>
-    import { ref, watch, onBeforeUnmount, computed, toRaw } from 'vue'
+    import { ref, watch, computed, toRaw } from 'vue'
     import { ElMessage } from 'element-plus'
+    import axios from 'axios'
     import { useMainStore } from '@/stores'
+    import { logger } from '@/utils/logger'
     import ScreenshotTool from '@/components/ScreenshotTool.vue'
     import FileBrowser from '@/components/FileBrowser.vue'
 
-    // 辅助函数：安全克隆对象，避免 Proxy 对象导致 structuredClone 报错
     function safeDeepClone(obj) {
         if (obj === null || typeof obj !== 'object') return obj
         try {
-            // 先转为纯 JS 对象再序列化克隆，最安全稳定
             return JSON.parse(JSON.stringify(toRaw(obj)))
         } catch (e) {
             return { ...obj }
@@ -149,6 +185,14 @@
             const store = useMainStore()
             const projectPath = computed(() => store.currentProjectPath)
 
+            const screenshotTool = ref(null)
+            const fileBrowserRef = ref(null)
+            const browserVisible = ref(false)
+            const fileBrowserMode = ref('select')
+            const windowList = ref([])
+
+            const pendingCropRect = ref(null)
+
             const isVisible = computed(() => {
                 const rule = props.config.visible_if
                 if (!rule) return true
@@ -162,21 +206,8 @@
                 }
             })
 
-            const getInitialValue = () => {
-                const val = props.value
-                if (props.config.type === 'list_int4') {
-                    return Array.isArray(val) && val.length === 4 ? [...val] : [0, 0, 0, 0]
-                } else if (props.config.type === 'list_int2') {
-                    return Array.isArray(val) && val.length === 2 ? [...val] : [0, 0]
-                } else if (props.config.type === 'dict') {
-                    return val ? safeDeepClone(val) : {}
-                }
-                return val
-            }
-
-            const localValue = ref(getInitialValue())
-            const screenshotTool = ref(null)
-            const browserVisible = ref(false)
+            const localValue = ref(safeDeepClone(props.value))
+            let isInternalUpdate = false
 
             const resolvedOptions = computed(() => {
                 const options = props.config.options
@@ -194,55 +225,145 @@
                 return []
             })
 
-            const unwatch = watch(
+            const fetchWindows = async () => {
+                try {
+                    const res = await axios.get('/api/windows')
+                    windowList.value = res.data.windows || []
+                } catch (err) {
+                    logger.error('ParamRenderer', '获取窗口列表失败:', err)
+                }
+            }
+
+            watch(
                 () => props.value,
                 (newVal) => {
-                    if (props.config.type === 'list_int4') {
-                        localValue.value = Array.isArray(newVal) && newVal.length === 4 ? [...newVal] : [0, 0, 0, 0]
-                    } else if (props.config.type === 'list_int2') {
-                        localValue.value = Array.isArray(newVal) && newVal.length === 2 ? [...newVal] : [0, 0]
-                    } else if (props.config.type === 'dict') {
-                        // 安全克隆，切断响应式循环引用
-                        localValue.value = newVal ? safeDeepClone(newVal) : {}
-                    } else {
-                        localValue.value = newVal
-                    }
+                    isInternalUpdate = true
+                    localValue.value = safeDeepClone(newVal)
+                    setTimeout(() => { isInternalUpdate = false }, 0)
                 },
                 { immediate: true, deep: true }
             )
 
-            const emitChange = () => emit('update', localValue.value)
-            const openFileDialog = () => {
+            const emitChange = (triggerType = 'component') => {
+                if (isInternalUpdate) return
+                logger.debug('ParamRenderer', `控件 [${triggerType}:${props.label}] 发射 update:`, localValue.value)
+                emit('update', localValue.value)
+            }
+
+            const handleSubUpdate = (subKey, val) => {
+                if (!localValue.value || typeof localValue.value !== 'object') {
+                    localValue.value = {}
+                }
+                localValue.value[subKey] = val
+                emitChange('sub-dict')
+            }
+
+            const openFileBrowser = (mode = 'select') => {
                 if (!projectPath.value) return ElMessage.warning('请先打开项目')
+                fileBrowserMode.value = mode
                 browserVisible.value = true
-            }
-            const onFileSelected = (relPath) => {
-                localValue.value = relPath
-                emitChange()
-                browserVisible.value = false
-            }
-            const openScreenshot = () => { if (screenshotTool.value) screenshotTool.value.open() }
-            const onScreenshotSaved = (templateName) => {
-                if (templateName) {
-                    localValue.value = templateName
-                    emitChange()
+
+                if (screenshotTool.value) {
+                    screenshotTool.value.setPauseState(true)
                 }
             }
 
-            onBeforeUnmount(() => unwatch())
+            const handleBrowserClose = () => {
+                browserVisible.value = false
+                if (screenshotTool.value) {
+                    screenshotTool.value.setPauseState(false)
+                }
+            }
+
+            const onFileSelected = (relPath) => {
+                if (fileBrowserMode.value === 'save') return
+                // 选择现有图片时清洗后缀
+                const cleanPath = relPath.replace(/\.png$/i, '')
+                localValue.value = cleanPath
+                emitChange('file-select')
+                browserVisible.value = false
+            }
+
+            const onTemplateCropSelected = (cropRect) => {
+                pendingCropRect.value = cropRect
+                openFileBrowser('save')
+            }
+
+            // ⭐ 彻底解决 test.png.png 的核心存盘逻辑
+            const onFileSave = async ({ relativePath, fileName }) => {
+                if (!pendingCropRect.value) {
+                    return ElMessage.error('缺少截图框选数据')
+                }
+                try {
+                    // 双重正则彻底剥离文件名和相对路径中的 .png 后缀
+                    const cleanFileName = fileName.trim().replace(/\.png$/i, '')
+                    const cleanRelPath = relativePath ? relativePath.replace(/\.png$/i, '') : ''
+
+                    // 拼接最纯净的 key 路径（例如 "EnterPage/test"）
+                    const fullTemplateName = cleanRelPath ? `${cleanRelPath}/${cleanFileName}` : cleanFileName
+
+                    // 1. 请求后端剪裁图片
+                    await axios.post('/api/screenshot/crop', {
+                        project_path: projectPath.value,
+                        template_name: fullTemplateName,
+                        crop_rect: pendingCropRect.value
+                    })
+
+                    // 2. 将纯净的路径赋给输入框
+                    localValue.value = fullTemplateName
+                    emitChange('screenshot-saved')
+                    ElMessage.success(`模板图片 [${fullTemplateName}] 保存成功`)
+
+                    // 3. 一并关闭对话框和底部的截图蒙层
+                    browserVisible.value = false
+                    if (screenshotTool.value) {
+                        screenshotTool.value.close()
+                    }
+                } catch (err) {
+                    logger.error('ParamRenderer', '保存模板图片失败:', err)
+                    ElMessage.error('保存失败: ' + (err.response?.data?.detail || err.message))
+                }
+            }
+
+            const openScreenshot = (mode = 'template') => {
+                if (screenshotTool.value) {
+                    screenshotTool.value.open(mode)
+                } else {
+                    logger.error('ParamRenderer', 'screenshotTool 实例未绑定成功')
+                }
+            }
+
+            const onPointSelected = (pointArr) => {
+                localValue.value = pointArr
+                emitChange('point-picker')
+            }
+
+            const onRegionSelected = (regionArr) => {
+                localValue.value = regionArr
+                emitChange('region-picker')
+            }
 
             return {
                 localValue,
                 screenshotTool,
+                fileBrowserRef,
                 browserVisible,
+                fileBrowserMode,
+                windowList,
                 projectPath,
                 isVisible,
                 resolvedOptions,
-                openFileDialog,
+                fetchWindows,
+                openFileBrowser,
+                handleBrowserClose,
                 onFileSelected,
+                onFileSave,
                 openScreenshot,
-                onScreenshotSaved,
-                emitChange
+                onTemplateCropSelected,
+                onPointSelected,
+                onRegionSelected,
+                emitChange,
+                handleSubUpdate
             }
         }
     }
@@ -302,5 +423,11 @@
         padding-left: 12px;
         border-left: 2px solid #3d3d5a;
         margin-top: 4px;
+    }
+    .field-tip {
+        font-size: 11px;
+        color: #8a8fa8;
+        margin-top: 4px;
+        line-height: 1.2;
     }
 </style>

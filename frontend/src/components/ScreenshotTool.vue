@@ -1,781 +1,494 @@
 <template>
-  <el-dialog
-    v-model="visible"
-    title="截图工具"
-    width="95%"
-    top="5vh"
-    :close-on-click-modal="false"
-    append-to-body
-    @close="close"
-  >
-    <div class="screenshot-container">
-      <!-- 左侧截图区 -->
-      <div class="canvas-wrapper" v-if="imgLoaded">
-        <canvas
-          ref="canvas"
-          @mousedown="onMouseDown"
-          @mousemove="onMouseMove"
-          @mouseup="onMouseUp"
-          @mouseleave="onMouseUp"
-        ></canvas>
-      </div>
-      <div class="canvas-wrapper" v-else style="display:flex;align-items:center;justify-content:center;color:#8a8fa8;">
-        加载截图中...
-      </div>
-
-      <!-- 右侧预览 + 微调 -->
-      <div class="preview-wrapper">
-        <div class="preview-header">
-          <span>🔍 框选放大预览</span>
-        </div>
-        <div class="preview-canvas-wrapper">
-          <canvas ref="previewCanvas"></canvas>
-        </div>
-        <div class="preview-info">
-          <span>框选区域: {{ selectionRect ? `${Math.round(selectionRect.w)}x${Math.round(selectionRect.h)}` : '未框选' }}</span>
-        </div>
-        <div class="adjust-area" v-if="imgLoaded">
-          <div class="adjust-row">
-            <label>X:</label>
-            <el-input-number v-model="adjustX" :min="0" :max="Math.max(0, imgWidth - 1)" size="small" controls-position="right" @change="applyAdjust" />
-            <label>Y:</label>
-            <el-input-number v-model="adjustY" :min="0" :max="Math.max(0, imgHeight - 1)" size="small" controls-position="right" @change="applyAdjust" />
-          </div>
-          <div class="adjust-row">
-            <label>W:</label>
-            <el-input-number v-model="adjustW" :min="1" :max="Math.max(1, imgWidth - adjustX)" size="small" controls-position="right" @change="applyAdjust" />
-            <label>H:</label>
-            <el-input-number v-model="adjustH" :min="1" :max="Math.max(1, imgHeight - adjustY)" size="small" controls-position="right" @change="applyAdjust" />
-          </div>
-        </div>
-        <div class="action-buttons">
-          <el-button type="primary" size="small" @click="showSaveDialog" :disabled="!selectionRect">💾 保存图片</el-button>
-          <el-button size="small" @click="clearSelection">清除框选</el-button>
-        </div>
-      </div>
-    </div>
-
-    <!-- 保存图片对话框 -->
-    <el-dialog
-      title="保存图片"
-      v-model="saveDialogVisible"
-      width="70%"
-      append-to-body
-      :close-on-click-modal="false"
-      @open="initSaveDialog"
-    >
-      <div class="save-container">
-        <div class="tree-wrapper">
-          <div class="tree-header">
-            <el-button size="small" type="primary" @click="createNewFolder">📁 新建文件夹</el-button>
-            <span class="current-path">当前路径: {{ currentPath || '/' }}</span>
-          </div>
-          <div class="tree-body">
-            <div v-if="treeLoading" class="loading">加载目录树...</div>
-            <el-tree
-              v-else
-              ref="treeRef"
-              :data="treeData"
-              :props="treeProps"
-              default-expand-all
-              highlight-current
-              @node-click="onNodeClick"
-              node-key="id"
-              :expand-on-click-node="false"
-            >
-              <template #default="{ node, data }">
-                <span class="tree-node">
-                  <el-icon><Folder /></el-icon>
-                  <span>{{ node.label }}</span>
-                </span>
-              </template>
-            </el-tree>
-          </div>
-        </div>
-
-        <div class="preview-area">
-          <div class="preview-header-right">
-            <span>📷 图片预览</span>
-            <span v-if="previewImages.length" class="count">{{ previewImages.length }} 张</span>
-          </div>
-          <div class="preview-grid" v-if="previewImages.length">
-            <div
-              v-for="(img, idx) in previewImages"
-              :key="idx"
-              class="preview-item"
-              @click="selectExistingTemplate(img)"
-            >
-              <img :src="img.data" :alt="img.name" />
-              <div class="preview-name">{{ img.name }}</div>
+    <div v-if="visible" class="screenshot-overlay" @keydown.stop="handleKeyDown" tabindex="0" ref="overlayRef">
+        <div class="main-layout">
+            <!-- 左侧：工作区 Canvas 画面 -->
+            <div class="canvas-wrapper" ref="containerRef">
+                <canvas ref="canvasRef"
+                        @mousedown="onMouseDown"
+                        @mousemove="onMouseMove"
+                        @mouseup="onMouseUp"></canvas>
             </div>
-          </div>
-          <div v-else class="empty-preview">该目录下暂无图片</div>
+
+            <!-- 右侧：固定微调与放大预览面板 -->
+            <div class="sidebar-panel">
+                <div class="panel-header">
+                    <span v-if="mode === 'template'">📷 模板截图录入</span>
+                    <span v-else-if="mode === 'point'">📍 坐标点提取</span>
+                    <span v-else-if="mode === 'region'">📐 区域框选</span>
+                </div>
+
+                <!-- 选点模式预览 -->
+                <div v-if="mode === 'point'" class="panel-section">
+                    <div class="section-title">标定点局域放大</div>
+                    <div class="preview-box">
+                        <canvas ref="pointCanvasRef" width="160" height="160"></canvas>
+                    </div>
+                    <div class="data-group">
+                        <div class="data-item">
+                            <span class="label">工作区相对坐标:</span>
+                            <span class="value">{{ point ? `${point.x}, ${point.y}` : '未点击选点' }}</span>
+                        </div>
+                    </div>
+                    <div class="tips-box">
+                        <p>💡 点击左侧画板标定坐标点</p>
+                        <p>💡 **方向键 (↑↓←→)** 微调像素点位</p>
+                        <p>💡 **回车 (Enter)** 确认并填入</p>
+                    </div>
+                </div>
+
+                <!-- 选区 / 模板模式预览 -->
+                <div v-else class="panel-section">
+                    <div class="section-title">选区高精放大预览</div>
+                    <div class="preview-box">
+                        <canvas ref="regionCanvasRef" width="220" height="150"></canvas>
+                    </div>
+                    <div class="data-group">
+                        <div class="data-item">
+                            <span class="label">起点 (X, Y):</span>
+                            <span class="value">{{ selection ? `${selection.x}, ${selection.y}` : '0, 0' }}</span>
+                        </div>
+                        <div class="data-item">
+                            <span class="label">尺寸 (W × H):</span>
+                            <span class="value highlight">{{ selection ? `${selection.w} × ${selection.h}` : '0 × 0' }}</span>
+                        </div>
+                    </div>
+                    <div class="tips-box">
+                        <p>💡 拖拽鼠标划定框选范围</p>
+                        <p>💡 **方向键 (↑↓←→)** 平移位置</p>
+                        <p>💡 **Shift + 方向键** 调整宽高</p>
+                        <p>💡 **回车 (Enter)** 确认并进入保存</p>
+                    </div>
+                </div>
+
+                <div class="panel-footer">
+                    <el-button type="success" style="width: 100%; margin-bottom: 8px;" @click="confirmSelection">
+                        确认选择 (Enter)
+                    </el-button>
+                    <el-button type="info" style="width: 100%; margin-left: 0;" @click="close">
+                        取消 (Esc)
+                    </el-button>
+                </div>
+            </div>
         </div>
-      </div>
-      <div class="save-footer">
-        <el-form label-width="80px">
-          <el-form-item label="文件名">
-            <el-input v-model="saveFileName" placeholder="请输入图片名称（不含扩展名）" />
-          </el-form-item>
-        </el-form>
-        <div>
-          <el-button @click="saveDialogVisible = false">取消</el-button>
-          <el-button type="primary" @click="confirmSaveTemplate">保存</el-button>
-        </div>
-      </div>
-    </el-dialog>
-  </el-dialog>
+    </div>
 </template>
 
 <script>
-import { ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
-import axios from 'axios'
-import { useMainStore } from '@/stores'
-import { Folder } from '@element-plus/icons-vue'
+    import { ref, reactive, computed, nextTick } from 'vue'
+    import { ElMessage } from 'element-plus'
+    import { useMainStore } from '@/stores'
+    import axios from 'axios'
 
-export default {
-  name: 'ScreenshotTool',
-  components: { Folder },
-  setup() {
-    const store = useMainStore()
-    const visible = ref(false)
-    const saveDialogVisible = ref(false)
-    const canvas = ref(null)
-    const previewCanvas = ref(null)
+    export default {
+        name: 'ScreenshotTool',
+        emits: ['template-crop-selected', 'point-selected', 'region-selected'],
+        setup(props, { emit }) {
+            const store = useMainStore()
 
-    // 截图相关状态
-    const img = ref(null)
-    const imgLoaded = ref(false)
-    const imgWidth = ref(0)
-    const imgHeight = ref(0)
-    const selectionRect = ref(null)
-    const isDragging = ref(false)
-    const startX = ref(0)
-    const startY = ref(0)
-    const adjustX = ref(0)
-    const adjustY = ref(0)
-    const adjustW = ref(0)
-    const adjustH = ref(0)
+            const visible = ref(false)
+            const mode = ref('template')
+            const isPausedForDialog = ref(false)
 
-    // 目录树相关状态
-    const treeData = ref([])
-    const treeRef = ref(null)
-    const treeProps = { children: 'children', label: 'name' }
-    const currentPath = ref('/')
-    const currentRelativePath = ref('')
-    const saveFileName = ref('')
-    const previewImages = ref([])
-    const treeLoading = ref(false)
+            const canvasRef = ref(null)
+            const containerRef = ref(null)
+            const pointCanvasRef = ref(null)
+            const regionCanvasRef = ref(null)
+            const overlayRef = ref(null)
 
-    // 绘图上下文变量（修复关键）
-    let canvasCtx = null
-    let previewCtx = null
+            let imgObj = null
+            let isDrawing = false
+            let startImgPoint = { x: 0, y: 0 }
 
-    // ====== 截图功能 ======
-    const open = async () => {
-      visible.value = true
-      await nextTick()
-      await captureScreen()
-    }
+            const drawScale = reactive({ scale: 1, offsetX: 0, offsetY: 0, imgW: 0, imgH: 0 })
 
-    const close = () => {
-      visible.value = false
-      saveDialogVisible.value = false
-    }
+            const selection = ref(null)
+            const point = ref(null)
 
-    const captureScreen = async () => {
-      imgLoaded.value = false
-      const context = store.currentContext
-      const payload = {
-        window_title: context.windowTitle || '',
-        offset_top: context.offsetTop || 0,
-        offset_bottom: context.offsetBottom || 0,
-        offset_left: context.offsetLeft || 0,
-        offset_right: context.offsetRight || 0,
-        is_emulator: context.isEmulator || false
-      }
-      try {
-        const res = await axios.post('/api/screenshot', payload)
-        const base64 = res.data.image
-        const image = new Image()
-        image.onload = () => {
-          img.value = image
-          imgWidth.value = image.width
-          imgHeight.value = image.height
-          imgLoaded.value = true
-          resetSelection()
-          clearPreview()
-          nextTick(() => drawCanvas())
+            const open = async (targetMode = 'template') => {
+                mode.value = targetMode
+                selection.value = null
+                point.value = null
+                isPausedForDialog.value = false
+
+                try {
+                    const res = await axios.get('/api/screenshot/full', {
+                        params: { project_path: store.currentProjectPath }
+                    })
+                    if (!res.data.image) {
+                        return ElMessage.error('获取工作区截图失败')
+                    }
+
+                    visible.value = true
+                    await nextTick()
+
+                    if (overlayRef.value) overlayRef.value.focus()
+
+                    imgObj = new Image()
+                    imgObj.src = 'data:image/png;base64,' + res.data.image
+                    imgObj.onload = () => {
+                        initAspectCanvas(res.data.width, res.data.height)
+                    }
+                } catch (err) {
+                    ElMessage.error('调出截图工具失败')
+                }
+            }
+
+            const setPauseState = (paused) => {
+                isPausedForDialog.value = paused
+            }
+
+            const initAspectCanvas = (rawW, rawH) => {
+                const canvas = canvasRef.value
+                if (!canvas || !containerRef.value) return
+
+                const screenW = containerRef.value.clientWidth
+                const screenH = containerRef.value.clientHeight
+
+                canvas.width = screenW
+                canvas.height = screenH
+
+                const scaleW = screenW / rawW
+                const scaleH = screenH / rawH
+                const scale = Math.min(scaleW, scaleH, 1)
+
+                const drawW = rawW * scale
+                const drawH = rawH * scale
+                const offsetX = (screenW - drawW) / 2
+                const offsetY = (screenH - drawH) / 2
+
+                drawScale.scale = scale
+                drawScale.offsetX = offsetX
+                drawScale.offsetY = offsetY
+                drawScale.imgW = rawW
+                drawScale.imgH = rawH
+
+                redrawCanvas()
+            }
+
+            const screenToImgPos = (clientX, clientY) => {
+                const rect = containerRef.value.getBoundingClientRect()
+                const xInCanvas = clientX - rect.left
+                const yInCanvas = clientY - rect.top
+
+                const ix = Math.round((xInCanvas - drawScale.offsetX) / drawScale.scale)
+                const iy = Math.round((yInCanvas - drawScale.offsetY) / drawScale.scale)
+                const clampedX = Math.max(0, Math.min(drawScale.imgW, ix))
+                const clampedY = Math.max(0, Math.min(drawScale.imgH, iy))
+                return { x: clampedX, y: clampedY }
+            }
+
+            const imgToCanvasPos = (imgX, imgY) => {
+                const cx = imgX * drawScale.scale + drawScale.offsetX
+                const cy = imgY * drawScale.scale + drawScale.offsetY
+                return { x: cx, y: cy }
+            }
+
+            const redrawCanvas = () => {
+                const canvas = canvasRef.value
+                if (!canvas || !imgObj) return
+                const ctx = canvas.getContext('2d')
+
+                ctx.clearRect(0, 0, canvas.width, canvas.height)
+                ctx.fillStyle = 'rgba(15, 15, 25, 0.95)'
+                ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+                const { offsetX, offsetY, imgW, imgH, scale } = drawScale
+                const drawW = imgW * scale
+                const drawH = imgH * scale
+
+                ctx.drawImage(imgObj, offsetX, offsetY, drawW, drawH)
+
+                ctx.strokeStyle = '#409eff'
+                ctx.lineWidth = 1.5
+                ctx.strokeRect(offsetX, offsetY, drawW, drawH)
+
+                if (selection.value && (mode.value === 'template' || mode.value === 'region')) {
+                    const { x, y, w, h } = selection.value
+                    const p1 = imgToCanvasPos(x, y)
+                    const p2 = imgToCanvasPos(x + w, y + h)
+                    const cw = p2.x - p1.x
+                    const ch = p2.y - p1.y
+
+                    if (w > 0 && h > 0) {
+                        ctx.drawImage(imgObj, x, y, w, h, p1.x, p1.y, cw, ch)
+                        ctx.strokeStyle = '#67C23A'
+                        ctx.lineWidth = 2
+                        ctx.strokeRect(p1.x, p1.y, cw, ch)
+                    }
+                }
+
+                if (point.value && mode.value === 'point') {
+                    const cp = imgToCanvasPos(point.value.x, point.value.y)
+                    ctx.beginPath()
+                    ctx.arc(cp.x, cp.y, 6, 0, Math.PI * 2)
+                    ctx.fillStyle = '#FF4D4F'
+                    ctx.fill()
+                    ctx.strokeStyle = '#FFFFFF'
+                    ctx.lineWidth = 2
+                    ctx.stroke()
+
+                    ctx.beginPath()
+                    ctx.moveTo(cp.x - 12, cp.y); ctx.lineTo(cp.x + 12, cp.y)
+                    ctx.moveTo(cp.x, cp.y - 12); ctx.lineTo(cp.x, cp.y + 12)
+                    ctx.strokeStyle = '#FF4D4F'
+                    ctx.lineWidth = 1.5
+                    ctx.stroke()
+                }
+
+                updateSidebarPreviews()
+            }
+
+            const updateSidebarPreviews = () => {
+                if (mode.value === 'point' && point.value) {
+                    nextTick(() => {
+                        const pCanvas = pointCanvasRef.value
+                        if (!pCanvas || !imgObj) return
+                        const pCtx = pCanvas.getContext('2d')
+                        pCtx.clearRect(0, 0, 160, 160)
+                        pCtx.drawImage(imgObj, point.value.x - 20, point.value.y - 20, 40, 40, 0, 0, 160, 160)
+                        pCtx.strokeStyle = '#FF4D4F'
+                        pCtx.lineWidth = 1
+                        pCtx.beginPath()
+                        pCtx.moveTo(80, 0); pCtx.lineTo(80, 160)
+                        pCtx.moveTo(0, 80); pCtx.lineTo(160, 80)
+                        pCtx.stroke()
+                    })
+                }
+
+                if ((mode.value === 'region' || mode.value === 'template') && selection.value) {
+                    const { x, y, w, h } = selection.value
+                    if (w <= 0 || h <= 0) return
+                    nextTick(() => {
+                        const rCanvas = regionCanvasRef.value
+                        if (!rCanvas || !imgObj) return
+                        const rCtx = rCanvas.getContext('2d')
+                        rCtx.clearRect(0, 0, rCanvas.width, rCanvas.height)
+                        rCtx.fillStyle = '#0f0f19'
+                        rCtx.fillRect(0, 0, rCanvas.width, rCanvas.height)
+
+                        const pScale = Math.min(220 / w, 150 / h)
+                        const pw = w * pScale
+                        const ph = h * pScale
+                        const px = (220 - pw) / 2
+                        const py = (150 - ph) / 2
+
+                        rCtx.drawImage(imgObj, x, y, w, h, px, py, pw, ph)
+                        rCtx.strokeStyle = '#67C23A'
+                        rCtx.lineWidth = 1.5
+                        rCtx.strokeRect(px, py, pw, ph)
+                    })
+                }
+            }
+
+            const onMouseDown = (e) => {
+                if (isPausedForDialog.value) return
+                isDrawing = true
+                const imgPos = screenToImgPos(e.clientX, e.clientY)
+                startImgPoint = imgPos
+
+                if (mode.value === 'point') {
+                    point.value = { ...imgPos }
+                    redrawCanvas()
+                } else {
+                    selection.value = { x: imgPos.x, y: imgPos.y, w: 0, h: 0 }
+                }
+            }
+
+            const onMouseMove = (e) => {
+                if (isPausedForDialog.value || !isDrawing) return
+                const imgPos = screenToImgPos(e.clientX, e.clientY)
+
+                if (mode.value === 'point') {
+                    point.value = { ...imgPos }
+                } else {
+                    const x = Math.min(startImgPoint.x, imgPos.x)
+                    const y = Math.min(startImgPoint.y, imgPos.y)
+                    const w = Math.abs(imgPos.x - startImgPoint.x)
+                    const h = Math.abs(imgPos.y - startImgPoint.y)
+                    selection.value = { x, y, w, h }
+                }
+                redrawCanvas()
+            }
+
+            const onMouseUp = () => { isDrawing = false }
+
+            const handleKeyDown = (e) => {
+                if (isPausedForDialog.value) return
+
+                if (e.key === 'Escape') return close()
+                if (e.key === 'Enter') return confirmSelection()
+
+                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                    e.preventDefault()
+                    const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+                    const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
+
+                    if (mode.value === 'point' && point.value) {
+                        point.value.x = Math.max(0, Math.min(drawScale.imgW, point.value.x + dx))
+                        point.value.y = Math.max(0, Math.min(drawScale.imgH, point.value.y + dy))
+                        redrawCanvas()
+                    } else if (selection.value) {
+                        if (e.shiftKey) {
+                            selection.value.w = Math.max(1, selection.value.w + dx)
+                            selection.value.h = Math.max(1, selection.value.h + dy)
+                        } else {
+                            selection.value.x = Math.max(0, Math.min(drawScale.imgW - selection.value.w, selection.value.x + dx))
+                            selection.value.y = Math.max(0, Math.min(drawScale.imgH - selection.value.h, selection.value.y + dy))
+                        }
+                        redrawCanvas()
+                    }
+                }
+            }
+
+            const confirmSelection = () => {
+                if (mode.value === 'point') {
+                    if (!point.value) return ElMessage.warning('请先点击工作区选点')
+                    emit('point-selected', [point.value.x, point.value.y])
+                    close()
+                    return
+                }
+
+                if (mode.value === 'region') {
+                    if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定框选区域')
+                    emit('region-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
+                    close()
+                    return
+                }
+
+                if (mode.value === 'template') {
+                    if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定截取区域')
+                    emit('template-crop-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
+                }
+            }
+
+            const close = () => { visible.value = false; isPausedForDialog.value = false }
+
+            return {
+                visible,
+                mode,
+                canvasRef,
+                containerRef,
+                pointCanvasRef,
+                regionCanvasRef,
+                overlayRef,
+                selection,
+                point,
+                open,
+                setPauseState,
+                onMouseDown,
+                onMouseMove,
+                onMouseUp,
+                handleKeyDown,
+                confirmSelection,
+                close
+            }
         }
-        image.src = base64
-      } catch (err) {
-        ElMessage.error('截图失败: ' + err.message)
-        imgLoaded.value = false
-      }
     }
-
-    const resetSelection = () => {
-      adjustX.value = 0
-      adjustY.value = 0
-      adjustW.value = 0
-      adjustH.value = 0
-      selectionRect.value = null
-    }
-
-    const drawCanvas = () => {
-      if (!canvas.value || !img.value) return
-      const c = canvas.value
-      const rect = c.parentElement.getBoundingClientRect()
-      const containerWidth = rect.width
-      const containerHeight = rect.height
-      const ratio = Math.min(containerWidth / imgWidth.value, containerHeight / imgHeight.value)
-      const displayWidth = imgWidth.value * ratio
-      const displayHeight = imgHeight.value * ratio
-      const offsetX = (containerWidth - displayWidth) / 2
-      const offsetY = (containerHeight - displayHeight) / 2
-      c.width = containerWidth
-      c.height = containerHeight
-      canvasCtx = c.getContext('2d')
-      canvasCtx.clearRect(0, 0, containerWidth, containerHeight)
-      canvasCtx.drawImage(img.value, offsetX, offsetY, displayWidth, displayHeight)
-      c._scale = ratio
-      c._offsetX = offsetX
-      c._offsetY = offsetY
-      if (selectionRect.value) {
-        drawSelection()
-      }
-    }
-
-    const drawSelection = () => {
-      if (!canvasCtx || !selectionRect.value) return
-      const c = canvas.value
-      const scale = c._scale || 1
-      const offX = c._offsetX || 0
-      const offY = c._offsetY || 0
-      const { x, y, w, h } = selectionRect.value
-      canvasCtx.strokeStyle = 'red'
-      canvasCtx.lineWidth = 2
-      canvasCtx.strokeRect(offX + x * scale, offY + y * scale, w * scale, h * scale)
-      updatePreview()
-    }
-
-    const updatePreview = () => {
-      if (!previewCanvas.value || !selectionRect.value) return
-      const pv = previewCanvas.value
-      const rect = pv.parentElement.getBoundingClientRect()
-      const containerWidth = rect.width
-      const containerHeight = rect.height
-      const { x, y, w, h } = selectionRect.value
-      if (w === 0 || h === 0) { clearPreview(); return }
-      const cropCanvas = document.createElement('canvas')
-      cropCanvas.width = w
-      cropCanvas.height = h
-      const cropCtx = cropCanvas.getContext('2d')
-      cropCtx.drawImage(img.value, x, y, w, h, 0, 0, w, h)
-      const ratio = Math.min(containerWidth / w, containerHeight / h)
-      const displayW = w * ratio
-      const displayH = h * ratio
-      const offX = (containerWidth - displayW) / 2
-      const offY = (containerHeight - displayH) / 2
-      pv.width = containerWidth
-      pv.height = containerHeight
-      previewCtx = pv.getContext('2d')
-      previewCtx.clearRect(0, 0, containerWidth, containerHeight)
-      previewCtx.drawImage(cropCanvas, offX, offY, displayW, displayH)
-    }
-
-    const clearPreview = () => {
-      if (previewCanvas.value) {
-        const pv = previewCanvas.value
-        const ctx = pv.getContext('2d')
-        ctx.clearRect(0, 0, pv.width, pv.height)
-      }
-    }
-
-    // 鼠标事件
-    const onMouseDown = (e) => {
-      if (!canvas.value || !imgLoaded.value) return
-      const rect = canvas.value.getBoundingClientRect()
-      const scale = canvas.value._scale || 1
-      const offX = canvas.value._offsetX || 0
-      const offY = canvas.value._offsetY || 0
-      const x = (e.clientX - rect.left - offX) / scale
-      const y = (e.clientY - rect.top - offY) / scale
-      if (x < 0 || y < 0 || x > imgWidth.value || y > imgHeight.value) return
-      isDragging.value = true
-      startX.value = x
-      startY.value = y
-      selectionRect.value = { x, y, w: 0, h: 0 }
-    }
-
-    const onMouseMove = (e) => {
-      if (!isDragging.value || !canvas.value || !imgLoaded.value) return
-      const rect = canvas.value.getBoundingClientRect()
-      const scale = canvas.value._scale || 1
-      const offX = canvas.value._offsetX || 0
-      const offY = canvas.value._offsetY || 0
-      const x = (e.clientX - rect.left - offX) / scale
-      const y = (e.clientY - rect.top - offY) / scale
-      const sx = Math.min(startX.value, x)
-      const sy = Math.min(startY.value, y)
-      const ex = Math.max(startX.value, x)
-      const ey = Math.max(startY.value, y)
-      selectionRect.value = {
-        x: Math.round(Math.max(0, sx)),
-        y: Math.round(Math.max(0, sy)),
-        w: Math.round(Math.min(ex, imgWidth.value) - Math.max(0, sx)),
-        h: Math.round(Math.min(ey, imgHeight.value) - Math.max(0, sy))
-      }
-      adjustX.value = selectionRect.value.x
-      adjustY.value = selectionRect.value.y
-      adjustW.value = selectionRect.value.w
-      adjustH.value = selectionRect.value.h
-      drawCanvas()
-    }
-
-    const onMouseUp = () => {
-      if (isDragging.value) {
-        isDragging.value = false
-        if (selectionRect.value && (selectionRect.value.w < 2 || selectionRect.value.h < 2)) {
-          resetSelection()
-          drawCanvas()
-          clearPreview()
-        } else {
-          updatePreview()
-        }
-      }
-    }
-
-    const applyAdjust = () => {
-      if (!imgLoaded.value) return
-      const x = Math.round(adjustX.value)
-      const y = Math.round(adjustY.value)
-      const w = Math.round(adjustW.value)
-      const h = Math.round(adjustH.value)
-      if (x < 0 || y < 0 || w <= 0 || h <= 0 || x + w > imgWidth.value || y + h > imgHeight.value) {
-        ElMessage.warning('无效的框选区域')
-        return
-      }
-      selectionRect.value = { x, y, w, h }
-      drawCanvas()
-      updatePreview()
-    }
-
-    const clearSelection = () => {
-      resetSelection()
-      drawCanvas()
-      clearPreview()
-    }
-
-    // ====== 保存对话框相关（后端驱动） ======
-    const showSaveDialog = () => {
-      if (!selectionRect.value) {
-        ElMessage.warning('请先框选一个区域')
-        return
-      }
-      if (!store.currentProjectPath) {
-        ElMessage.warning('请先打开项目')
-        return
-      }
-      saveDialogVisible.value = true
-    }
-
-    const initSaveDialog = async () => {
-      treeLoading.value = true
-      try {
-        await loadTree()
-        await loadPreview('')
-        saveFileName.value = ''
-      } catch (err) {
-        ElMessage.error('加载目录失败: ' + err.message)
-      } finally {
-        treeLoading.value = false
-      }
-    }
-
-    const loadTree = async () => {
-      if (!store.currentProjectPath) {
-        ElMessage.warning('请先打开项目')
-        return
-      }
-      try {
-        const res = await axios.get('/api/templates/tree', {
-          params: { project_path: store.currentProjectPath }
-        })
-        treeData.value = [{
-          name: 'templates',
-          id: '',
-          children: res.data.tree || []
-        }]
-        currentPath.value = '/'
-        currentRelativePath.value = ''
-      } catch (err) {
-        console.error('加载目录树失败', err)
-        ElMessage.error('加载目录树失败')
-      }
-    }
-
-    const loadPreview = async (relativePath) => {
-      if (!store.currentProjectPath) return
-      try {
-        const res = await axios.get('/api/templates/preview', {
-          params: {
-            project_path: store.currentProjectPath,
-            relative_path: relativePath
-          }
-        })
-        previewImages.value = res.data.images || []
-      } catch (err) {
-        console.error('加载预览失败', err)
-        previewImages.value = []
-      }
-    }
-
-    const onNodeClick = async (data, node) => {
-      const relPath = data.id || ''
-      currentRelativePath.value = relPath
-      currentPath.value = relPath ? `/${relPath}` : '/'
-      await loadPreview(relPath)
-    }
-
-    const createNewFolder = async () => {
-      if (!store.currentProjectPath) {
-        ElMessage.warning('请先打开项目')
-        return
-      }
-      try {
-        const { value: folderName } = await ElMessageBox.prompt('请输入新文件夹名称', '新建文件夹', {
-          confirmButtonText: '确定',
-          cancelButtonText: '取消',
-          inputPattern: /^[^\/:*?"<>|]+$/,
-          inputErrorMessage: '文件夹名称不合法'
-        })
-        if (folderName) {
-          await axios.post('/api/templates/mkdir', {
-            project_path: store.currentProjectPath,
-            relative_path: currentRelativePath.value,
-            dir_name: folderName
-          })
-          ElMessage.success('文件夹创建成功')
-          await loadTree()
-          await loadPreview(currentRelativePath.value)
-        }
-      } catch (err) {
-        if (err !== 'cancel') {
-          ElMessage.error('创建失败: ' + err.message)
-        }
-      }
-    }
-
-    const selectExistingTemplate = (img) => {
-      const baseName = img.name.replace('.png', '')
-      saveFileName.value = baseName
-      ElMessage.info(`已填充文件名: ${baseName}`)
-    }
-
-    const confirmSaveTemplate = async () => {
-      if (!selectionRect.value) {
-        ElMessage.warning('请先框选一个区域')
-        return
-      }
-      const name = saveFileName.value.trim()
-      if (!name) {
-        ElMessage.warning('请输入文件名')
-        return
-      }
-      if (!store.currentProjectPath) {
-        ElMessage.warning('请先打开项目')
-        return
-      }
-
-      const { x, y, w, h } = selectionRect.value
-      const region = [Math.round(x), Math.round(y), Math.round(w), Math.round(h)]
-      const cropCanvas = document.createElement('canvas')
-      cropCanvas.width = w
-      cropCanvas.height = h
-      const cropCtx = cropCanvas.getContext('2d')
-      cropCtx.drawImage(img.value, x, y, w, h, 0, 0, w, h)
-      const blob = await new Promise(resolve => cropCanvas.toBlob(resolve, 'image/png'))
-
-      const subdir = currentRelativePath.value
-      const fileName = `${name}.png`
-
-      try {
-        const formData = new FormData()
-        formData.append('project_path', store.currentProjectPath)
-        formData.append('template_name', name)
-        formData.append('subdir', subdir)
-        formData.append('region_x', region[0])
-        formData.append('region_y', region[1])
-        formData.append('region_w', region[2])
-        formData.append('region_h', region[3])
-        formData.append('image', blob, fileName)
-
-        await axios.post('/api/screenshot/save', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        })
-        ElMessage.success(`图片已保存 (${subdir ? subdir + '/' : ''}${name})`)
-        saveDialogVisible.value = false
-        // 刷新预览
-        await loadPreview(currentRelativePath.value)
-        // 刷新目录树
-        await loadTree()
-      } catch (err) {
-        ElMessage.error('保存失败: ' + (err.response?.data?.detail || err.message))
-      }
-    }
-
-    const onResize = () => {
-      if (visible.value && imgLoaded.value) {
-        drawCanvas()
-        if (selectionRect.value) updatePreview()
-      }
-    }
-
-    onMounted(() => {
-      window.addEventListener('resize', onResize)
-    })
-
-    onBeforeUnmount(() => {
-      window.removeEventListener('resize', onResize)
-    })
-
-    return {
-      visible,
-      saveDialogVisible,
-      canvas,
-      previewCanvas,
-      imgLoaded,
-      imgWidth,
-      imgHeight,
-      selectionRect,
-      adjustX,
-      adjustY,
-      adjustW,
-      adjustH,
-      treeData,
-      treeRef,
-      treeProps,
-      currentPath,
-      saveFileName,
-      previewImages,
-      treeLoading,
-      open,
-      close,
-      onMouseDown,
-      onMouseMove,
-      onMouseUp,
-      applyAdjust,
-      clearSelection,
-      showSaveDialog,
-      initSaveDialog,
-      onNodeClick,
-      createNewFolder,
-      selectExistingTemplate,
-      confirmSaveTemplate,
-      captureScreen,
-      drawCanvas,
-      updatePreview
-    }
-  }
-}
 </script>
 
 <style scoped>
-/* 所有样式保持不变，参考你之前已有的样式 */
-.screenshot-container {
-  display: flex;
-  height: 65vh;
-  gap: 16px;
-}
-.canvas-wrapper {
-  flex: 2;
-  background: #1a1a2e;
-  border-radius: 6px;
-  overflow: hidden;
-  position: relative;
-}
-.canvas-wrapper canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-  cursor: crosshair;
-}
-.preview-wrapper {
-  flex: 1;
-  background: #282a3a;
-  border-radius: 6px;
-  padding: 12px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.preview-header {
-  color: #cfd3e6;
-  font-weight: 500;
-}
-.preview-canvas-wrapper {
-  flex: 2;
-  background: #1a1a2e;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.preview-canvas-wrapper canvas {
-  width: 100%;
-  height: 100%;
-  display: block;
-}
-.preview-info {
-  color: #8a8fa8;
-  font-size: 12px;
-}
-.adjust-area {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  background: #32324a;
-  padding: 8px;
-  border-radius: 4px;
-}
-.adjust-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.adjust-row label {
-  color: #cfd3e6;
-  font-size: 12px;
-  width: 16px;
-}
-.adjust-row .el-input-number {
-  width: 70px;
-}
-.action-buttons {
-  display: flex;
-  gap: 8px;
-  margin-top: 4px;
-}
-.save-container {
-  display: flex;
-  height: 50vh;
-  gap: 16px;
-}
-.tree-wrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid #3d3d5a;
-  border-radius: 4px;
-  background: #1a1a2e;
-  overflow: hidden;
-}
-.tree-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background: #2d2d44;
-  border-bottom: 1px solid #3d3d5a;
-  flex-shrink: 0;
-}
-.current-path {
-  color: #8a8fa8;
-  font-size: 12px;
-  margin-left: 12px;
-}
-.tree-body {
-  flex: 1;
-  overflow: auto;
-  padding: 8px;
-}
-.tree-body .loading {
-  color: #8a8fa8;
-  text-align: center;
-  padding: 20px;
-}
-.tree-node {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: #cfd3e6;
-}
-.tree-node .el-icon {
-  font-size: 18px;
-}
-.preview-area {
-  flex: 1.5;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid #3d3d5a;
-  border-radius: 4px;
-  background: #1a1a2e;
-  overflow: hidden;
-}
-.preview-header-right {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  background: #2d2d44;
-  border-bottom: 1px solid #3d3d5a;
-  flex-shrink: 0;
-  color: #cfd3e6;
-}
-.preview-header-right .count {
-  font-size: 12px;
-  color: #8a8fa8;
-}
-.preview-grid {
-  flex: 1;
-  overflow-y: auto;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
-  gap: 8px;
-  padding: 8px;
-}
-.preview-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: #282a3a;
-  border-radius: 4px;
-  padding: 4px;
-  cursor: pointer;
-  transition: background 0.2s;
-}
-.preview-item img {
-  width: 80px;
-  height: 80px;
-  object-fit: contain;
-  border-radius: 2px;
-}
-.preview-name {
-  font-size: 11px;
-  color: #8a8fa8;
-  text-align: center;
-  word-break: break-all;
-  max-width: 80px;
-}
-.empty-preview {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #8a8fa8;
-}
-.save-footer {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-top: 12px;
-  padding-top: 12px;
-  border-top: 1px solid #3d3d5a;
-}
-.save-footer .el-form {
-  flex: 1;
-}
-.save-footer .el-form-item {
-  margin-bottom: 0;
-}
+    /* ⭐ 专业平滑层级：截图工具蒙层统一设为 z-index: 1000 */
+    .screenshot-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        z-index: 1000;
+        outline: none;
+        background: #0f0f19;
+    }
+
+    .main-layout {
+        display: flex;
+        width: 100vw;
+        height: 100vh;
+    }
+
+    .canvas-wrapper {
+        flex: 1;
+        height: 100%;
+        position: relative;
+        overflow: hidden;
+        cursor: crosshair;
+    }
+
+    .sidebar-panel {
+        width: 280px;
+        height: 100%;
+        background: #181824;
+        border-left: 1px solid #2d2d3f;
+        display: flex;
+        flex-direction: column;
+        padding: 16px;
+        box-shadow: -4px 0 16px rgba(0, 0, 0, 0.4);
+    }
+
+    .panel-header {
+        font-size: 16px;
+        font-weight: 600;
+        color: #409eff;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #2d2d3f;
+        margin-bottom: 16px;
+    }
+
+    .panel-section {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .section-title {
+        font-size: 13px;
+        color: #a2a7c7;
+        font-weight: 500;
+    }
+
+    .preview-box {
+        background: #09090d;
+        border: 1px dashed #3d3d5a;
+        border-radius: 6px;
+        padding: 8px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    .data-group {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        background: #202030;
+        padding: 10px;
+        border-radius: 6px;
+    }
+
+    .data-item {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        color: #cfd3e6;
+    }
+
+    .highlight {
+        color: #67c23a;
+        font-weight: 600;
+    }
+
+    .tips-box {
+        background: rgba(64, 158, 255, 0.08);
+        border-left: 3px solid #409eff;
+        padding: 8px 10px;
+        border-radius: 0 4px 4px 0;
+        font-size: 11px;
+        color: #a2a7c7;
+        line-height: 1.6;
+    }
+
+    .panel-footer {
+        padding-top: 12px;
+        border-top: 1px solid #2d2d3f;
+    }
 </style>

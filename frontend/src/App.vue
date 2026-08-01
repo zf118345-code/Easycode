@@ -207,4 +207,15 @@ html, body, #app {
 .recent .el-link {
   color: #409EFF;
 }
+/* ⭐ 全局弹窗层级梯队管控 */
+/* 第 3 层级：警告/重名提示 MessageBox 最高 (z-index: 1100) */
+.high-zindex-messagebox,
+.el-message-box__wrapper {
+    z-index: 1100 !important;
+}
+
+/* 关联的 Element 蒙层同步压在 1099 */
+.v-modal {
+    z-index: 1099 !important;
+}
 </style>

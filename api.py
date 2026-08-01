@@ -1,14 +1,19 @@
+# api.py
 import os
 import json
 import time
 import shutil
 import base64
 import io
+import re
+import logging
 from collections import OrderedDict
 import win32gui
+import win32process
+import win32con
 import pyautogui
 import uvicorn
-from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks
+from fastapi import FastAPI, HTTPException, File, UploadFile, Form, BackgroundTasks, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -30,6 +35,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ---------- 全局常量 ----------
+CONTEXT_FILE = "context.json"
+REGIONS_FILE_PATH = os.path.join("templates", "regions.json")
 
 # ---------- 执行状态限制存储（容量上限 100 预防内存泄漏） ----------
 MAX_LOG_ENTRIES = 100
@@ -55,16 +64,6 @@ class RunRequest(BaseModel):
 class SaveTaskRequest(BaseModel):
     project_path: str
     task_data: dict
-
-
-class RegionUpdate(BaseModel):
-    project_path: str
-    relative_path: str
-    region: list[int]
-
-
-class SyncTemplatesRequest(BaseModel):
-    project_path: str
 
 
 class TaskOrderRequest(BaseModel):
@@ -277,12 +276,9 @@ async def save_task_order(request: TaskOrderRequest):
 
 # ==================== 执行任务 ====================
 
-CONTEXT_FILE = "context.json"
-
-
 @app.post("/api/run")
 async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
-    """启动任务执行（后台）"""
+    """启动任务执行（后台包含预热与控制台格式化日志）"""
     project_path = request.project_path
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -302,18 +298,28 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
     record_execution(execution_id, {"status": "running", "message": "执行中..."}, [])
 
     def execute_background():
-        import logging
         from io import StringIO
+
         log_stream = StringIO()
-        handler = logging.StreamHandler(log_stream)
-        handler.setLevel(logging.INFO)
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
+        stream_handler = logging.StreamHandler(log_stream)
+        console_handler = logging.StreamHandler()
+
+        formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s', datefmt='%H:%M:%S')
+        stream_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
+
         root_logger = logging.getLogger()
-        root_logger.addHandler(handler)
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(stream_handler)
+        root_logger.addHandler(console_handler)
 
         original_failsafe = pyautogui.FAILSAFE
         pyautogui.FAILSAFE = False
+
+        print("\n" + "=" * 70)
+        print(f"🎬 [Easycode 运行引擎] 开始执行任务 ID: {request.task_id}")
+        print("=" * 70)
+
         try:
             executor = GraphExecutor(
                 project,
@@ -324,13 +330,16 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
             )
             executor.run(request.task_id, request.start_node_id)
             execution_status[execution_id] = {"status": "success", "message": "执行完成"}
+            print("=" * 70 + "\n")
         except Exception as e:
             execution_status[execution_id] = {"status": "error", "message": str(e)}
+            print(f"💥 [执行失败]: {e}\n" + "=" * 70 + "\n")
         finally:
             logs = log_stream.getvalue()
             execution_logs[execution_id] = logs.splitlines() if logs else ["（无日志）"]
             pyautogui.FAILSAFE = original_failsafe
-            root_logger.removeHandler(handler)
+            root_logger.removeHandler(stream_handler)
+            root_logger.removeHandler(console_handler)
 
     background_tasks.add_task(execute_background)
     return {"execution_id": execution_id, "status": "started"}
@@ -346,7 +355,158 @@ async def get_execution_status(execution_id: str):
     return {"status": status, "logs": logs[-100:]}
 
 
-# ==================== 模板目录树与预览 (供 FileBrowser 组件调用) ====================
+# ==================== 截图工具与区域绑定 API ====================
+
+@app.get("/api/screenshot/full")
+async def get_full_screenshot(project_path: str = ""):
+    """自动根据 Context 截取精准的工作区域大图（支持窗口/模拟器与裁剪）"""
+    region = None
+
+    if project_path:
+        context_path = os.path.join(project_path, CONTEXT_FILE)
+        if os.path.exists(context_path):
+            try:
+                with open(context_path, "r", encoding="utf-8") as f:
+                    ctx = json.load(f)
+                window_title = ctx.get("window_title")
+                if window_title:
+                    hwnd = win32gui.FindWindow(None, window_title)
+                    if hwnd:
+                        client_rect = win32gui.GetClientRect(hwnd)
+                        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+                        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
+
+                        off_top = ctx.get("offset_top", 0)
+                        off_bottom = ctx.get("offset_bottom", 0)
+                        off_left = ctx.get("offset_left", 0)
+                        off_right = ctx.get("offset_right", 0)
+
+                        x = left + off_left
+                        y = top + off_top
+                        w = (right - left) - off_left - off_right
+                        h = (bottom - top) - off_top - off_bottom
+
+                        if w > 0 and h > 0:
+                            region = (x, y, w, h)
+            except Exception as e:
+                print(f"读取工作区失败: {e}")
+
+    try:
+        if region:
+            screenshot = pyautogui.screenshot(region=region)
+        else:
+            screenshot = pyautogui.screenshot()
+
+        buffer = io.BytesIO()
+        screenshot.save(buffer, format="PNG")
+        img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+        return {
+            "image": img_str,
+            "width": screenshot.width,
+            "height": screenshot.height,
+            "region": region or [0, 0, pyautogui.size()[0], pyautogui.size()[1]]
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"截取工作区失败: {str(e)}")
+
+
+@app.post("/api/screenshot/crop")
+async def crop_screenshot(data: dict = Body(...)):
+    """保存裁剪后的模板图片，并将坐标记录到 templates/regions.json"""
+    project_path = data.get("project_path")
+    template_name = data.get("template_name")  # 例如 "EnterPage/test" 或 "test"
+    crop_rect = data.get("crop_rect")  # [x, y, w, h]
+
+    if not project_path or not template_name or not crop_rect:
+        raise HTTPException(status_code=400, detail="缺少参数")
+
+    templates_dir = os.path.join(project_path, "templates")
+    os.makedirs(templates_dir, exist_ok=True)
+
+    clean_key = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace("\\", "/")
+
+    save_path = os.path.join(templates_dir, f"{clean_key}.png")
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    try:
+        rel_x, rel_y, w, h = crop_rect
+
+        context_path = os.path.join(project_path, CONTEXT_FILE)
+        abs_x, abs_y = rel_x, rel_y
+        if os.path.exists(context_path):
+            with open(context_path, "r", encoding="utf-8") as f:
+                ctx = json.load(f)
+            window_title = ctx.get("window_title")
+            if window_title:
+                hwnd = win32gui.FindWindow(None, window_title)
+                if hwnd:
+                    client_rect = win32gui.GetClientRect(hwnd)
+                    left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+                    abs_x = left + ctx.get("offset_left", 0) + rel_x
+                    abs_y = top + ctx.get("offset_top", 0) + rel_y
+
+        full_img = pyautogui.screenshot()
+        cropped_img = full_img.crop((abs_x, abs_y, abs_x + w, abs_y + h))
+        cropped_img.save(save_path)
+
+        # 写入 templates/regions.json
+        regions_json_path = os.path.join(project_path, REGIONS_FILE_PATH)
+        regions_data = {}
+        if os.path.exists(regions_json_path):
+            try:
+                with open(regions_json_path, "r", encoding="utf-8") as f:
+                    regions_data = json.load(f)
+            except Exception:
+                regions_data = {}
+
+        # 存入相对路径标准 Key 映射，如 "EnterPage/test": [447, 85, 102, 96]
+        regions_data[clean_key] = crop_rect
+
+        with open(regions_json_path, "w", encoding="utf-8") as f:
+            json.dump(regions_data, f, ensure_ascii=False, indent=2)
+
+        return {"status": "success", "file_path": save_path, "key": clean_key}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存模板图片失败: {str(e)}")
+
+
+@app.post("/api/screenshot")
+async def take_screenshot(request: dict):
+    """截取指定窗口或全屏"""
+    window_title = request.get("window_title")
+    offset_top = request.get("offset_top", 0)
+    offset_bottom = request.get("offset_bottom", 0)
+    offset_left = request.get("offset_left", 0)
+    offset_right = request.get("offset_right", 0)
+    if window_title:
+        hwnd = win32gui.FindWindow(None, window_title)
+        if not hwnd:
+            raise HTTPException(status_code=404, detail="未找到窗口")
+        client_rect = win32gui.GetClientRect(hwnd)
+        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
+        x = left + offset_left
+        y = top + offset_top
+        w = (right - left) - offset_left - offset_right
+        h = (bottom - top) - offset_top - offset_bottom
+        if w <= 0 or h <= 0:
+            raise HTTPException(status_code=400, detail="裁剪后区域无效")
+        region = (x, y, w, h)
+    else:
+        screen_w, screen_h = pyautogui.size()
+        region = (0, 0, screen_w, screen_h)
+    screenshot = pyautogui.screenshot(region=region)
+    buffered = io.BytesIO()
+    screenshot.save(buffered, format="PNG")
+    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+    return JSONResponse(content={
+        "image": f"data:image/png;base64,{img_base64}",
+        "rect": region
+    })
+
+
+# ==================== 模板目录树、创建与预览 (供 FileBrowser 组件调用) ====================
 
 @app.get("/api/templates/tree")
 async def get_templates_tree(project_path: str):
@@ -402,125 +562,158 @@ async def get_template_preview(project_path: str, relative_path: str = ""):
     return {"images": images}
 
 
+@app.post("/api/templates/mkdir")
+async def create_template_folder(data: dict = Body(...)):
+    """在 templates 的指定层级下新建文件夹"""
+    project_path = data.get("project_path")
+    parent_path = data.get("parent_path", "")
+    folder_name = data.get("folder_name", "").strip()
+
+    if not project_path or not folder_name:
+        raise HTTPException(status_code=400, detail="文件夹名称不能为空")
+
+    target_dir = os.path.join(project_path, "templates", parent_path, folder_name)
+    if os.path.exists(target_dir):
+        raise HTTPException(status_code=400, detail="文件夹已存在")
+
+    try:
+        os.makedirs(target_dir, exist_ok=True)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"创建文件夹失败: {str(e)}")
+
+
+# ==================== 区域配置 (templates/regions.json 读写) ====================
+
 @app.get("/api/regions")
 async def get_regions(project_path: str):
-    """获取项目的 regions.json"""
-    regions_path = os.path.join(project_path, "templates", "regions.json")
-    if os.path.exists(regions_path):
-        with open(regions_path, "r", encoding="utf-8") as f:
+    """获取 templates/regions.json 的内容"""
+    file_path = os.path.join(project_path, REGIONS_FILE_PATH)
+    if not os.path.exists(file_path):
+        return {}
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
             return json.load(f)
-    return {}
+    except Exception:
+        return {}
 
 
 @app.post("/api/regions")
-async def update_region(request: RegionUpdate):
-    """更新/添加单个区域配置"""
-    project_path = request.project_path
-    relative_path = request.relative_path
-    region = request.region
-    if not project_path or not relative_path or region is None:
+async def save_region(data: dict = Body(...)):
+    """保存/更新图片的区域坐标到 templates/regions.json"""
+    project_path = data.get("project_path")
+    template_name = data.get("template_name") or data.get("relative_path")
+    crop_rect = data.get("crop_rect") or data.get("region")
+
+    if not project_path or not template_name or crop_rect is None:
         raise HTTPException(status_code=400, detail="缺少必要参数")
 
-    templates_dir = os.path.join(project_path, "templates")
-    regions_path = os.path.join(templates_dir, "regions.json")
-    os.makedirs(templates_dir, exist_ok=True)
+    clean_name = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace("\\", "/")
+    file_name_only = os.path.basename(clean_name)
+    file_path = os.path.join(project_path, REGIONS_FILE_PATH)
 
     regions = {}
-    if os.path.exists(regions_path):
-        with open(regions_path, "r", encoding="utf-8") as f:
-            regions = json.load(f)
+    if os.path.exists(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                regions = json.load(f)
+        except Exception:
+            regions = {}
 
-    regions[relative_path] = region
-    with open(regions_path, "w", encoding="utf-8") as f:
-        json.dump(regions, f, indent=2, ensure_ascii=False)
-    return {"status": "success"}
+    # 完整相对路径与纯文件名都保存一份
+    regions[clean_name] = crop_rect
+    regions[file_name_only] = crop_rect
+
+    try:
+        os.makedirs(os.path.dirname(file_path), exist_ok=True)
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(regions, f, ensure_ascii=False, indent=2)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存区域信息失败: {str(e)}")
 
 
-# ==================== 截图工具与上下文 (供 ScreenshotTool 组件调用) ====================
+# ==================== 系统窗口与上下文控制 ====================
+
+# api.py 中的 get_windows 接口替换
 
 @app.get("/api/windows")
 async def get_windows():
-    """获取当前所有可见窗口标题"""
+    """获取当前所有真正可见且有效的游戏/应用窗口（严格过滤后台系统幽灵窗口）"""
     windows = []
+    seen_titles = set()
+
+    # 系统内置的黑名单标题 & 挂起应用类名
+    IGNORE_TITLES = {
+        "Program Manager",
+        "Windows 输入体验",
+        "Windows Input Experience",
+        "新通知",
+        "通知中心",
+        "设置",
+        "Settings"
+    }
+
+    IGNORE_CLASSES = {
+        "Windows.UI.Core.CoreWindow",
+        "ApplicationFrameWindow",  # 当内部无实际画面时需要过滤
+        "ToolGlobeTopMost"
+    }
 
     def callback(hwnd, extra):
-        if win32gui.IsWindowVisible(hwnd):
-            title = win32gui.GetWindowText(hwnd)
-            if title:
-                windows.append({"hwnd": hwnd, "title": title})
+        # 1. 基本可见性检查
+        if not win32gui.IsWindowVisible(hwnd):
+            return
+
+        # 2. 标题检查
+        title = win32gui.GetWindowText(hwnd).strip()
+        if not title or title in IGNORE_TITLES:
+            return
+
+        # 3. 样式扩展位检查 (过滤 TOOLWINDOW，保留任务栏主应用)
+        ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
+        style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
+
+        # 如果是工具窗口 (ToolWindow) 且不是显式主应用窗口 (AppWindow)，跳过
+        if (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & win32con.WS_EX_APPWINDOW):
+            return
+
+        # 4. 几何坐标与尺寸检查 (过滤隐藏在角落或宽高小于 100x100 的窗口)
+        try:
+            rect = win32gui.GetWindowRect(hwnd)
+            w = rect[2] - rect[0]
+            h = rect[3] - rect[1]
+
+            # 过滤过小或负坐标的不可见悬浮窗口
+            if w < 100 or h < 100 or rect[2] <= 0 or rect[3] <= 0:
+                return
+
+            # 5. 客户区像素有效性检查
+            client_rect = win32gui.GetClientRect(hwnd)
+            client_w = client_rect[2] - client_rect[0]
+            client_h = client_rect[3] - client_rect[1]
+            if client_w <= 0 or client_h <= 0:
+                return
+
+            # 6. 进程名称安全检测 (过滤 Setting / ActionCenter 等系统隐藏进程)
+            _, pid = win32process.GetWindowThreadProcessId(hwnd)
+
+            # 7. 标题去重
+            if title in seen_titles:
+                return
+            seen_titles.add(title)
+
+            windows.append({
+                "hwnd": hwnd,
+                "title": title,
+                "process_id": pid,
+                "class_name": win32gui.GetClassName(hwnd)
+            })
+        except Exception:
+            pass
 
     win32gui.EnumWindows(callback, None)
     return {"windows": windows}
-
-
-@app.post("/api/screenshot")
-async def take_screenshot(request: dict):
-    """截取指定窗口或全屏"""
-    window_title = request.get("window_title")
-    offset_top = request.get("offset_top", 0)
-    offset_bottom = request.get("offset_bottom", 0)
-    offset_left = request.get("offset_left", 0)
-    offset_right = request.get("offset_right", 0)
-    if window_title:
-        hwnd = win32gui.FindWindow(None, window_title)
-        if not hwnd:
-            raise HTTPException(status_code=404, detail="未找到窗口")
-        client_rect = win32gui.GetClientRect(hwnd)
-        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-        x = left + offset_left
-        y = top + offset_top
-        w = (right - left) - offset_left - offset_right
-        h = (bottom - top) - offset_top - offset_bottom
-        if w <= 0 or h <= 0:
-            raise HTTPException(status_code=400, detail="裁剪后区域无效")
-        region = (x, y, w, h)
-    else:
-        screen_w, screen_h = pyautogui.size()
-        region = (0, 0, screen_w, screen_h)
-    screenshot = pyautogui.screenshot(region=region)
-    buffered = io.BytesIO()
-    screenshot.save(buffered, format="PNG")
-    img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-    return JSONResponse(content={
-        "image": f"data:image/png;base64,{img_base64}",
-        "rect": region
-    })
-
-
-@app.post("/api/screenshot/save")
-async def save_screenshot(
-        project_path: str = Form(...),
-        template_name: str = Form(...),
-        subdir: str = Form(""),
-        region_x: int = Form(...),
-        region_y: int = Form(...),
-        region_w: int = Form(...),
-        region_h: int = Form(...),
-        image: UploadFile = File(...)
-):
-    """保存截图模板到项目 templates 目录，并更新 regions.json"""
-    templates_dir = os.path.join(project_path, "templates")
-    save_dir = os.path.join(templates_dir, subdir) if subdir else templates_dir
-    os.makedirs(save_dir, exist_ok=True)
-    filename = f"{template_name}.png"
-    filepath = os.path.join(save_dir, filename)
-    with open(filepath, "wb") as f:
-        shutil.copyfileobj(image.file, f)
-
-    regions_path = os.path.join(templates_dir, "regions.json")
-    regions = {}
-    if os.path.exists(regions_path):
-        with open(regions_path, "r", encoding="utf-8") as f:
-            regions = json.load(f)
-
-    rel_path = os.path.join(subdir, filename) if subdir else filename
-    rel_path = rel_path.replace("\\", "/")
-    key = os.path.splitext(rel_path)[0]
-    regions[key] = [region_x, region_y, region_w, region_h]
-    with open(regions_path, "w", encoding="utf-8") as f:
-        json.dump(regions, f, indent=2, ensure_ascii=False)
-    return {"status": "success", "path": rel_path}
 
 
 @app.post("/api/context")

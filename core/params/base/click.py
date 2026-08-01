@@ -1,22 +1,23 @@
+# core/params/base/click.py
+
 PARAM_DEFINITIONS = {
     "click": {
         "label": "鼠标点击",
         "params": {
             "position": {
-                "type": "list_int2",
+                "type": "list_int2_picker",  # 带取点按钮的 X, Y 坐标对
                 "default": [0, 0],
-                "label": "点击位置"
-            },
-            "is_relative": {
-                "type": "bool",
-                "default": True,
-                "label": "相对窗口"
+                "label": "点击位置 (X, Y)"
             },
             "button": {
                 "type": "select",
-                "options": ["left", "right", "middle"],
+                "options": [
+                    {"value": "left", "label": "左键"},
+                    {"value": "right", "label": "右键"},
+                    {"value": "middle", "label": "中键"}
+                ],
                 "default": "left",
-                "label": "鼠标按钮"
+                "label": "鼠标按键"
             }
         }
     }

@@ -4,6 +4,7 @@ import win32con
 import subprocess
 import re
 import logging
+import pyautogui
 from core.registry import NodeExecutorRegistry
 from core.node_executors.base_class import BaseNodeExecutor
 from core.emulator_presets import get_emulator_offset
@@ -16,51 +17,118 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
 
     def execute(self, node, context):
         params = node.params
+        work_mode = params.get("work_mode", "window")
+
+        # ---------------- 1. 全桌面模式 (Desktop Mode) ----------------
+        if work_mode == "desktop":
+            context.log("🖥️ 切换为 [全桌面模式]，清除窗口句柄限制")
+            screen_w, screen_h = pyautogui.size()
+
+            # 读取裁剪偏移
+            content_offset = params.get("content_offset", {})
+            for k in ["top", "bottom", "left", "right"]:
+                content_offset.setdefault(k, 0)
+
+            off_left = content_offset.get("left", 0)
+            off_top = content_offset.get("top", 0)
+            off_right = content_offset.get("right", 0)
+            off_bottom = content_offset.get("bottom", 0)
+
+            # 计算桌面裁剪后的工作坐标区
+            crop_w = screen_w - off_left - off_right
+            crop_h = screen_h - off_top - off_bottom
+
+            context.window_hwnd = None
+            context.window_rect = (off_left, off_top, max(1, crop_w), max(1, crop_h))
+            context.is_emulator = False
+            context.device_id = None
+            context.android_width = None
+            context.android_height = None
+
+            context.variables.pop("window_original_rect", None)
+            context.variables["window_content_offset"] = content_offset
+            context.variables["window_rect"] = context.window_rect
+
+            context.log(f"✅ 全桌面工作区设置成功 | 区域: {context.window_rect}")
+            return self.build_jump_result(True, params.get("on_success", {}))
+
+        # ---------------- 2. 指定窗口/模拟器模式 (Window Mode) ----------------
         title = params.get("title")
         if not title:
-            context.log("set_window 缺少 title 参数", "error")
+            context.log("❌ [set_window] 缺少窗口标题参数", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="missing title")
 
         hwnd = win32gui.FindWindow(None, title)
         if not hwnd:
-            context.log(f"未找到窗口: {title}", "warning")
+            context.log(f"⚠️ [set_window] 未找到标题为 [{title}] 的窗口", "warning")
             return self.build_jump_result(False, params.get("on_failure", {}), error=f"window not found: {title}")
 
-        if params.get("activate", True):
-            try:
-                if win32gui.IsIconic(hwnd):
-                    win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-                win32gui.SetForegroundWindow(hwnd)
-                win32gui.BringWindowToTop(hwnd)
-                context.log(f"窗口已激活: {title}")
-            except Exception as e:
-                context.log(f"激活窗口失败: {e}", "warning")
+        # 默认激活并置顶窗口
+        try:
+            if win32gui.IsIconic(hwnd):
+                win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
+            win32gui.SetForegroundWindow(hwnd)
+            win32gui.BringWindowToTop(hwnd)
+            context.log(f"✅ [set_window] 窗口已自动置顶激活: {title}")
+        except Exception as e:
+            context.log(f"⚠️ [set_window] 激活窗口失败: {e}", "warning")
 
-        # 获取原始客户区
-        client_rect = win32gui.GetClientRect(hwnd)
-        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-        original_rect = (left, top, right - left, bottom - top)
-
-        # 获取内容偏移
-        content_offset = params.get("content_offset")
+        # 读取裁剪偏移配置
+        content_offset = params.get("content_offset", {})
         if not content_offset or all(v == 0 for v in content_offset.values()):
             if params.get("is_emulator", False):
                 content_offset = get_emulator_offset(title)
-                context.log(f"自动应用模拟器预设偏移: {content_offset}")
+                context.log(f"📱 自动匹配模拟器预设裁剪偏移: {content_offset}")
             else:
                 content_offset = {"top": 0, "bottom": 0, "left": 0, "right": 0}
         else:
             for k in ["top", "bottom", "left", "right"]:
                 content_offset.setdefault(k, 0)
 
-        new_left = left + content_offset["left"]
-        new_top = top + content_offset["top"]
-        new_width = original_rect[2] - content_offset["left"] - content_offset["right"]
-        new_height = original_rect[3] - content_offset["top"] - content_offset["bottom"]
+        offset_left = content_offset.get("left", 0)
+        offset_right = content_offset.get("right", 0)
+        offset_top = content_offset.get("top", 0)
+        offset_bottom = content_offset.get("bottom", 0)
+
+        # 检查并 Resize 目标内容尺寸
+        target_w = params.get("target_content_width", 0)
+        target_h = params.get("target_content_height", 0)
+
+        if target_w > 0 and target_h > 0:
+            context.log(f"📏 检测到目标内容尺寸: {target_w}x{target_h}，准备调整窗口大小...")
+            try:
+                window_rect = win32gui.GetWindowRect(hwnd)
+                pos_x, pos_y = window_rect[0], window_rect[1]
+
+                cur_client_rect = win32gui.GetClientRect(hwnd)
+                cur_window_rect = win32gui.GetWindowRect(hwnd)
+                border_w = (cur_window_rect[2] - cur_window_rect[0]) - cur_client_rect[2]
+                border_h = (cur_window_rect[3] - cur_window_rect[1]) - cur_client_rect[3]
+
+                client_w = target_w + offset_left + offset_right
+                client_h = target_h + offset_top + offset_bottom
+
+                outer_w = client_w + border_w
+                outer_h = client_h + border_h
+
+                win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h, win32con.SWP_NOZORDER)
+                context.log(f"✅ 窗口尺寸已调整为外框: {outer_w}x{outer_h} | 内容区: {target_w}x{target_h}")
+            except Exception as e:
+                context.log(f"⚠️ [set_window] 调整尺寸失败: {e}", "warning")
+
+        # 计算调整后的实际内容坐标区
+        client_rect = win32gui.GetClientRect(hwnd)
+        left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+        right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
+        original_rect = (left, top, right - left, bottom - top)
+
+        new_left = left + offset_left
+        new_top = top + offset_top
+        new_width = original_rect[2] - offset_left - offset_right
+        new_height = original_rect[3] - offset_top - offset_bottom
         content_rect = (new_left, new_top, new_width, new_height)
 
-        # 更新上下文
+        # 更新全局变量
         context.window_hwnd = hwnd
         context.window_rect = content_rect
         context.variables["window_hwnd"] = hwnd
@@ -68,36 +136,30 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         context.variables["window_original_rect"] = original_rect
         context.variables["window_content_offset"] = content_offset
 
-        # 模拟器模式
+        # 模拟器 ADB 检测
         is_emulator = params.get("is_emulator", False)
         context.is_emulator = is_emulator
         if is_emulator:
-            device_id = params.get("device_id")
-            if not device_id:
-                device_id = self._auto_detect_device(title)
+            device_id = self._auto_detect_device(title)
             if device_id:
                 context.device_id = device_id
                 android_w, android_h = self._get_android_resolution(device_id)
                 if android_w and android_h:
-                    override_w = params.get("android_width")
-                    override_h = params.get("android_height")
-                    if override_w and override_h:
-                        android_w, android_h = override_w, override_h
                     context.android_width = android_w
                     context.android_height = android_h
                     context.variables["android_width"] = android_w
                     context.variables["android_height"] = android_h
-                    context.log(f"Android 分辨率: {android_w}x{android_h}")
+                    context.log(f"🤖 [ADB] 设备: {device_id} | Android 物理分辨率: {android_w}x{android_h}")
                 else:
-                    context.log("无法获取 Android 分辨率", "warning")
+                    context.log(f"⚠️ [ADB] 设备 {device_id} 无法获取 Android 分辨率", "warning")
             else:
-                context.log("未找到 ADB 设备，模拟器模式回退 PC 点击", "warning")
+                context.log("⚠️ 未找到匹配的 ADB 设备，模拟器模式将自动回退为桌面鼠标点击", "warning")
                 context.is_emulator = False
 
-        context.log(f"窗口已设置: {title}, 内容区域: {content_rect}, 模拟器: {is_emulator}")
+        context.log(f"🎉 工作窗口设置完成 | 标题: {title} | 最终内容区域: {content_rect}")
         return self.build_jump_result(True, params.get("on_success", {}))
 
-    # ---------- 辅助方法 ----------
+    # ---------- 辅助工具函数 ----------
     def _auto_detect_device(self, title):
         match = re.search(r'(\d{4,5})$', title)
         if match:
@@ -154,73 +216,5 @@ class ResetWindowNodeExecutor(BaseNodeExecutor):
         context.android_height = None
         context.variables.pop("window_original_rect", None)
         context.variables.pop("window_content_offset", None)
-        context.log("已切换回桌面全屏模式")
+        context.log("🔄 已切换回桌面全屏模式")
         return {"success": True}
-
-
-@NodeExecutorRegistry.register("resize_window")
-class ResizeWindowNodeExecutor(BaseNodeExecutor):
-    def execute(self, node, context):
-        params = node.params
-
-        if context.window_hwnd is None:
-            context.log("未设置窗口，无法调整大小", "error")
-            return self.build_jump_result(False, params.get("on_failure", {}), error="no window set")
-
-        target_w = params.get("target_content_width")
-        target_h = params.get("target_content_height")
-        if target_w is None or target_h is None:
-            context.log("resize_window 需要 target_content_width 和 target_content_height", "error")
-            return self.build_jump_result(False, params.get("on_failure", {}), error="missing target dimensions")
-
-        hwnd = context.window_hwnd
-        original_rect = context.variables.get("window_original_rect")
-        content_offset = context.variables.get("window_content_offset", {})
-        if not original_rect:
-            client_rect = win32gui.GetClientRect(hwnd)
-            left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-            right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
-            original_rect = (left, top, right - left, bottom - top)
-            context.variables["window_original_rect"] = original_rect
-
-        offset_left = content_offset.get("left", 0)
-        offset_right = content_offset.get("right", 0)
-        offset_top = content_offset.get("top", 0)
-        offset_bottom = content_offset.get("bottom", 0)
-
-        client_w = target_w + offset_left + offset_right
-        client_h = target_h + offset_top + offset_bottom
-
-        window_rect = win32gui.GetWindowRect(hwnd)
-        pos_x, pos_y = window_rect[0], window_rect[1]
-
-        cur_client_rect = win32gui.GetClientRect(hwnd)
-        cur_window_rect = win32gui.GetWindowRect(hwnd)
-        border_w = (cur_window_rect[2] - cur_window_rect[0]) - cur_client_rect[2]
-        border_h = (cur_window_rect[3] - cur_window_rect[1]) - cur_client_rect[3]
-
-        outer_w = client_w + border_w
-        outer_h = client_h + border_h
-
-        try:
-            win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h, win32con.SWP_NOZORDER)
-            new_client_rect = win32gui.GetClientRect(hwnd)
-            if abs(new_client_rect[2] - client_w) > 3 or abs(new_client_rect[3] - client_h) > 3:
-                context.log(f"调整窗口失败，目标客户区 {client_w}x{client_h}，实际 {new_client_rect[2]}x{new_client_rect[3]}", "warning")
-                return self.build_jump_result(False, params.get("on_failure", {}), error="resize verification failed")
-
-            context.log(f"窗口已调整: 客户区 {client_w}x{client_h}，内容区 {target_w}x{target_h}")
-            left, top = win32gui.ClientToScreen(hwnd, (0, 0))
-            right, bottom = win32gui.ClientToScreen(hwnd, (client_w, client_h))
-            context.window_rect = (
-                left + offset_left,
-                top + offset_top,
-                client_w - offset_left - offset_right,
-                client_h - offset_top - offset_bottom
-            )
-            context.variables["window_rect"] = context.window_rect
-            return self.build_jump_result(True, params.get("on_success", {}))
-
-        except Exception as e:
-            context.log(f"调整窗口异常: {e}", "error")
-            return self.build_jump_result(False, params.get("on_failure", {}), error=str(e))
