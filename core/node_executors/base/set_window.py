@@ -19,12 +19,12 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         title = params.get("title")
         if not title:
             context.log("set_window 缺少 title 参数", "error")
-            return self._result(False, params.get("on_failure", {}), error="missing title")
+            return self.build_jump_result(False, params.get("on_failure", {}), error="missing title")
 
         hwnd = win32gui.FindWindow(None, title)
         if not hwnd:
             context.log(f"未找到窗口: {title}", "warning")
-            return self._result(False, params.get("on_failure", {}), error=f"window not found: {title}")
+            return self.build_jump_result(False, params.get("on_failure", {}), error=f"window not found: {title}")
 
         if params.get("activate", True):
             try:
@@ -95,20 +95,9 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
                 context.is_emulator = False
 
         context.log(f"窗口已设置: {title}, 内容区域: {content_rect}, 模拟器: {is_emulator}")
-        return self._result(True, params.get("on_success", {}))
+        return self.build_jump_result(True, params.get("on_success", {}))
 
-    def _result(self, success, jump_conf, error=None):
-        result = {"success": success}
-        if error:
-            result["error"] = error
-        result["jump"] = {
-            "type": jump_conf.get("jump_type", "next"),
-            "target": jump_conf.get("target_task", ""),
-            "target_node": jump_conf.get("target_node", "")
-        }
-        return result
-
-    # ---------- 辅助方法（不变） ----------
+    # ---------- 辅助方法 ----------
     def _auto_detect_device(self, title):
         match = re.search(r'(\d{4,5})$', title)
         if match:
@@ -176,13 +165,13 @@ class ResizeWindowNodeExecutor(BaseNodeExecutor):
 
         if context.window_hwnd is None:
             context.log("未设置窗口，无法调整大小", "error")
-            return self._result(False, params.get("on_failure", {}), error="no window set")
+            return self.build_jump_result(False, params.get("on_failure", {}), error="no window set")
 
         target_w = params.get("target_content_width")
         target_h = params.get("target_content_height")
         if target_w is None or target_h is None:
             context.log("resize_window 需要 target_content_width 和 target_content_height", "error")
-            return self._result(False, params.get("on_failure", {}), error="missing target dimensions")
+            return self.build_jump_result(False, params.get("on_failure", {}), error="missing target dimensions")
 
         hwnd = context.window_hwnd
         original_rect = context.variables.get("window_original_rect")
@@ -218,7 +207,7 @@ class ResizeWindowNodeExecutor(BaseNodeExecutor):
             new_client_rect = win32gui.GetClientRect(hwnd)
             if abs(new_client_rect[2] - client_w) > 3 or abs(new_client_rect[3] - client_h) > 3:
                 context.log(f"调整窗口失败，目标客户区 {client_w}x{client_h}，实际 {new_client_rect[2]}x{new_client_rect[3]}", "warning")
-                return self._result(False, params.get("on_failure", {}), error="resize verification failed")
+                return self.build_jump_result(False, params.get("on_failure", {}), error="resize verification failed")
 
             context.log(f"窗口已调整: 客户区 {client_w}x{client_h}，内容区 {target_w}x{target_h}")
             left, top = win32gui.ClientToScreen(hwnd, (0, 0))
@@ -230,19 +219,8 @@ class ResizeWindowNodeExecutor(BaseNodeExecutor):
                 client_h - offset_top - offset_bottom
             )
             context.variables["window_rect"] = context.window_rect
-            return self._result(True, params.get("on_success", {}))
+            return self.build_jump_result(True, params.get("on_success", {}))
 
         except Exception as e:
             context.log(f"调整窗口异常: {e}", "error")
-            return self._result(False, params.get("on_failure", {}), error=str(e))
-
-    def _result(self, success, jump_conf, error=None):
-        result = {"success": success}
-        if error:
-            result["error"] = error
-        result["jump"] = {
-            "type": jump_conf.get("jump_type", "next"),
-            "target": jump_conf.get("target_task", ""),
-            "target_node": jump_conf.get("target_node", "")
-        }
-        return result
+            return self.build_jump_result(False, params.get("on_failure", {}), error=str(e))
