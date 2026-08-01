@@ -25,8 +25,8 @@ PARAM_DEFINITIONS = {
             },
             "gray_scale": {
                 "type": "bool",
-                "default": True,  # 默认开启灰度匹配，大幅提升匹配成功率
-                "label": "灰度匹配 (推荐开启)"
+                "default": True,
+                "label": "灰度匹配 (推荐)"
             },
             "region_type": {
                 "type": "select",
@@ -47,11 +47,6 @@ PARAM_DEFINITIONS = {
                     "operator": "in",
                     "value": ["recorded", "custom"]
                 }
-            },
-            "region_is_relative": {
-                "type": "bool",
-                "default": True,
-                "label": "基于工作区相对坐标"
             },
             "on_success_action": {
                 "type": "select",
