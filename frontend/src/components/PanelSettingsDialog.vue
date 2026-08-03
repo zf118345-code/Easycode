@@ -139,3 +139,23 @@
         }
     }
 </script>
+
+<style scoped>
+    .setting-tip {
+        font-size: 11px;
+        color: var(--el-text-color-secondary);
+        margin-top: 4px;
+        line-height: 1.3;
+    }
+
+    .dimension-box {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .dimension-cross {
+        color: var(--el-text-color-secondary);
+        font-weight: bold;
+    }
+</style>

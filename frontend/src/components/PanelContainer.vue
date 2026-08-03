@@ -70,7 +70,7 @@
     .panel-container {
         width: 100%;
         height: 100%;
-        background: #1a1a2e;
+        background: var(--el-bg-color-page);
     }
 
     .left-sub, .right-sub {
@@ -82,8 +82,8 @@
         flex-direction: column;
         height: 100%;
         padding: 4px;
-        background: #282a3a;
-        border-radius: 4px;
+        background: var(--el-bg-color);
+        border-radius: 6px;
         overflow: hidden;
     }
 </style>

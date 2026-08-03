@@ -142,80 +142,91 @@ export default {
 </script>
 
 <style>
-* {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
-html, body, #app {
-  height: 100%;
-  overflow: hidden;
-  font-family: 'Microsoft YaHei', 'Segoe UI', sans-serif;
-}
-#app {
-  display: flex;
-  flex-direction: column;
-  background: #1e1e2f;
-}
-.main-content {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-}
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+    }
 
-.welcome {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: #1e1e2f;
-  color: #cfd3e6;
-}
-.welcome-content {
-  text-align: center;
-}
-.welcome-content h1 {
-  font-size: 48px;
-  margin-bottom: 16px;
-}
-.welcome-content p {
-  font-size: 18px;
-  color: #8a8fa8;
-  margin-bottom: 30px;
-}
-.open-section {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-}
-.cached-hint {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #8a8fa8;
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-.cached-hint .el-icon {
-  color: #409EFF;
-}
-.recent {
-  margin-top: 30px;
-  font-size: 14px;
-  color: #8a8fa8;
-}
-.recent .el-link {
-  color: #409EFF;
-}
-/* ⭐ 全局弹窗层级梯队管控 */
-/* 第 3 层级：警告/重名提示 MessageBox 最高 (z-index: 1100) */
-.high-zindex-messagebox,
-.el-message-box__wrapper {
-    z-index: 1100 !important;
-}
+    html, body, #app {
+        height: 100%;
+        overflow: hidden;
+        font-family: 'PingFang SC', 'Microsoft YaHei', sans-serif;
+        background-color: var(--el-bg-color-page);
+    }
 
-/* 关联的 Element 蒙层同步压在 1099 */
-.v-modal {
-    z-index: 1099 !important;
-}
+    #app {
+        display: flex;
+        flex-direction: column;
+        background: var(--el-bg-color-page);
+    }
+
+    .main-content {
+        flex: 1;
+        overflow: hidden;
+        position: relative;
+    }
+
+    .welcome {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--el-bg-color-page);
+        color: var(--el-text-color-primary);
+    }
+
+    .welcome-content {
+        text-align: center;
+    }
+
+        .welcome-content h1 {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        .welcome-content p {
+            font-size: 18px;
+            color: var(--el-text-color-secondary);
+            margin-bottom: 30px;
+        }
+
+    .open-section {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+    }
+
+    .cached-hint {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--el-text-color-secondary);
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+
+        .cached-hint .el-icon {
+            color: var(--el-color-primary);
+        }
+
+    .recent {
+        margin-top: 30px;
+        font-size: 14px;
+        color: var(--el-text-color-secondary);
+    }
+
+        .recent .el-link {
+            color: var(--el-color-primary);
+        }
+
+    /* 全局弹窗层级梯队管控 */
+    .high-zindex-messagebox,
+    .el-message-box__wrapper {
+        z-index: 1100 !important;
+    }
+
+    .v-modal {
+        z-index: 1099 !important;
+    }
 </style>

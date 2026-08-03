@@ -26,23 +26,25 @@ export default {
 </script>
 
 <style scoped>
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 36px;
-  padding: 0 12px;
-  background: #32324a;
-  border-radius: 4px 4px 0 0;
-  flex-shrink: 0;
-}
-.title {
-  color: #cfd3e6;
-  font-weight: 500;
-  font-size: 13px;
-}
-.actions {
-  display: flex;
-  gap: 4px;
-}
+    .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 36px;
+        padding: 0 12px;
+        background: var(--el-fill-color-blank);
+        border-radius: 6px 6px 0 0;
+        flex-shrink: 0;
+    }
+
+    .title {
+        color: var(--el-text-color-primary);
+        font-weight: 600;
+        font-size: 13px;
+    }
+
+    .actions {
+        display: flex;
+        gap: 4px;
+    }
 </style>

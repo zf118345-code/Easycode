@@ -103,55 +103,64 @@ export default {
 </script>
 
 <style scoped>
-.app-header {
-  display: flex;
-  align-items: center;
-  height: 40px;
-  padding: 0 12px;
-  background: #2d2d44;
-  border-bottom: 1px solid #3d3d5a;
-  flex-shrink: 0;
-  gap: 12px;
-}
-.left-group {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.menu-icon {
-  color: #cfd3e6;
-  font-size: 20px;
-  cursor: pointer;
-}
-.menu-icon:hover {
-  color: #409EFF;
-}
-.logo {
-  color: #cfd3e6;
-  font-weight: bold;
-  font-size: 16px;
-}
-.project-selector {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.project-name {
-  color: #cfd3e6;
-  font-weight: 500;
-}
-.menu-bar {
-  flex: 1;
-  border-bottom: none;
-  background: transparent !important;
-}
-.menu-bar .el-menu-item {
-  height: 40px;
-  line-height: 40px;
-}
-.header-actions {
-  display: flex;
-  gap: 8px;
-}
+    .app-header {
+        display: flex;
+        align-items: center;
+        height: 40px;
+        padding: 0 12px;
+        background: var(--el-bg-color);
+        border-bottom: 1px solid var(--el-border-color-light);
+        flex-shrink: 0;
+        gap: 12px;
+    }
+
+    .left-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .menu-icon {
+        color: var(--el-text-color-regular);
+        font-size: 20px;
+        cursor: pointer;
+    }
+
+        .menu-icon:hover {
+            color: var(--el-color-primary);
+        }
+
+    .logo {
+        color: var(--el-text-color-primary);
+        font-weight: bold;
+        font-size: 16px;
+    }
+
+    .project-selector {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-shrink: 0;
+    }
+
+    .project-name {
+        color: var(--el-text-color-regular);
+        font-weight: 500;
+    }
+
+    .menu-bar {
+        flex: 1;
+        border-bottom: none;
+        background: transparent !important;
+    }
+
+        .menu-bar .el-menu-item {
+            height: 40px;
+            line-height: 40px;
+        }
+
+    .header-actions {
+        display: flex;
+        gap: 8px;
+    }
 </style>

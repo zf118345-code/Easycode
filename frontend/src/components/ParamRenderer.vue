@@ -468,7 +468,7 @@
 
     .param-label {
         font-size: 13px;
-        color: #cfd3e6;
+        color: var(--el-text-color-primary);
         font-weight: 500;
         margin-bottom: 4px;
     }
@@ -502,7 +502,7 @@
 
     .coord-label {
         font-size: 12px;
-        color: #8a8fa8;
+        color: var(--el-text-color-secondary);
         font-weight: 500;
         min-width: 14px;
     }
@@ -513,13 +513,13 @@
 
     .dict-container {
         padding-left: 12px;
-        border-left: 2px solid #3d3d5a;
+        border-left: 2px solid var(--el-border-color-light);
         margin-top: 4px;
     }
 
     .field-tip {
         font-size: 11px;
-        color: #8a8fa8;
+        color: var(--el-text-color-secondary);
         margin-top: 4px;
         line-height: 1.2;
     }
@@ -535,11 +535,11 @@
         justify-content: space-between;
         align-items: center;
         padding: 8px 12px;
-        background: #181824;
-        border: 1px solid #2d2d3f;
-        border-radius: 4px;
+        background: var(--el-fill-color-blank);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 6px;
         font-size: 12px;
-        color: #cfd3e6;
+        color: var(--el-text-color-regular);
     }
 
     .card-info {
@@ -549,7 +549,7 @@
     }
 
     .jump-tip {
-        color: #67c23a;
+        color: var(--el-color-primary);
         font-size: 11px;
     }
 

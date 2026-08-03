@@ -30,6 +30,8 @@
             <template #item="{ element: node, index }">
                 <div class="node-item" :class="{ active: store.selectedNodeId === node.node_id, 'batch-mode': store.batchMode }" @click="store.selectNode(node.node_id)">
                     <el-checkbox v-if="store.batchMode" :model-value="store.selectedNodeIds.includes(node.node_id)" @change.stop="store.toggleNodeSelection(node.node_id)" class="batch-checkbox" />
+
+                    <!-- ⭐ 第一行：等待（居左） + 循环（居右） -->
                     <div class="node-row first-row">
                         <div class="left-group">
                             <el-icon><Timer /></el-icon>
@@ -45,6 +47,8 @@
                             <el-button link size="small" class="edit-icon" @click.stop="startEditLoop(node)"><el-icon><Edit /></el-icon></el-button>
                         </div>
                     </div>
+
+                    <!-- ⭐ 第二行：序号+类型图标+节点名（居左） + 拖动&更多操作（居右） -->
                     <div class="node-row second-row">
                         <div class="left-group">
                             <span class="index">{{ index + 1 }}.</span>
@@ -53,7 +57,7 @@
                             <el-input v-else v-model="editNameValue" size="small" maxlength="10" @blur="finishEditName(node)" @keyup.enter="finishEditName(node)" class="inline-input" ref="nameInput" />
                             <el-button link size="small" class="edit-icon" @click.stop="startEditName(node)"><el-icon><Edit /></el-icon></el-button>
                         </div>
-                        <div class="right-group">
+                        <div class="right-group" @click.stop>
                             <el-icon class="drag-handle"><Rank /></el-icon>
                             <el-dropdown @command="(cmd) => handleNodeMenu(cmd, node)">
                                 <el-button link size="small"><el-icon><More /></el-icon></el-button>
@@ -287,27 +291,20 @@
         display: flex;
         flex-direction: column;
         height: 100%;
-        background: #282a3a;
-        border-radius: 4px;
-        overflow: hidden;
+        background: var(--el-bg-color);
     }
 
     .panel-header {
+        padding: 8px 12px;
+        background: var(--el-fill-color-blank);
+        border-bottom: 1px solid var(--el-border-color-light);
         display: flex;
         justify-content: space-between;
         align-items: center;
-        height: 36px;
-        padding: 0 12px;
-        background: #32324a;
-        border-bottom: 1px solid #3d3d5a;
-        flex-shrink: 0;
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--el-text-color-primary);
     }
-
-        .panel-header .title {
-            color: #cfd3e6;
-            font-weight: 500;
-            font-size: 13px;
-        }
 
     .header-actions {
         display: flex;
@@ -317,143 +314,123 @@
     .batch-toolbar {
         display: flex;
         align-items: center;
-        gap: 12px;
+        gap: 8px;
         padding: 6px 12px;
-        background: #3d3d5a;
-        border-bottom: 1px solid #4d4d6a;
-        flex-shrink: 0;
+        background: var(--el-fill-color-blank);
+        border-bottom: 1px solid var(--el-border-color-light);
+        font-size: 12px;
     }
 
-        .batch-toolbar .batch-info {
-            color: #8a8fa8;
-            font-size: 12px;
-        }
+    .batch-info {
+        color: var(--el-color-primary);
+        font-weight: bold;
+    }
 
     .node-list {
         flex: 1;
-        list-style: none;
-        margin: 0;
-        padding: 4px 0;
         overflow-y: auto;
-    }
-
-    .node-item {
-        background: #3d3d5a;
-        margin: 4px 8px;
-        padding: 6px 10px;
-        border-radius: 4px;
-        border: 1px solid transparent;
-        transition: border-color 0.2s, background 0.2s;
+        padding: 6px;
         display: flex;
         flex-direction: column;
-        gap: 4px;
-        cursor: pointer;
+        gap: 6px;
     }
+
+    /* ⭐ 节点卡片容器：垂直两行布局 */
+    .node-item {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        background: var(--el-fill-color-blank);
+        border: 1px solid var(--el-border-color-light);
+        cursor: pointer;
+        transition: all 0.2s ease;
+        user-select: none;
+        box-sizing: border-box;
+        width: 100%;
+    }
+
+        .node-item:hover {
+            border-color: var(--el-color-primary);
+            background: var(--el-fill-color-light);
+        }
 
         .node-item.active {
-            border-color: #409EFF;
-            background: #4a4a6a;
+            border-color: var(--el-color-primary);
+            background: rgba(78, 209, 156, 0.15);
         }
 
-        .node-item.batch-mode {
-            padding-left: 36px;
-            position: relative;
-        }
-
-    .batch-checkbox {
-        position: absolute;
-        left: 8px;
-        top: 50%;
-        transform: translateY(-50%);
-    }
-
+    /* ⭐⭐ 核心行样式：两端 100% 强行推开 */
     .node-row {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+        display: flex !important;
+        justify-content: space-between !important;
+        align-items: center !important;
+        width: 100% !important;
     }
 
-    .first-row .left-group,
-    .first-row .right-group {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .first-row .label {
-        color: #8a8fa8;
-        font-size: 12px;
-    }
-
-    .first-row .value {
-        color: #cfd3e6;
-        font-size: 12px;
-    }
-
-    .inline-input {
-        width: 60px;
-        height: 22px;
-    }
-
-        .inline-input .el-input__inner {
-            height: 22px;
-            padding: 0 4px;
-            font-size: 12px;
-        }
-
-    .edit-icon {
-        padding: 0;
-        font-size: 12px;
-        color: #8a8fa8;
-    }
-
-        .edit-icon:hover {
-            color: #cfd3e6;
-        }
-
-    .second-row .left-group {
+    .left-group, .right-group {
         display: flex;
         align-items: center;
         gap: 6px;
     }
 
-    .second-row .index {
-        color: #8a8fa8;
-        font-size: 12px;
-        min-width: 20px;
+    /* 第一行：延迟与循环 */
+    .first-row .label {
+        font-size: 11px;
+        color: var(--el-text-color-secondary);
     }
 
-    .node-icon {
-        font-size: 16px;
-    }
-
-    .node-name {
-        color: #cfd3e6;
-        font-size: 13px;
+    .first-row .value {
+        font-size: 11px;
+        color: var(--el-text-color-regular);
         font-weight: 500;
     }
 
-    .right-group {
-        display: flex;
-        align-items: center;
-        gap: 2px;
+    /* 第二行：序号、名称与右侧操作栏 */
+    .second-row .index {
+        font-size: 13px;
+        font-weight: bold;
+        color: var(--el-text-color-secondary);
+    }
+
+    .second-row .node-name {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--el-text-color-primary);
+    }
+
+    .node-item.active .second-row .node-name {
+        color: var(--el-color-primary);
     }
 
     .drag-handle {
-        cursor: grab;
-        color: #6a6a8a;
-        font-size: 16px;
+        cursor: move;
+        color: var(--el-text-color-secondary);
+        font-size: 14px;
+        user-select: none;
+        margin-left: 2px;
     }
 
-        .drag-handle:hover {
-            color: #cfd3e6;
+    .edit-icon {
+        padding: 0 !important;
+        height: auto !important;
+        font-size: 12px;
+        opacity: 0.6;
+    }
+
+        .edit-icon:hover {
+            opacity: 1;
         }
 
+    .inline-input {
+        width: 70px;
+    }
+
     .empty {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        color: #8a8fa8;
+        text-align: center;
+        color: var(--el-text-color-placeholder);
+        font-size: 12px;
+        padding: 20px 0;
     }
 </style>

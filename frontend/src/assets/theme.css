@@ -1,0 +1,259 @@
+﻿/* ==========================================================================
+   ⚡ Easycode 全局暗黑主题样式表 (Deep Indigo Theme & Layout Normalizer)
+   --------------------------------------------------------------------------
+   提示：在此处微调变量或全局类，可一键切换整个自动化工具的视觉风格与组件尺寸。
+   ========================================================================== */
+
+/* --------------------------------------------------------------------------
+   【第一部分】：全局 CSS 根变量定义 (Root System Variables)
+   -------------------------------------------------------------------------- */
+:root {
+    /* 1. 界面各层级背景色 (层次由深到浅) */
+    --el-bg-color-page: #1f2033 !important; /* 最底层主背景 (暗紫黑) */
+    --el-bg-color: #26283d !important; /* 中层卡片、面板背景 */
+    --el-bg-color-overlay: #26283d !important; /* 最上层 Popover、下拉菜单、Dialog 背景 */
+    /* 2. 控件/输入框内填充色 */
+    --el-fill-color-blank: #181926 !important; /* 输入框/下拉框无焦点时的纯暗色底 */
+    --el-fill-color: #1d1e30 !important; /* 控件辅助填充色 */
+    --el-fill-color-light: #2a2c45 !important; /* 悬浮 (Hover) 状态高亮色 */
+    --el-fill-color-lighter: #313352 !important; /* 选中 (Selected) 状态高亮色 */
+    /* 3. 全局文字阶梯 */
+    --el-text-color-primary: #ffffff !important; /* 1级文字：标题、值、主节点名 (纯白) */
+    --el-text-color-regular: #cfd3e6 !important; /* 2级文字：标签、属性描述 (浅灰蓝) */
+    --el-text-color-secondary: #8c8fa8 !important; /* 3级文字：提示、副标题 (中灰) */
+    --el-text-color-placeholder: #5c5f78 !important; /* 4级文字：占位默认词 (暗灰) */
+    /* 4. 边框与线框 */
+    --el-border-color: transparent !important; /* 默认去边框化 */
+    --el-border-color-light: #313352 !important; /* 面板与卡片分割线 */
+    --el-border-color-lighter: #282a44 !important; /* 微型分割线 */
+    /* 5. 品牌高亮与蒙层 (薄荷绿主题) */
+    --el-color-primary: #4ed19c !important; /* 核心主色 (薄荷绿) */
+    --el-mask-color: rgba(15, 16, 26, 0.8) !important; /* 遮罩暗化 */
+}
+
+/* --------------------------------------------------------------------------
+   【第二部分】：布局标准化与全局重置 (Layout Normalizer)
+   -------------------------------------------------------------------------- */
+html, body, #app {
+    background-color: var(--el-bg-color-page) !important;
+    color: var(--el-text-color-primary) !important;
+    font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif !important;
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+/* 统一所有盒模型计算，防止由于边框引起的布局挤压变形 */
+*, *::before, *::after {
+    box-sizing: border-box !important;
+}
+
+/* 暗黑细窄美化滚动条 */
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: var(--el-bg-color-page);
+}
+
+::-webkit-scrollbar-thumb {
+    background: #353757;
+    border-radius: 3px;
+}
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: var(--el-color-primary);
+    }
+
+/* --------------------------------------------------------------------------
+   【第三部分】：表单控件规范 (Input, Select, Textarea)
+   -------------------------------------------------------------------------- */
+.el-input,
+.el-select,
+.el-input__wrapper,
+.el-textarea__inner,
+.el-select .el-input__wrapper {
+    background-color: var(--el-fill-color-blank) !important;
+    box-shadow: none !important;
+    border: 1px solid transparent !important;
+    border-radius: 8px !important;
+    transition: all 0.2s ease !important;
+}
+
+    .el-input__inner,
+    .el-textarea__inner,
+    .el-select .el-input__inner {
+        color: var(--el-text-color-primary) !important;
+        font-weight: 500;
+        background-color: transparent !important;
+    }
+
+        .el-input__inner::placeholder,
+        .el-textarea__inner::placeholder {
+            color: var(--el-text-color-placeholder) !important;
+        }
+
+        /* 输入框 & 下拉框激活聚焦 */
+        .el-input__wrapper:hover,
+        .el-textarea__inner:hover,
+        .el-select .el-input__wrapper:hover,
+        .el-input__wrapper.is-focus,
+        .el-textarea__inner:focus,
+        .el-select .el-input__wrapper.is-focused {
+            border-color: var(--el-color-primary) !important;
+        }
+
+/* --------------------------------------------------------------------------
+   【第四部分】：按钮系统 (Button System)
+   -------------------------------------------------------------------------- */
+/* 1. 通用暗色卡片按钮 */
+.el-button {
+    background-color: var(--el-fill-color-light) !important;
+    color: var(--el-text-color-primary) !important;
+    border: 1px solid #363857 !important;
+    border-radius: 6px !important;
+    font-weight: 500;
+    transition: all 0.2s ease !important;
+}
+
+    .el-button:hover,
+    .el-button:focus {
+        background-color: #353757 !important;
+        color: var(--el-text-color-primary) !important;
+        border-color: var(--el-color-primary) !important;
+    }
+
+/* 2. 主行动按钮 (Primary / Success -> 薄荷绿大胶囊) */
+.el-button--primary,
+.el-button--success {
+    background-color: var(--el-color-primary) !important;
+    color: #122118 !important;
+    font-weight: bold !important;
+    border: none !important;
+    border-radius: 20px !important;
+}
+
+    .el-button--primary:hover,
+    .el-button--success:hover {
+        background-color: #5ce3aa !important;
+        color: #122118 !important;
+    }
+
+/* 3. 弹窗取消/关闭按钮 (灰白胶囊) */
+.el-dialog__footer .el-button:not(.el-button--primary) {
+    background-color: #e2e4ea !important;
+    color: #1f2033 !important;
+    font-weight: bold !important;
+    border: none !important;
+    border-radius: 20px !important;
+}
+
+    .el-dialog__footer .el-button:not(.el-button--primary):hover {
+        background-color: #ffffff !important;
+        color: #1f2033 !important;
+    }
+
+/* 4. 无背景纯图标按钮 (Icon Only) */
+.el-button.is-circle,
+.el-button.is-icon-only,
+.el-button:not(:has(span:not(.el-icon))),
+.el-button:has(> .el-icon:only-child) {
+    background-color: transparent !important;
+    border-color: transparent !important;
+    box-shadow: none !important;
+    color: var(--el-text-color-secondary) !important;
+}
+
+    .el-button.is-circle:hover,
+    .el-button.is-icon-only:hover,
+    .el-button:not(:has(span:not(.el-icon))):hover,
+    .el-button:has(> .el-icon:only-child):hover {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: var(--el-text-color-primary) !important;
+    }
+
+/* --------------------------------------------------------------------------
+   【第五部分】：弹窗、下拉与悬浮浮层 (Teleport Component Overrides)
+   -------------------------------------------------------------------------- */
+/* 下拉选择弹出框 */
+.el-select-dropdown {
+    background-color: var(--el-bg-color-overlay) !important;
+    border: 1px solid var(--el-border-color-light) !important;
+    border-radius: 8px !important;
+}
+
+.el-select-dropdown__item {
+    color: var(--el-text-color-regular) !important;
+}
+
+    .el-select-dropdown__item.is-hovering,
+    .el-select-dropdown__item:hover {
+        background-color: var(--el-border-color-light) !important;
+        color: var(--el-text-color-primary) !important;
+    }
+
+    .el-select-dropdown__item.is-selected {
+        color: var(--el-color-primary) !important;
+        font-weight: bold;
+        background-color: #2c2e47 !important;
+    }
+
+/* 对话框 & 消息提示框 */
+.el-dialog,
+.el-message-box,
+.el-popover.el-popper {
+    background-color: var(--el-bg-color-overlay) !important;
+    border: 1px solid #353757 !important;
+    border-radius: 12px !important;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+}
+
+.el-dialog__title,
+.el-message-box__title {
+    color: var(--el-text-color-primary) !important;
+    font-weight: 600;
+    font-size: 16px;
+}
+
+.el-dialog__header,
+.el-message-box__header {
+    border-bottom: 1px solid var(--el-border-color-light) !important;
+    padding-bottom: 14px !important;
+}
+
+.el-dialog__footer,
+.el-message-box__footer {
+    border-top: 1px solid var(--el-border-color-light) !important;
+    padding-top: 14px !important;
+}
+
+/* --------------------------------------------------------------------------
+   【第六部分】：组件细节微构 (Switches, Sliders & Dividers)
+   -------------------------------------------------------------------------- */
+.el-switch.is-checked .el-switch__core {
+    background-color: var(--el-color-primary) !important;
+    border-color: var(--el-color-primary) !important;
+}
+
+.el-slider__bar {
+    background-color: var(--el-color-primary) !important;
+}
+
+.el-slider__button {
+    border-color: var(--el-color-primary) !important;
+    background-color: #ffffff !important;
+}
+
+.el-divider {
+    border-color: var(--el-border-color-light) !important;
+}
+
+.el-divider__text {
+    background-color: var(--el-bg-color) !important;
+    color: var(--el-text-color-primary) !important;
+    font-weight: bold;
+}

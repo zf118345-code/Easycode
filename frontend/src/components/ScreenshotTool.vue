@@ -387,7 +387,6 @@
 </script>
 
 <style scoped>
-    /* ⭐ 专业平滑层级：截图工具蒙层统一设为 z-index: 1000 */
     .screenshot-overlay {
         position: fixed;
         top: 0;
@@ -396,7 +395,7 @@
         bottom: 0;
         z-index: 1000;
         outline: none;
-        background: #0f0f19;
+        background: var(--el-bg-color-page);
     }
 
     .main-layout {
@@ -416,8 +415,8 @@
     .sidebar-panel {
         width: 280px;
         height: 100%;
-        background: #181824;
-        border-left: 1px solid #2d2d3f;
+        background: var(--el-bg-color);
+        border-left: 1px solid var(--el-border-color-light);
         display: flex;
         flex-direction: column;
         padding: 16px;
@@ -427,9 +426,9 @@
     .panel-header {
         font-size: 16px;
         font-weight: 600;
-        color: #409eff;
+        color: var(--el-color-primary);
         padding-bottom: 12px;
-        border-bottom: 1px solid #2d2d3f;
+        border-bottom: 1px solid var(--el-border-color-light);
         margin-bottom: 16px;
     }
 
@@ -442,13 +441,13 @@
 
     .section-title {
         font-size: 13px;
-        color: #a2a7c7;
+        color: var(--el-text-color-secondary);
         font-weight: 500;
     }
 
     .preview-box {
-        background: #09090d;
-        border: 1px dashed #3d3d5a;
+        background: var(--el-fill-color-blank);
+        border: 1px dashed var(--el-border-color-light);
         border-radius: 6px;
         padding: 8px;
         display: flex;
@@ -460,7 +459,7 @@
         display: flex;
         flex-direction: column;
         gap: 6px;
-        background: #202030;
+        background: var(--el-fill-color-blank);
         padding: 10px;
         border-radius: 6px;
     }
@@ -469,26 +468,26 @@
         display: flex;
         justify-content: space-between;
         font-size: 12px;
-        color: #cfd3e6;
+        color: var(--el-text-color-regular);
     }
 
     .highlight {
-        color: #67c23a;
+        color: var(--el-color-primary);
         font-weight: 600;
     }
 
     .tips-box {
-        background: rgba(64, 158, 255, 0.08);
-        border-left: 3px solid #409eff;
+        background: rgba(78, 209, 156, 0.08);
+        border-left: 3px solid var(--el-color-primary);
         padding: 8px 10px;
         border-radius: 0 4px 4px 0;
         font-size: 11px;
-        color: #a2a7c7;
+        color: var(--el-text-color-secondary);
         line-height: 1.6;
     }
 
     .panel-footer {
         padding-top: 12px;
-        border-top: 1px solid #2d2d3f;
+        border-top: 1px solid var(--el-border-color-light);
     }
 </style>

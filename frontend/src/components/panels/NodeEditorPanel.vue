@@ -10,7 +10,7 @@
             <div class="params-container">
                 <!-- 1. 通用字段渲染 -->
                 <template v-for="(config, paramName) in allParams" :key="paramName">
-                    <!-- 区域坐标显隐 -->
+                    <!-- 区域坐标显隐：兼容 ocr_recognition 和 image_recognition 的 region_value -->
                     <div v-if="paramName === 'region_value'"
                          v-show="shouldShowRegionValue"
                          class="param-item">
@@ -36,7 +36,7 @@
                                    @input="debounceRefreshRealtime" />
                     </div>
 
-                    <!-- 其他通用组件 -->
+                    <!-- 其他通用组件（排除成功失败跳转，由下方统一接管渲染） -->
                     <div v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure'].includes(paramName)"
                          class="param-item">
                         <ParamRenderer :key="paramName + store.selectedNodeId"
@@ -97,6 +97,40 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- ⭐⭐⭐ 4. 恢复所有判断/行为节点的【成功跳转】与【失败跳转】配置区 -->
+                <template v-if="hasJumpConfig">
+                    <div v-for="jumpKey in ['on_success', 'on_failure']" :key="jumpKey" class="jump-section">
+                        <el-divider content-position="left">
+                            {{ jumpKey === 'on_success' ? '成功跳转' : '失败跳转' }}
+                        </el-divider>
+                        <div class="jump-config">
+                            <div class="param-item">
+                                <ParamRenderer :config="jumpTypeConfig"
+                                               :value="store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type || 'next'"
+                                               label="跳转类型"
+                                               :context="store.selectedNode.params"
+                                               @update="(val) => updateJumpParam(jumpKey, 'jump_type', val)" />
+                            </div>
+                            <!-- 动态目标任务 -->
+                            <div v-if="['task'].includes(store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type)" class="param-item">
+                                <ParamRenderer :config="getTargetConfig(jumpKey)"
+                                               :value="store.selectedNode.params[jumpKey]?.target_task || store.selectedNode.params[jumpKey]?.target || ''"
+                                               label="目标任务"
+                                               :context="store.selectedNode.params"
+                                               @update="(val) => updateJumpParam(jumpKey, 'target_task', val)" />
+                            </div>
+                            <!-- 动态目标节点 -->
+                            <div v-if="['node', 'task'].includes(store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type)" class="param-item">
+                                <ParamRenderer :config="getTargetNodeConfig(jumpKey)"
+                                               :value="store.selectedNode.params[jumpKey]?.target_node || ''"
+                                               label="目标节点"
+                                               :context="store.selectedNode.params"
+                                               @update="(val) => updateJumpParam(jumpKey, 'target_node', val)" />
+                            </div>
+                        </div>
+                    </div>
+                </template>
             </div>
 
             <div class="save-actions">
@@ -142,9 +176,18 @@
                 return store.params[node.node_type]?.label || node.node_type
             })
 
+            // 判断当前节点是否包含跳转配置（定义里有 on_success 的节点）
+            const hasJumpConfig = computed(() => {
+                const defs = paramDefs.value
+                return defs && ('on_success' in defs)
+            })
+
+            // OCR 或图像识别的区域显隐逻辑
             const shouldShowRegionValue = computed(() => {
                 const node = store.selectedNode
                 if (!node || !node.params) return false
+                const nodeType = node.node_type
+                if (nodeType === 'ocr_recognition') return true // OCR 默认显示自定义范围
                 const regionType = node.params.region_type
                 return regionType === 'recorded' || regionType === 'custom'
             })
@@ -156,11 +199,36 @@
 
             const allParams = computed(() => paramDefs.value)
 
+            const jumpTypeConfig = {
+                type: 'select',
+                options: [
+                    { value: 'next', label: '下一个节点' },
+                    { value: 'node', label: '跳转节点' },
+                    { value: 'task', label: '跳转任务' },
+                    { value: 'end', label: '结束流程' }
+                ],
+                default: 'next',
+                label: '跳转类型'
+            }
+
+            const getTargetConfig = (jumpKey) => ({
+                type: 'select',
+                options: (store.tasks || []).map(t => ({ value: t.task_id, label: t.task_name || t.task_id })),
+                default: '',
+                label: '目标任务'
+            })
+
+            const getTargetNodeConfig = (jumpKey) => ({
+                type: 'select',
+                options: (store.nodes || []).map(n => ({ value: n.node_id, label: n.node_name || n.node_id })),
+                default: '',
+                label: '目标节点'
+            })
+
             const handleParamUpdate = (paramName, value) => {
                 const node = store.selectedNode
                 if (!node) return
 
-                // 手动修改坐标时自动转为自定义模式
                 if (paramName === 'region_value' && node.params.region_type === 'recorded' && !isSyncingRecorded) {
                     if (originalRecordedRegion.value && JSON.stringify(value) !== JSON.stringify(originalRecordedRegion.value)) {
                         node.params.region_type = 'custom'
@@ -171,7 +239,6 @@
                 node.params[paramName] = value
                 node.params = { ...node.params }
 
-                // ⭐⭐ 关键修复：当切换为 recorded 或改变模板图片时，强行触发录入坐标拉取
                 if (paramName === 'region_type' && value === 'recorded') {
                     syncRecordedRegion()
                 }
@@ -184,44 +251,38 @@
                 }
             }
 
-            // ⭐⭐ 关键修复：全方位多重 Key 比对拉取算法
+            const updateJumpParam = (jumpKey, subKey, value) => {
+                const node = store.selectedNode
+                if (!node) return
+                if (!node.params[jumpKey]) {
+                    node.params[jumpKey] = { jump_type: 'next', target_task: '', target_node: '' }
+                }
+                node.params[jumpKey][subKey] = value
+                node.params = { ...node.params }
+            }
+
             const syncRecordedRegion = async () => {
                 const node = store.selectedNode
                 if (!node || !store.currentProjectPath) return
 
                 const rawTemplateName = node.params.image_source
-                if (!rawTemplateName) {
-                    ElMessage.warning('请先选择模板图片')
-                    return
-                }
+                if (!rawTemplateName) return
 
                 isSyncingRecorded = true
-
                 try {
                     const res = await axios.get('/api/regions', {
                         params: { project_path: store.currentProjectPath }
                     })
                     const regions = res.data || {}
-
-                    // 清洗各种可能的 key 格式（含/不含 .png，相对路径/纯文件名）
                     const cleanName = rawTemplateName.replace(/\.png$/i, '').replace(/\\/g, '/')
                     const fileNameOnly = cleanName.split('/').pop()
 
-                    const rect = regions[rawTemplateName] ||
-                        regions[cleanName] ||
-                        regions[fileNameOnly] ||
-                        regions[`${cleanName}.png`] ||
-                        regions[`${fileNameOnly}.png`]
+                    const rect = regions[rawTemplateName] || regions[cleanName] || regions[fileNameOnly] || regions[`${cleanName}.png`] || regions[`${fileNameOnly}.png`]
 
                     if (rect && Array.isArray(rect) && rect.length === 4) {
                         node.params.region_value = [...rect]
                         originalRecordedRegion.value = [...rect]
-                        logger.info('NodeEditor', `✅ 成功回填录入坐标: [${rect}]`)
                         debounceRefreshRealtime()
-                    } else {
-                        node.params.region_value = [0, 0, 0, 0]
-                        originalRecordedRegion.value = [0, 0, 0, 0]
-                        ElMessage.warning(`未在 regions.json 中查找到图片 [${fileNameOnly}] 的保存坐标`)
                     }
                 } catch (err) {
                     logger.error('NodeEditor', '获取区域配置失败:', err)
@@ -306,6 +367,10 @@
                 store,
                 allParams,
                 shouldShowRegionValue,
+                hasJumpConfig,
+                jumpTypeConfig,
+                getTargetConfig,
+                getTargetNodeConfig,
                 nodeTypeLabel,
                 previewLoading,
                 previewText,
@@ -314,6 +379,7 @@
                 imageCenterPos,
                 isMatchPass,
                 handleParamUpdate,
+                updateJumpParam,
                 debounceRefreshRealtime,
                 fetchPreview,
                 saveNode
@@ -327,6 +393,7 @@
         height: 100%;
         padding: 16px;
         overflow-y: auto;
+        background-color: var(--el-bg-color);
     }
 
     .node-title {
@@ -337,16 +404,17 @@
     }
 
     .node-type-badge {
-        background: #409EFF;
-        color: white;
+        background: var(--el-fill-color-blank);
+        color: var(--el-color-primary);
+        border: 1px solid var(--el-border-color-light);
         padding: 2px 12px;
         border-radius: 12px;
         font-size: 12px;
-        font-weight: 500;
+        font-weight: bold;
     }
 
     .node-name {
-        color: #cfd3e6;
+        color: var(--el-text-color-primary);
         font-size: 18px;
         font-weight: 600;
     }
@@ -363,30 +431,43 @@
         gap: 4px;
     }
 
+    .jump-section {
+        border-top: 1px solid var(--el-border-color-light);
+        padding-top: 12px;
+        margin-top: 8px;
+    }
+
+    .jump-config {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding-left: 12px;
+    }
+
     .slider-box {
-        background: #202030;
+        background: var(--el-fill-color-blank);
         padding: 10px 12px;
-        border-radius: 6px;
-        border: 1px solid #3d3d5a;
+        border-radius: 8px;
+        border: 1px solid var(--el-border-color-light);
     }
 
     .slider-header {
         display: flex;
         justify-content: space-between;
         font-size: 12px;
-        color: #cfd3e6;
+        color: var(--el-text-color-primary);
         margin-bottom: 4px;
     }
 
     .slider-tip {
-        color: #8a8fa8;
+        color: var(--el-text-color-secondary);
         font-size: 11px;
     }
 
     .interactive-preview-card {
-        background: #181824;
-        border: 1px solid #409EFF;
-        border-radius: 6px;
+        background: var(--el-fill-color-blank);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 8px;
         padding: 12px;
         margin-top: 4px;
     }
@@ -397,7 +478,7 @@
         align-items: center;
         font-size: 13px;
         font-weight: bold;
-        color: #409EFF;
+        color: var(--el-color-primary);
         margin-bottom: 10px;
     }
 
@@ -410,16 +491,16 @@
         flex: 1;
         display: flex;
         flex-direction: column;
-        background: #09090d;
-        border: 1px solid #2d2d3f;
-        border-radius: 4px;
+        background: var(--el-bg-color);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 6px;
         padding: 8px;
         min-height: 90px;
     }
 
     .box-tag {
         font-size: 11px;
-        color: #8a8fa8;
+        color: var(--el-text-color-secondary);
         margin-bottom: 6px;
     }
 
@@ -427,11 +508,11 @@
         max-width: 100%;
         max-height: 120px;
         object-fit: contain;
-        border-radius: 2px;
+        border-radius: 4px;
     }
 
     .placeholder {
-        color: #5a5e72;
+        color: var(--el-text-color-placeholder);
         font-size: 11px;
         text-align: center;
         margin: auto;
@@ -447,7 +528,7 @@
     }
 
         .realtime-text.empty {
-            color: #5a5e72;
+            color: var(--el-text-color-placeholder);
             font-size: 12px;
         }
 
@@ -464,7 +545,7 @@
     }
 
         .stat-score.pass {
-            color: #67C23A;
+            color: var(--el-color-primary);
         }
 
     .stat-detail {
@@ -472,7 +553,7 @@
         flex-direction: column;
         gap: 4px;
         font-size: 11px;
-        color: #a2a7c7;
+        color: var(--el-text-color-regular);
         text-align: center;
     }
 
@@ -487,6 +568,6 @@
         align-items: center;
         justify-content: center;
         height: 100%;
-        color: #8a8fa8;
+        color: var(--el-text-color-secondary);
     }
 </style>

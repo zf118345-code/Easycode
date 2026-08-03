@@ -7,15 +7,17 @@ import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import { piniaLoggerPlugin } from './stores/plugins/loggerPlugin'
 
+// ⭐ 引入全局暗黑高级自定义样式表（放在 element-plus/dist/index.css 之后，覆盖默认样式）
+import '@/assets/theme.css'
+
 const app = createApp(App)
 
-// 注册所有图标
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
     app.component(key, component)
 }
 
 const pinia = createPinia()
-pinia.use(piniaLoggerPlugin) // 注册 Pinia 状态日志插件
+pinia.use(piniaLoggerPlugin)
 
 app.use(pinia)
 app.use(ElementPlus)

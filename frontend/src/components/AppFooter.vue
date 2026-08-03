@@ -65,34 +65,38 @@ export default {
 </script>
 
 <style scoped>
-.app-footer {
-  height: 30px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 20px;
-  background: #2d2d44;
-  border-top: 1px solid #3d3d5a;
-  color: #8a8fa8;
-  font-size: 12px;
-  flex-shrink: 0;
-}
-.footer-left, .footer-center, .footer-right {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.panel-status {
-  cursor: pointer;
-  padding: 2px 10px;
-  border-radius: 12px;
-  background: #3d3d5a;
-  transition: background 0.2s;
-}
-.panel-status:hover {
-  background: #4d4d6a;
-}
-.panel-status .el-icon {
-  margin-right: 4px;
-}
+    .app-footer {
+        height: 30px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 20px;
+        background: var(--el-bg-color);
+        border-top: 1px solid var(--el-border-color-light);
+        color: var(--el-text-color-secondary);
+        font-size: 12px;
+        flex-shrink: 0;
+    }
+
+    .footer-left, .footer-center, .footer-right {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+    }
+
+    .panel-status {
+        cursor: pointer;
+        padding: 2px 10px;
+        border-radius: 12px;
+        background: var(--el-fill-color-blank);
+        transition: background 0.2s;
+    }
+
+        .panel-status:hover {
+            background: var(--el-fill-color-light);
+        }
+
+        .panel-status .el-icon {
+            margin-right: 4px;
+        }
 </style>

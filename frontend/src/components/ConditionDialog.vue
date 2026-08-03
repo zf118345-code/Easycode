@@ -212,3 +212,24 @@
         }
     }
 </script>
+
+<style scoped>
+    /* 条件对话框内部表单排版精修 */
+    :deep(.el-form-item__label) {
+        color: var(--el-text-color-regular) !important;
+        font-weight: 500;
+    }
+
+    .dialog-divider {
+        margin: 16px 0 12px 0;
+        border-color: var(--el-border-color-light);
+    }
+
+    .jump-config-box {
+        background: var(--el-fill-color-blank);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 8px;
+        padding: 12px;
+        margin-top: 8px;
+    }
+</style>
