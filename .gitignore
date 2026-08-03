@@ -7,7 +7,11 @@ env/
 *.log
 debug_screenshots/
 *.db
-
+# 忽略 OCR 模型与调试截图
+models/
+*.tar
+*.onnx
+*.pth
 # Node.js
 frontend/node_modules/
 frontend/dist/
