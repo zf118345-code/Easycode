@@ -126,9 +126,42 @@
                                    @update="(val) => handleSubUpdate(subKey, val)" />
                 </div>
             </template>
+
+            <!-- 1. 逻辑判断节点的条件列表编辑器 -->
+            <template v-else-if="config.type === 'condition_list_editor'">
+                <div class="condition-list-wrapper">
+                    <div v-for="(cond, idx) in (localValue || [])" :key="idx" class="cond-card">
+                        <span class="cond-desc">
+                            {{ cond.condition_type === 'image_exists' ? `🖼️ 图片: ${cond.params.image_source}` : `🔢 变量: ${cond.params.var_name} ${cond.params.operator} ${cond.params.target_value}` }}
+                        </span>
+                        <div class="card-btns">
+                            <el-button link size="small" type="primary" @click="openCondDialog(idx, cond)">✏️ 编辑</el-button>
+                            <el-button link size="small" type="danger" @click="removeCond(idx)">🗑️ 删除</el-button>
+                        </div>
+                    </div>
+                    <el-button type="primary" size="small" style="margin-top: 6px;" @click="openCondDialog(-1, null)">➕ 添加判断条件</el-button>
+                </div>
+            </template>
+
+            <!-- 2. 分支选择节点的带跳转分支列表编辑器 -->
+            <template v-else-if="config.type === 'branch_candidate_editor'">
+                <div class="condition-list-wrapper">
+                    <div v-for="(cand, idx) in (localValue || [])" :key="idx" class="cond-card">
+                        <div class="card-info">
+                            <div>{{ cand.condition.condition_type === 'image_exists' ? `🖼️ 条件: 图片 [${cand.condition.params.image_source}]` : `🔢 条件: 变量 ${cand.condition.params.var_name} ${cand.condition.params.operator} ${cand.condition.params.target_value}` }}</div>
+                            <div class="jump-tip">➔ 成功跳转: {{ formatJumpType(cand.on_success ? cand.on_success.jump_type : 'next') }}</div>
+                        </div>
+                        <div class="card-btns">
+                            <el-button link size="small" type="primary" @click="openBranchDialog(idx, cand)">✏️ 编辑分支</el-button>
+                            <el-button link size="small" type="danger" @click="removeCond(idx)">🗑️ 删除</el-button>
+                        </div>
+                    </div>
+                    <el-button type="success" size="small" style="margin-top: 6px;" @click="openBranchDialog(-1, null)">➕ 添加分流条件分支</el-button>
+                </div>
+            </template>
         </div>
 
-        <!-- ⭐ 层级 1050 比截图蒙层(1000)高一级，保证遮罩与显示顺畅 -->
+        <!-- ⭐ 层级 1050 比截图蒙层(1000)高一级 -->
         <el-dialog v-model="browserVisible"
                    :title="fileBrowserMode === 'save' ? '选择保存目录并输入图片名称' : '选择模板图片'"
                    width="80%"
@@ -150,6 +183,12 @@
                         @template-crop-selected="onTemplateCropSelected"
                         @point-selected="onPointSelected"
                         @region-selected="onRegionSelected" />
+
+        <!-- 通用条件配置弹窗 -->
+        <ConditionDialog v-model:visible="condDialogVisible"
+                         :show-jump-config="isBranchMode"
+                         :initial-data="editingCondData"
+                         @save="handleCondSave" />
     </div>
 </template>
 
@@ -161,6 +200,7 @@
     import { logger } from '@/utils/logger'
     import ScreenshotTool from '@/components/ScreenshotTool.vue'
     import FileBrowser from '@/components/FileBrowser.vue'
+    import ConditionDialog from '@/components/ConditionDialog.vue'
 
     function safeDeepClone(obj) {
         if (obj === null || typeof obj !== 'object') return obj
@@ -173,7 +213,7 @@
 
     export default {
         name: 'ParamRenderer',
-        components: { ScreenshotTool, FileBrowser },
+        components: { ScreenshotTool, FileBrowser, ConditionDialog },
         props: {
             config: { type: Object, required: true },
             value: { required: false },
@@ -192,6 +232,12 @@
             const windowList = ref([])
 
             const pendingCropRect = ref(null)
+
+            // 条件弹窗相关状态
+            const condDialogVisible = ref(false)
+            const isBranchMode = ref(false)
+            const editingIdx = ref(-1)
+            const editingCondData = ref(null)
 
             const isVisible = computed(() => {
                 const rule = props.config.visible_if
@@ -277,7 +323,6 @@
 
             const onFileSelected = (relPath) => {
                 if (fileBrowserMode.value === 'save') return
-                // 选择现有图片时清洗后缀
                 const cleanPath = relPath.replace(/\.png$/i, '')
                 localValue.value = cleanPath
                 emitChange('file-select')
@@ -289,32 +334,25 @@
                 openFileBrowser('save')
             }
 
-            // ⭐ 彻底解决 test.png.png 的核心存盘逻辑
             const onFileSave = async ({ relativePath, fileName }) => {
                 if (!pendingCropRect.value) {
                     return ElMessage.error('缺少截图框选数据')
                 }
                 try {
-                    // 双重正则彻底剥离文件名和相对路径中的 .png 后缀
                     const cleanFileName = fileName.trim().replace(/\.png$/i, '')
                     const cleanRelPath = relativePath ? relativePath.replace(/\.png$/i, '') : ''
-
-                    // 拼接最纯净的 key 路径（例如 "EnterPage/test"）
                     const fullTemplateName = cleanRelPath ? `${cleanRelPath}/${cleanFileName}` : cleanFileName
 
-                    // 1. 请求后端剪裁图片
                     await axios.post('/api/screenshot/crop', {
                         project_path: projectPath.value,
                         template_name: fullTemplateName,
                         crop_rect: pendingCropRect.value
                     })
 
-                    // 2. 将纯净的路径赋给输入框
                     localValue.value = fullTemplateName
                     emitChange('screenshot-saved')
                     ElMessage.success(`模板图片 [${fullTemplateName}] 保存成功`)
 
-                    // 3. 一并关闭对话框和底部的截图蒙层
                     browserVisible.value = false
                     if (screenshotTool.value) {
                         screenshotTool.value.close()
@@ -343,6 +381,51 @@
                 emitChange('region-picker')
             }
 
+            // ====== ⭐ 修复方法绑定：条件编辑弹窗事件函数 ======
+            const openCondDialog = (idx, cond) => {
+                isBranchMode.value = false
+                editingIdx.value = idx
+                editingCondData.value = cond
+                condDialogVisible.value = true
+            }
+
+            const openBranchDialog = (idx, cand) => {
+                isBranchMode.value = true
+                editingIdx.value = idx
+                editingCondData.value = cand
+                condDialogVisible.value = true
+            }
+
+            const removeCond = (idx) => {
+                if (!Array.isArray(localValue.value)) return
+                localValue.value.splice(idx, 1)
+                emitChange('remove-cond')
+            }
+
+            const handleCondSave = ({ condition, on_success }) => {
+                if (!Array.isArray(localValue.value)) localValue.value = []
+
+                const payload = isBranchMode.value ? { condition, on_success } : condition
+
+                if (editingIdx.value > -1) {
+                    localValue.value[editingIdx.value] = payload
+                } else {
+                    localValue.value.push(payload)
+                }
+                emitChange('save-cond')
+            }
+
+            // ⭐ 格式化英文跳转类型为中文提示
+            const formatJumpType = (type) => {
+                const map = {
+                    'next': '下一个节点',
+                    'node': '跳转节点',
+                    'task': '跳转任务',
+                    'end': '结束流程'
+                }
+                return map[type] || type
+            }
+
             return {
                 localValue,
                 screenshotTool,
@@ -363,7 +446,16 @@
                 onPointSelected,
                 onRegionSelected,
                 emitChange,
-                handleSubUpdate
+                handleSubUpdate,
+                // 弹窗绑定与格式化
+                condDialogVisible,
+                isBranchMode,
+                editingCondData,
+                openCondDialog,
+                openBranchDialog,
+                removeCond,
+                handleCondSave,
+                formatJumpType
             }
         }
     }
@@ -424,10 +516,45 @@
         border-left: 2px solid #3d3d5a;
         margin-top: 4px;
     }
+
     .field-tip {
         font-size: 11px;
         color: #8a8fa8;
         margin-top: 4px;
         line-height: 1.2;
+    }
+
+    .condition-list-wrapper {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+
+    .cond-card {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 12px;
+        background: #181824;
+        border: 1px solid #2d2d3f;
+        border-radius: 4px;
+        font-size: 12px;
+        color: #cfd3e6;
+    }
+
+    .card-info {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .jump-tip {
+        color: #67c23a;
+        font-size: 11px;
+    }
+
+    .card-btns {
+        display: flex;
+        gap: 4px;
     }
 </style>

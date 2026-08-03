@@ -1,52 +1,55 @@
+# core/params/base/branch.py
+
 PARAM_DEFINITIONS = {
     "branch": {
         "label": "分支选择",
         "params": {
+            "best_match_mode": {
+                "type": "bool",
+                "default": True,
+                "label": "最高置信度竞态 (比对所有图片取最高分分支)"
+            },
             "candidates": {
-                "type": "list_dict",
-                "label": "候选模板",
-                "sub": {
-                    "template": {"type": "str", "default": "", "label": "模板名称"},
-                    "target": {"type": "str", "default": "", "label": "跳转目标"},
-                    "threshold": {"type": "int", "default": 85, "label": "匹配阈值"}
-                }
+                "type": "branch_candidate_editor",
+                "default": [],
+                "label": "多分支判定列表"
             },
-            "region": {
+            "on_failure": {
                 "type": "dict",
-                "label": "搜索区域",
+                "label": "兜底失败跳转 (全不满足时)",
                 "sub": {
-                    "type": {
+                    "jump_type": {
                         "type": "select",
-                        "options": ["fullwindow", "recorded"],
-                        "default": "fullwindow",
-                        "label": "区域类型"
-                    },
-                    "value": {
-                        "type": "list_int4",
-                        "default": [0, 0, 0, 0],
-                        "label": "区域坐标"
-                    }
-                }
-            },
-            "on_failure_jump": {
-                "type": "dict",
-                "label": "失败时跳转",
-                "sub": {
-                    "type": {
-                        "type": "select",
-                        "options": ["next", "node", "task", "end"],
+                        "options": [
+                            {"value": "next", "label": "下一个节点"},
+                            {"value": "node", "label": "跳转节点"},
+                            {"value": "task", "label": "跳转任务"},
+                            {"value": "end", "label": "结束流程"}
+                        ],
                         "default": "next",
                         "label": "跳转类型"
                     },
-                    "target": {
-                        "type": "str",
+                    "target_task": {
+                        "type": "select",
+                        "options": [],
+                        "label": "目标任务",
                         "default": "",
-                        "label": "目标 ID"
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "eq",
+                            "value": "task"
+                        }
                     },
                     "target_node": {
-                        "type": "str",
+                        "type": "select",
+                        "options": [],
+                        "label": "目标节点",
                         "default": "",
-                        "label": "目标节点 ID"
+                        "visible_if": {
+                            "field": "jump_type",
+                            "operator": "in",
+                            "value": ["node", "task"]
+                        }
                     }
                 }
             }

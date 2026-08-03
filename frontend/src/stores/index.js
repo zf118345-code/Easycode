@@ -286,36 +286,22 @@ export const useMainStore = defineStore('main', {
             }
         },
 
-        pollExecutionLogs(executionId) {
-            let loggedCount = 0
-            console.group(`🎬 [后端执行日志轮询] Execution ID: ${executionId}`)
-
-            const timer = setInterval(async () => {
-                try {
-                    const res = await axios.get(`/api/execution/${executionId}`)
-                    const { status, logs } = res.data
-
-                    if (logs && logs.length > loggedCount) {
-                        const newLogs = logs.slice(loggedCount)
-                        newLogs.forEach(line => {
-                            if (line.includes('[ERROR]')) console.error(line)
-                            else if (line.includes('[WARNING]')) console.warn(line)
-                            else console.log(`🐍 ${line}`)
-                        })
-                        loggedCount = logs.length
-                        this.executionLogs = logs
-                    }
-
-                    if (status.status === 'success' || status.status === 'error') {
-                        clearInterval(timer)
-                        console.log(`🏁 [后端执行结束] 状态: ${status.status} | 消息: ${status.message}`)
-                        console.groupEnd()
-                    }
-                } catch (err) {
-                    clearInterval(timer)
-                    console.groupEnd()
+        async pollExecutionLogs(executionId) {
+            if (!executionId) return
+            try {
+                const res = await axios.get(`/api/execution/${executionId}`)
+                if (res.data && res.data.logs) {
+                    this.executionLogs = res.data.logs
                 }
-            }, 300)
+                if (res.data && res.data.status && res.data.status.status !== 'running') {
+                    logger.info('Store', `🏁 [后端执行结束] 状态: ${res.data.status.status} | 消息: ${res.data.status.message}`)
+                    return false // 结束轮询
+                }
+                return true // 继续轮询
+            } catch (err) {
+                logger.error('Store', '轮询日志失败', err)
+                return false
+            }
         },
 
         async loadTaskNodes(taskId) {

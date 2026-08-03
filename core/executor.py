@@ -7,6 +7,7 @@ import win32gui
 import win32con
 import subprocess
 import re
+from datetime import datetime
 from core.registry import NodeExecutorRegistry
 from core.models import Task, Node, Jump
 
@@ -24,7 +25,7 @@ class GraphExecutor:
         self._stop = False
         self.text_log_enabled = text_log_enabled
         self.image_log_enabled = image_log_enabled
-        self._clear_debug_dir()
+        self.logs = []  # 核心日志容器，供 API 透传前端
 
         # 窗口与模拟器全局上下文
         self.is_emulator = False
@@ -35,30 +36,48 @@ class GraphExecutor:
         self.window_rect = None
         self.project_dir = project_dir
 
-        # ⭐ 全局 Footer 预热：应用来自 Footer 的保存上下文（激活 + Resize + ADB设备挂载）
         if initial_context:
             self._apply_context(initial_context)
 
-    def _clear_debug_dir(self):
-        debug_dir = "debug_screenshots"
-        if os.path.exists(debug_dir):
-            shutil.rmtree(debug_dir)
-        os.makedirs(debug_dir, exist_ok=True)
+    # ⭐⭐⭐ 核心统一日志管线：接管所有 log，同时存入数组与终端输出
+    def log(self, msg, level="info", image=None):
+        now_str = datetime.now().strftime("%H:%M:%S")
+
+        # 1. 存入内存数组（供前端轮询）
+        log_item = {
+            "time": now_str,
+            "message": str(msg),
+            "level": level,
+            "image": image
+        }
+        self.logs.append(log_item)
+
+        # 2. 打印终端控制台
+        prefix = f"[{level.upper()}]"
+        print(f"{now_str} - {prefix} - {msg}")
+
+        # 3. 关联原生 logger
+        if level == "error":
+            logger.error(msg)
+        elif level == "warning":
+            logger.warning(msg)
+        else:
+            logger.info(msg)
 
     def run(self, entry_task_id="main_task", start_node_id=None):
-        logger.info(
-            f"🚀 [Executor] 启动执行引擎 | 目标任务: {entry_task_id} | 起始节点: {start_node_id or '第一个节点'}")
+        self.log(f"🚀 [Executor] 启动执行引擎 | 目标任务: {entry_task_id} | 起始节点: {start_node_id or '第一个节点'}")
         try:
             self._execute_task(entry_task_id, start_node_id)
         except StopIteration:
-            logger.info("🏁 [Executor] 收到 StopIteration 指令，流程顺利结束")
+            self.log("🏁 [Executor] 收到 StopIteration 指令，流程顺利结束")
         except Exception as e:
-            logger.error(f"💥 [Executor] 发生未处理异常: {e}", exc_info=True)
+            self.log(f"💥 [Executor] 发生未处理异常: {e}", "error")
             raise
 
     def _execute_task(self, task_id, start_node_id=None):
         task = self.tasks.get(task_id)
         if not task:
+            self.log(f"❌ 任务不存在: {task_id}", "error")
             raise ValueError(f"任务不存在: {task_id}")
 
         self.current_task = task
@@ -71,7 +90,7 @@ class GraphExecutor:
             self.current_node_index = 0
 
         node_count = len(task.nodes)
-        logger.info(
+        self.log(
             f"📋 [Task] 进入任务 [{task.task_name}] | 总节点数: {node_count} | 从索引 [{self.current_node_index}] 开始")
 
         while self.current_node_index < node_count and not self._stop:
@@ -92,29 +111,28 @@ class GraphExecutor:
                 else:
                     self.current_node_index += 1
             else:
-                logger.info(f"⏸️ [Node] 节点 [{node.node_name}] (ID: {node.node_id}) 已禁用，自动跳过")
+                self.log(f"⏸️ [Node] 节点 [{node.node_name}] (ID: {node.node_id}) 已禁用，自动跳过", "warning")
                 self.current_node_index += 1
 
     def _execute_node(self, node):
         executor_class = NodeExecutorRegistry.get(node.node_type)
         if not executor_class:
-            logger.warning(f"❌ [Node] 未找到节点类型对应的执行器: {node.node_type}")
+            self.log(f"❌ [Node] 未找到节点类型对应的执行器: {node.node_type}", "error")
             return {"success": False, "error": "executor not found"}
 
         executor = executor_class()
 
         if node.delay_before > 0:
-            logger.info(f"⏱️ [Node] 前置延迟: {node.delay_before} ms")
+            self.log(f"⏱️ [Node] 前置延迟: {node.delay_before} ms")
             time.sleep(node.delay_before / 1000.0)
 
         loop_count = node.loop_count if node.loop_count != -1 else float('inf')
         result = None
 
         self.current_node = node
-        self.current_node_index = self.current_node_index
         self.current_task_name = self.current_task.task_name if self.current_task else "unknown"
 
-        logger.info(f"▶️ [Node 执行] 第 {self.current_node_index + 1} 个 | [{node.node_name}] ({node.node_type})")
+        self.log(f"▶️ [Node 执行] 第 {self.current_node_index + 1} 个 | [{node.node_name}] ({node.node_type})")
         start_time = time.time()
 
         for i in range(int(loop_count)):
@@ -126,12 +144,12 @@ class GraphExecutor:
 
         elapsed = (time.time() - start_time) * 1000
         status_str = "✅ 成功" if result.get("success") else "❌ 失败"
-        logger.info(f"⏹️ [Node 完成] {status_str} | 耗时: {elapsed:.2f}ms | 结果: {result}")
+        self.log(f"⏹️ [Node 完成] {status_str} | 耗时: {elapsed:.2f}ms | 结果: {result}")
 
         return result or {"success": False}
 
     def _handle_jump(self, jump):
-        logger.info(f"🔀 [Jump 路由] 类型: {jump.type} | 目标任务: {jump.target} | 目标节点: {jump.target_node}")
+        self.log(f"🔀 [Jump 路由] 类型: {jump.type} | 目标任务: {jump.target} | 目标节点: {jump.target_node}")
 
         if jump.type == "next" or not jump.type:
             self.current_node_index += 1
@@ -141,7 +159,7 @@ class GraphExecutor:
             if target_node:
                 self.current_node_index = self.current_task.nodes.index(target_node)
             else:
-                logger.error(f"❌ 未在当前任务中找到目标节点: {jump.target_node}，默认推进到下一节点")
+                self.log(f"❌ 未在当前任务中找到目标节点: {jump.target_node}，默认推进到下一节点", "error")
                 self.current_node_index += 1
 
         elif jump.type == "task":
@@ -176,53 +194,38 @@ class GraphExecutor:
     def is_window_mode(self):
         return self.window_rect is not None
 
-    def log(self, msg, level="info"):
-        if level == "info":
-            logger.info(msg)
-        elif level == "warning":
-            logger.warning(msg)
-        elif level == "error":
-            logger.error(msg)
-
-    # ⭐ 全局 Footer 预热逻辑（补齐 ADB 设备与物理分辨率全自动检测）
+    # Global Footer 预热逻辑
     def _apply_context(self, context):
         window_title = context.get("window_title") or context.get("windowTitle", "")
         if not window_title:
-            logger.info("ℹ️ [Footer 预热] 当前为全桌面模式，无需预热窗口")
+            self.log("ℹ️ [Footer 预热] 当前为全桌面模式，无需预热窗口")
             return
 
-        logger.info(f"🔍 [Footer 预热] 发现全局工作窗口设置，正在寻找窗口: [{window_title}]")
+        self.log(f"🔍 [Footer 预热] 寻找目标工作窗口: [{window_title}]")
         hwnd = win32gui.FindWindow(None, window_title)
         if not hwnd:
-            logger.warning(f"⚠️ [Footer 预热] 未能找到指定窗口: [{window_title}]")
+            self.log(f"⚠️ [Footer 预热] 未能找到指定窗口: [{window_title}]", "warning")
             return
 
-        # 1. 安全置顶并激活窗口 (引入 win32con.keybd_event 绕过 Windows 前台限制)
         try:
-            import win32com.client
             if win32gui.IsIconic(hwnd):
                 win32gui.ShowWindow(hwnd, win32con.SW_RESTORE)
-
-            # 模拟 ALT 按键绕过 Windows SetForegroundWindow 拦截
             win32gui.BringWindowToTop(hwnd)
             win32gui.SetForegroundWindow(hwnd)
-            logger.info(f"✅ [Footer 预热] 窗口已自动激活置顶: {window_title}")
+            self.log(f"✅ [Footer 预热] 窗口已自动激活置顶: {window_title}")
         except Exception:
-            # 即使捕捉到拦截异常也静默忽略，不影响后文的挂载与截图
             pass
 
-        # 2. 获取裁剪偏移
         offset_top = context.get("offset_top") or context.get("offsetTop", 0)
         offset_bottom = context.get("offset_bottom") or context.get("offsetBottom", 0)
         offset_left = context.get("offset_left") or context.get("offsetLeft", 0)
         offset_right = context.get("offset_right") or context.get("offsetRight", 0)
 
-        # 3. 如果 Footer 设定了目标尺寸，执行强制 Resize
         target_w = context.get("target_content_width") or context.get("targetContentWidth", 0)
         target_h = context.get("target_content_height") or context.get("targetContentHeight", 0)
 
         if target_w > 0 and target_h > 0:
-            logger.info(f"📏 [Footer 预热] 监测到目标尺寸 {target_w}x{target_h}，正在执行自动 Resize...")
+            self.log(f"📏 [Footer 预热] 执行窗口 Resize: {target_w}x{target_h}")
             try:
                 window_rect = win32gui.GetWindowRect(hwnd)
                 pos_x, pos_y = window_rect[0], window_rect[1]
@@ -239,11 +242,10 @@ class GraphExecutor:
                 outer_h = client_h + border_h
 
                 win32gui.SetWindowPos(hwnd, None, pos_x, pos_y, outer_w, outer_h, win32con.SWP_NOZORDER)
-                logger.info(f"✅ [Footer 预热] 窗口尺寸重置成功: 外框 {outer_w}x{outer_h}")
+                self.log(f"✅ [Footer 预热] Resize 成功: {outer_w}x{outer_h}")
             except Exception as e:
-                logger.warning(f"⚠️ [Footer 预热] Resize 窗口失败: {e}")
+                self.log(f"⚠️ [Footer 预热] Resize 失败: {e}", "warning")
 
-        # 4. 计算客户区
         client_rect = win32gui.GetClientRect(hwnd)
         left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
         right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
@@ -261,9 +263,8 @@ class GraphExecutor:
                 "left": offset_left, "right": offset_right
             }
             self.variables["window_rect"] = self.window_rect
-            logger.info(f"🎯 [Footer 预热] 最终挂载全局工作区域: {self.window_rect}")
+            self.log(f"🎯 [Footer 预热] 挂载全局工作坐标区: {self.window_rect}")
 
-        # 5. ⭐ 核心修复：全自动挂载模拟器 ADB 设备与物理分辨率
         self.is_emulator = context.get("is_emulator") or context.get("isEmulator", False)
         if self.is_emulator:
             device_id = self._auto_detect_device(window_title)
@@ -275,15 +276,13 @@ class GraphExecutor:
                     self.android_height = android_h
                     self.variables["android_width"] = android_w
                     self.variables["android_height"] = android_h
-                    logger.info(
-                        f"🤖 [Footer 预热] 模拟器绑定成功! 设备: {device_id} | Android 物理分辨率: {android_w}x{android_h}")
+                    self.log(f"🤖 [Footer 预热] 模拟器 ADB 绑定成功: {device_id} ({android_w}x{android_h})")
                 else:
-                    logger.warning(f"⚠️ [Footer 预热] 设备 {device_id} 无法获取 Android 分辨率")
+                    self.log(f"⚠️ [Footer 预热] 无法获取 ADB 分辨率: {device_id}", "warning")
             else:
-                logger.warning("⚠️ [Footer 预热] 未找到匹配的 ADB 设备，模拟器模式将自动回退为桌面鼠标点击")
+                self.log("⚠️ [Footer 预热] 未找到 ADB 设备，自动回退为 PC 点击", "warning")
                 self.is_emulator = False
 
-    # ---------- 辅助检测工具函数 ----------
     def _auto_detect_device(self, title):
         match = re.search(r'(\d{4,5})$', title)
         if match:
@@ -302,7 +301,7 @@ class GraphExecutor:
                 capture_output=True, text=True, timeout=2
             )
             return result.returncode == 0 and "test" in result.stdout
-        except:
+        except Exception:
             return False
 
     def _get_adb_devices(self):
@@ -314,7 +313,7 @@ class GraphExecutor:
                 if "device" in line and "offline" not in line:
                     devices.append(line.split()[0])
             return devices
-        except:
+        except Exception:
             return []
 
     def _get_android_resolution(self, device_id):
@@ -325,5 +324,5 @@ class GraphExecutor:
             if match:
                 return int(match.group(1)), int(match.group(2))
             return None, None
-        except:
+        except Exception:
             return None, None

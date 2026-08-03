@@ -1,5 +1,8 @@
 # api.py
 import os
+os.environ["FLAGS_use_mkldnn"] = "0"
+os.environ["FLAGS_enable_pir_api"] = "0"
+
 import json
 import time
 import shutil
@@ -19,13 +22,12 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
-import core.node_executors  # 必须存在，触发节点注册
+import core.node_executors
 
 from core.project_loader import load_project
 from core.params import ALL_PARAMS
 from core.executor import GraphExecutor
 
-# ---------- 初始化 ----------
 app = FastAPI(title="节点自动化后端", version="2.0")
 
 app.add_middleware(
@@ -36,11 +38,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# ---------- 全局常量 ----------
 CONTEXT_FILE = "context.json"
 REGIONS_FILE_PATH = os.path.join("templates", "regions.json")
 
-# ---------- 执行状态限制存储（容量上限 100 预防内存泄漏） ----------
 MAX_LOG_ENTRIES = 100
 execution_status = OrderedDict()
 execution_logs = OrderedDict()
@@ -54,7 +54,6 @@ def record_execution(execution_id, status_data, logs_data):
     execution_logs[execution_id] = logs_data
 
 
-# ---------- 请求模型 ----------
 class RunRequest(BaseModel):
     project_path: str
     task_id: str
@@ -71,19 +70,13 @@ class TaskOrderRequest(BaseModel):
     order: list[str]
 
 
-# ---------- 接口 ----------
-
 @app.get("/api/params")
 async def get_params():
-    """获取所有节点参数定义"""
     return ALL_PARAMS
 
 
-# ==================== 项目验证 ====================
-
 @app.get("/api/projects/verify")
 async def verify_project(project_path: str):
-    """验证项目路径是否存在"""
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目路径不存在")
     has_project_json = os.path.exists(os.path.join(project_path, "project.json"))
@@ -96,11 +89,8 @@ async def verify_project(project_path: str):
     }
 
 
-# ==================== 任务管理 ====================
-
 @app.get("/api/tasks")
 async def list_tasks(project_path: str):
-    """获取指定项目的所有任务列表"""
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目路径不存在")
     try:
@@ -127,7 +117,6 @@ async def list_tasks(project_path: str):
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str, project_path: str):
-    """获取指定任务的完整数据（含节点）"""
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目路径不存在")
     try:
@@ -175,7 +164,6 @@ async def get_task(task_id: str, project_path: str):
 
 @app.get("/api/tasks/{task_id}/nodes")
 async def get_task_nodes(task_id: str, project_path: str):
-    """获取指定任务的节点列表（专门供前端节点下拉选择框使用）"""
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目不存在")
     try:
@@ -190,7 +178,6 @@ async def get_task_nodes(task_id: str, project_path: str):
 
 @app.put("/api/tasks/{task_id}")
 async def save_task(task_id: str, request: SaveTaskRequest):
-    """保存任务数据（覆盖写入）"""
     project_path = request.project_path
     task_data = request.task_data
     if not project_path or not task_data:
@@ -215,7 +202,6 @@ async def save_task(task_id: str, request: SaveTaskRequest):
 
 @app.post("/api/tasks")
 async def create_task(request: SaveTaskRequest):
-    """创建新任务"""
     project_path = request.project_path
     task_data = request.task_data
     if not project_path or not task_data:
@@ -247,7 +233,6 @@ async def create_task(request: SaveTaskRequest):
 
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: str, project_path: str):
-    """删除任务"""
     file_path = os.path.join(project_path, "tasks", f"{task_id}.json")
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="任务不存在")
@@ -257,7 +242,6 @@ async def delete_task(task_id: str, project_path: str):
 
 @app.post("/api/tasks/order")
 async def save_task_order(request: TaskOrderRequest):
-    """保存任务排序"""
     project_path = request.project_path
     order = request.order
     if not project_path or not order:
@@ -274,11 +258,8 @@ async def save_task_order(request: TaskOrderRequest):
     return {"status": "success"}
 
 
-# ==================== 执行任务 ====================
-
 @app.post("/api/run")
 async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
-    """启动任务执行（后台包含预热与控制台格式化日志）"""
     project_path = request.project_path
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目不存在")
@@ -298,48 +279,27 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
     record_execution(execution_id, {"status": "running", "message": "执行中..."}, [])
 
     def execute_background():
-        from io import StringIO
-
-        log_stream = StringIO()
-        stream_handler = logging.StreamHandler(log_stream)
-        console_handler = logging.StreamHandler()
-
-        formatter = logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s', datefmt='%H:%M:%S')
-        stream_handler.setFormatter(formatter)
-        console_handler.setFormatter(formatter)
-
-        root_logger = logging.getLogger()
-        root_logger.setLevel(logging.INFO)
-        root_logger.addHandler(stream_handler)
-        root_logger.addHandler(console_handler)
-
         original_failsafe = pyautogui.FAILSAFE
         pyautogui.FAILSAFE = False
 
-        print("\n" + "=" * 70)
-        print(f"🎬 [Easycode 运行引擎] 开始执行任务 ID: {request.task_id}")
-        print("=" * 70)
+        executor = GraphExecutor(
+            project,
+            project_dir=project_path,
+            text_log_enabled=True,
+            image_log_enabled=True,
+            initial_context=saved_context
+        )
 
         try:
-            executor = GraphExecutor(
-                project,
-                project_dir=project_path,
-                text_log_enabled=True,
-                image_log_enabled=True,
-                initial_context=saved_context
-            )
+            # 实时挂载日志对象，让前端轮询能中途拿到日志
+            execution_logs[execution_id] = executor.logs
             executor.run(request.task_id, request.start_node_id)
             execution_status[execution_id] = {"status": "success", "message": "执行完成"}
-            print("=" * 70 + "\n")
         except Exception as e:
             execution_status[execution_id] = {"status": "error", "message": str(e)}
-            print(f"💥 [执行失败]: {e}\n" + "=" * 70 + "\n")
         finally:
-            logs = log_stream.getvalue()
-            execution_logs[execution_id] = logs.splitlines() if logs else ["（无日志）"]
+            execution_logs[execution_id] = executor.logs
             pyautogui.FAILSAFE = original_failsafe
-            root_logger.removeHandler(stream_handler)
-            root_logger.removeHandler(console_handler)
 
     background_tasks.add_task(execute_background)
     return {"execution_id": execution_id, "status": "started"}
@@ -347,19 +307,16 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
 
 @app.get("/api/execution/{execution_id}")
 async def get_execution_status(execution_id: str):
-    """查询执行状态和日志"""
+    """实时查询运行状态与透明化日志（含实时图片 Base64）"""
     status = execution_status.get(execution_id)
     if not status:
         raise HTTPException(status_code=404, detail="执行记录不存在")
     logs = execution_logs.get(execution_id, [])
-    return {"status": status, "logs": logs[-100:]}
+    return {"status": status, "logs": logs}
 
-
-# ==================== 截图工具与区域绑定 API ====================
 
 @app.get("/api/screenshot/full")
 async def get_full_screenshot(project_path: str = ""):
-    """自动根据 Context 截取精准的工作区域大图（支持窗口/模拟器与裁剪）"""
     region = None
 
     if project_path:
@@ -384,7 +341,7 @@ async def get_full_screenshot(project_path: str = ""):
                         x = left + off_left
                         y = top + off_top
                         w = (right - left) - off_left - off_right
-                        h = (bottom - top) - off_top - off_bottom
+                        h = (bottom - top) - offset_bottom - off_right
 
                         if w > 0 and h > 0:
                             region = (x, y, w, h)
@@ -413,10 +370,9 @@ async def get_full_screenshot(project_path: str = ""):
 
 @app.post("/api/screenshot/crop")
 async def crop_screenshot(data: dict = Body(...)):
-    """保存裁剪后的模板图片，并将坐标记录到 templates/regions.json"""
     project_path = data.get("project_path")
-    template_name = data.get("template_name")  # 例如 "EnterPage/test" 或 "test"
-    crop_rect = data.get("crop_rect")  # [x, y, w, h]
+    template_name = data.get("template_name")
+    crop_rect = data.get("crop_rect")
 
     if not project_path or not template_name or not crop_rect:
         raise HTTPException(status_code=400, detail="缺少参数")
@@ -450,7 +406,6 @@ async def crop_screenshot(data: dict = Body(...)):
         cropped_img = full_img.crop((abs_x, abs_y, abs_x + w, abs_y + h))
         cropped_img.save(save_path)
 
-        # 写入 templates/regions.json
         regions_json_path = os.path.join(project_path, REGIONS_FILE_PATH)
         regions_data = {}
         if os.path.exists(regions_json_path):
@@ -460,7 +415,6 @@ async def crop_screenshot(data: dict = Body(...)):
             except Exception:
                 regions_data = {}
 
-        # 存入相对路径标准 Key 映射，如 "EnterPage/test": [447, 85, 102, 96]
         regions_data[clean_key] = crop_rect
 
         with open(regions_json_path, "w", encoding="utf-8") as f:
@@ -473,7 +427,6 @@ async def crop_screenshot(data: dict = Body(...)):
 
 @app.post("/api/screenshot")
 async def take_screenshot(request: dict):
-    """截取指定窗口或全屏"""
     window_title = request.get("window_title")
     offset_top = request.get("offset_top", 0)
     offset_bottom = request.get("offset_bottom", 0)
@@ -506,11 +459,8 @@ async def take_screenshot(request: dict):
     })
 
 
-# ==================== 模板目录树、创建与预览 (供 FileBrowser 组件调用) ====================
-
 @app.get("/api/templates/tree")
 async def get_templates_tree(project_path: str):
-    """获取项目 templates 目录的树形结构"""
     templates_dir = os.path.join(project_path, "templates")
     if not os.path.exists(templates_dir):
         return {"tree": []}
@@ -538,7 +488,6 @@ async def get_templates_tree(project_path: str):
 
 @app.get("/api/templates/preview")
 async def get_template_preview(project_path: str, relative_path: str = ""):
-    """获取 templates 下指定目录的图片预览列表（base64）"""
     templates_dir = os.path.join(project_path, "templates")
     target_dir = os.path.join(templates_dir, relative_path)
 
@@ -564,7 +513,6 @@ async def get_template_preview(project_path: str, relative_path: str = ""):
 
 @app.post("/api/templates/mkdir")
 async def create_template_folder(data: dict = Body(...)):
-    """在 templates 的指定层级下新建文件夹"""
     project_path = data.get("project_path")
     parent_path = data.get("parent_path", "")
     folder_name = data.get("folder_name", "").strip()
@@ -583,11 +531,8 @@ async def create_template_folder(data: dict = Body(...)):
         raise HTTPException(status_code=500, detail=f"创建文件夹失败: {str(e)}")
 
 
-# ==================== 区域配置 (templates/regions.json 读写) ====================
-
 @app.get("/api/regions")
 async def get_regions(project_path: str):
-    """获取 templates/regions.json 的内容"""
     file_path = os.path.join(project_path, REGIONS_FILE_PATH)
     if not os.path.exists(file_path):
         return {}
@@ -600,7 +545,6 @@ async def get_regions(project_path: str):
 
 @app.post("/api/regions")
 async def save_region(data: dict = Body(...)):
-    """保存/更新图片的区域坐标到 templates/regions.json"""
     project_path = data.get("project_path")
     template_name = data.get("template_name") or data.get("relative_path")
     crop_rect = data.get("crop_rect") or data.get("region")
@@ -620,7 +564,6 @@ async def save_region(data: dict = Body(...)):
         except Exception:
             regions = {}
 
-    # 完整相对路径与纯文件名都保存一份
     regions[clean_name] = crop_rect
     regions[file_name_only] = crop_rect
 
@@ -633,17 +576,11 @@ async def save_region(data: dict = Body(...)):
         raise HTTPException(status_code=500, detail=f"保存区域信息失败: {str(e)}")
 
 
-# ==================== 系统窗口与上下文控制 ====================
-
-# api.py 中的 get_windows 接口替换
-
 @app.get("/api/windows")
 async def get_windows():
-    """获取当前所有真正可见且有效的游戏/应用窗口（严格过滤后台系统幽灵窗口）"""
     windows = []
     seen_titles = set()
 
-    # 系统内置的黑名单标题 & 挂起应用类名
     IGNORE_TITLES = {
         "Program Manager",
         "Windows 输入体验",
@@ -654,51 +591,34 @@ async def get_windows():
         "Settings"
     }
 
-    IGNORE_CLASSES = {
-        "Windows.UI.Core.CoreWindow",
-        "ApplicationFrameWindow",  # 当内部无实际画面时需要过滤
-        "ToolGlobeTopMost"
-    }
-
     def callback(hwnd, extra):
-        # 1. 基本可见性检查
         if not win32gui.IsWindowVisible(hwnd):
             return
 
-        # 2. 标题检查
         title = win32gui.GetWindowText(hwnd).strip()
         if not title or title in IGNORE_TITLES:
             return
 
-        # 3. 样式扩展位检查 (过滤 TOOLWINDOW，保留任务栏主应用)
         ex_style = win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE)
-        style = win32gui.GetWindowLong(hwnd, win32con.GWL_STYLE)
-
-        # 如果是工具窗口 (ToolWindow) 且不是显式主应用窗口 (AppWindow)，跳过
         if (ex_style & win32con.WS_EX_TOOLWINDOW) and not (ex_style & win32con.WS_EX_APPWINDOW):
             return
 
-        # 4. 几何坐标与尺寸检查 (过滤隐藏在角落或宽高小于 100x100 的窗口)
         try:
             rect = win32gui.GetWindowRect(hwnd)
             w = rect[2] - rect[0]
             h = rect[3] - rect[1]
 
-            # 过滤过小或负坐标的不可见悬浮窗口
             if w < 100 or h < 100 or rect[2] <= 0 or rect[3] <= 0:
                 return
 
-            # 5. 客户区像素有效性检查
             client_rect = win32gui.GetClientRect(hwnd)
             client_w = client_rect[2] - client_rect[0]
             client_h = client_rect[3] - client_rect[1]
             if client_w <= 0 or client_h <= 0:
                 return
 
-            # 6. 进程名称安全检测 (过滤 Setting / ActionCenter 等系统隐藏进程)
             _, pid = win32process.GetWindowThreadProcessId(hwnd)
 
-            # 7. 标题去重
             if title in seen_titles:
                 return
             seen_titles.add(title)
@@ -742,7 +662,6 @@ async def save_context(request: dict):
 
 @app.get("/api/context")
 async def get_context(project_path: str):
-    """获取项目的工作面板上下文"""
     context_path = os.path.join(project_path, CONTEXT_FILE)
     if not os.path.exists(context_path):
         return {}
@@ -761,6 +680,170 @@ async def get_context(project_path: str):
         "targetContentHeight": data.get("target_content_height", 0)
     }
 
+@app.post("/api/ocr/test")
+async def test_ocr_recognition(data: dict = Body(...)):
+    """实时响应测试接口：支持灰度二值化阈值调优，实时返回渲染图与抓取文字"""
+    project_path = data.get("project_path")
+    region_value = data.get("region_value", [0, 0, 0, 0])
+    gray_scale = data.get("gray_scale", True)
+    gray_threshold = data.get("gray_threshold", 127)
+
+    if len(region_value) == 4 and region_value[2] > 0 and region_value[3] > 0:
+        x, y, w, h = region_value
+        context_path = os.path.join(project_path, CONTEXT_FILE) if project_path else None
+        if context_path and os.path.exists(context_path):
+            try:
+                with open(context_path, "r", encoding="utf-8") as f:
+                    ctx = json.load(f)
+                window_title = ctx.get("window_title")
+                if window_title:
+                    hwnd = win32gui.FindWindow(None, window_title)
+                    if hwnd:
+                        client_rect = win32gui.GetClientRect(hwnd)
+                        wx, wy = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+                        x += wx + ctx.get("offset_left", 0)
+                        y += wy + ctx.get("offset_top", 0)
+            except Exception:
+                pass
+        region_rect = (int(x), int(y), int(w), int(h))
+    else:
+        screen_w, screen_h = pyautogui.size()
+        region_rect = (0, 0, screen_w, screen_h)
+
+    try:
+        import cv2
+        import numpy as np
+        import base64
+        from core.node_executors.base.ocr_recognition import get_ocr_engine
+
+        engine_type, ocr_engine = get_ocr_engine()
+
+        screenshot = pyautogui.screenshot(region=region_rect)
+        frame_bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        # 二值化/灰度化处理
+        if gray_scale:
+            gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
+            # 应用二值化阈值点
+            _, thresh = cv2.threshold(gray, gray_threshold, 255, cv2.THRESH_BINARY)
+            processed_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+        else:
+            processed_img = frame_bgr
+
+        detected_text = ""
+        if engine_type == "ddddocr" and ocr_engine:
+            _, img_bytes = cv2.imencode('.png', processed_img)
+            raw_res = ocr_engine.classification(img_bytes.tobytes())
+            detected_text = str(raw_res).strip() if raw_res else ""
+        else:
+            detected_text = "未激活识别库"
+
+        _, buffer = cv2.imencode('.png', processed_img)
+        img_b64 = "data:image/png;base64," + base64.b64encode(buffer).decode('utf-8')
+
+        return {
+            "status": "success",
+            "text": detected_text,
+            "region": region_rect,
+            "image": img_b64
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"实时测试失败: {str(e)}")
+
+@app.post("/api/image/test")
+async def test_image_recognition(data: dict = Body(...)):
+    """图像识别实时测试接口：支持二值化灰度滑块联动，返回标注后的视场与匹配得分"""
+    project_path = data.get("project_path")
+    template_name = data.get("template_name")
+    region_type = data.get("region_type", "fullwindow")
+    region_value = data.get("region_value", [0, 0, 0, 0])
+    gray_scale = data.get("gray_scale", True)
+    gray_threshold = data.get("gray_threshold", 127)
+
+    if not project_path or not template_name:
+        raise HTTPException(status_code=400, detail="缺少模板图片参数")
+
+    # 1. 加载模板图
+    clean_name = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace("\\", "/")
+    template_path = os.path.join(project_path, "templates", f"{clean_name}.png")
+
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=404, detail=f"模板图片不存在: {clean_name}.png")
+
+    # 2. 计算匹配区域
+    if region_type in ("recorded", "custom") and len(region_value) == 4 and region_value[2] > 0 and region_value[3] > 0:
+        x, y, w, h = region_value
+        context_path = os.path.join(project_path, CONTEXT_FILE)
+        if os.path.exists(context_path):
+            try:
+                with open(context_path, "r", encoding="utf-8") as f:
+                    ctx = json.load(f)
+                window_title = ctx.get("window_title")
+                if window_title:
+                    hwnd = win32gui.FindWindow(None, window_title)
+                    if hwnd:
+                        client_rect = win32gui.GetClientRect(hwnd)
+                        wx, wy = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
+                        x += wx + ctx.get("offset_left", 0)
+                        y += wy + ctx.get("offset_top", 0)
+            except Exception:
+                pass
+        region_rect = (int(x), int(y), int(w), int(h))
+    else:
+        screen_w, screen_h = pyautogui.size()
+        region_rect = (0, 0, screen_w, screen_h)
+
+    try:
+        import cv2
+        import numpy as np
+        import base64
+
+        template_img = cv2.imread(template_path)
+        screenshot = pyautogui.screenshot(region=region_rect)
+        screen_bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+
+        # 二值化/灰度处理
+        if gray_scale:
+            tpl_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
+            scr_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
+
+            _, tpl_proc = cv2.threshold(tpl_gray, gray_threshold, 255, cv2.THRESH_BINARY)
+            _, scr_proc = cv2.threshold(scr_gray, gray_threshold, 255, cv2.THRESH_BINARY)
+
+            tpl_match = tpl_proc
+            scr_match = scr_proc
+            render_frame = cv2.cvtColor(scr_proc, cv2.COLOR_GRAY2BGR)
+        else:
+            tpl_match = template_img
+            scr_match = screen_bgr
+            render_frame = screen_bgr.copy()
+
+        # 校验尺寸
+        if tpl_match.shape[0] > scr_match.shape[0] or tpl_match.shape[1] > scr_match.shape[1]:
+            raise HTTPException(status_code=400, detail="模板图片尺寸大于搜索区域，无法匹配！")
+
+        res = cv2.matchTemplate(scr_match, tpl_match, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(res)
+
+        th, tw = tpl_match.shape[:2]
+        center_pos = (region_rect[0] + max_loc[0] + tw // 2, region_rect[1] + max_loc[1] + th // 2)
+
+        # 在渲染画面上画框标注
+        cv2.rectangle(render_frame, max_loc, (max_loc[0] + tw, max_loc[1] + th), (0, 0, 255), 2)
+        cv2.circle(render_frame, (max_loc[0] + tw // 2, max_loc[1] + th // 2), 5, (0, 255, 0), -1)
+
+        _, buffer = cv2.imencode('.png', render_frame)
+        img_b64 = "data:image/png;base64," + base64.b64encode(buffer).decode('utf-8')
+
+        return {
+            "status": "success",
+            "confidence": round(max_val * 100, 2),
+            "center_pos": center_pos,
+            "region": region_rect,
+            "image": img_b64
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"图像匹配测试异常: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

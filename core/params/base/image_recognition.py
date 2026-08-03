@@ -12,7 +12,7 @@ PARAM_DEFINITIONS = {
             "threshold": {
                 "type": "int",
                 "default": 85,
-                "label": "匹配阈值 (%)",
+                "label": "匹配成功阈值 (%)",
                 "min": 1,
                 "max": 100
             },
@@ -26,7 +26,20 @@ PARAM_DEFINITIONS = {
             "gray_scale": {
                 "type": "bool",
                 "default": True,
-                "label": "灰度匹配 (推荐)"
+                "label": "开启灰度/二值化预处理 (增强轮廓，过滤背景杂色)"
+            },
+            "gray_threshold": {
+                "type": "int",
+                "default": 127,
+                "label": "二值化灰度阈值 (0-255，调节至轮廓最清晰)",
+                "min": 0,
+                "max": 255,
+                "step": 1,
+                "visible_if": {
+                    "field": "gray_scale",
+                    "operator": "eq",
+                    "value": True
+                }
             },
             "region_type": {
                 "type": "select",
@@ -36,7 +49,7 @@ PARAM_DEFINITIONS = {
                     {"value": "custom", "label": "自定义区域"}
                 ],
                 "default": "fullwindow",
-                "label": "搜索区域"
+                "label": "搜索区域模式"
             },
             "region_value": {
                 "type": "list_int4_picker",

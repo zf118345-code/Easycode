@@ -1,0 +1,11 @@
+{
+  "ExpandedNodes": [
+    "",
+    "\\src",
+    "\\src\\components",
+    "\\src\\components\\panels",
+    "\\src\\stores"
+  ],
+  "SelectedNode": "\\src\\components\\PanelContainer.vue",
+  "PreviewInSolutionExplorer": false
+}
