@@ -31,7 +31,9 @@ export const useMainStore = defineStore('main', {
             offsetRight: 0,
             targetContentWidth: 0,
             targetContentHeight: 0
-        }
+        },
+        // ⭐ 新增：视图模式状态（'list' 为列表模式，'flow' 为可视化流程图画布模式）
+        viewMode: 'list'
     }),
 
     actions: {
@@ -125,7 +127,7 @@ export const useMainStore = defineStore('main', {
             localStorage.setItem('recentProjects', JSON.stringify(this.recentProjects))
         },
 
-        // ====== 任务管理 ======
+        // ====== 替换 Store 中关于任务加载的核心代码 ======
         async loadTasks() {
             if (!this.currentProjectPath) return
             try {
@@ -134,26 +136,28 @@ export const useMainStore = defineStore('main', {
                 })
                 this.tasks = res.data.tasks || []
                 this.taskOrder = res.data.order || []
-                this.clearTaskNodesCache()
+
+                // ⭐ 新增：直接拉取整个蓝图大文件数据，挂载到 currentTaskData 供画布全局渲染
+                const blueprintRes = await axios.get(`/api/tasks/${this.tasks[0]?.task_id || 'main'}`, {
+                    params: { project_path: this.currentProjectPath }
+                }).catch(() => null)
+
+                if (blueprintRes && blueprintRes.data) {
+                    // 如果后端返回的是整个 blueprint 或单任务，统一兼容
+                    this.currentTaskData = blueprintRes.data
+                }
+
                 if (this.tasks.length) {
-                    // 如果当前未选择任务，或者当前任务不在列表中，默认选中第一个
                     const exists = this.tasks.some(t => t.task_id === this.currentTaskId)
                     const targetId = exists ? this.currentTaskId : this.tasks[0].task_id
                     await this.loadTaskData(targetId)
-                } else {
-                    this.currentTaskId = null
-                    this.currentTaskData = null
-                    this.nodes = []
-                    this.selectedNodeId = null
                 }
             } catch (err) {
                 logger.error('Store', '加载任务列表失败', err)
                 this.tasks = []
-                this.taskOrder = []
             }
         },
 
-        // ⭐ 核心优化：确保加载任务数据时，强行重置节点列表与选择状态
         async loadTaskData(taskId) {
             if (!this.currentProjectPath || !taskId) return
             try {
@@ -161,16 +165,14 @@ export const useMainStore = defineStore('main', {
                     params: { project_path: this.currentProjectPath }
                 })
                 this.currentTaskId = taskId
+                // 如果是单大文件蓝图，currentTaskData 应该保存包含所有 tasks 的完整结构
+                // 这里我们同时兼容单任务和多任务蓝图
                 this.currentTaskData = res.data
-                // 深度深拷贝断开旧引用，确保 Vue 响应式节点列表刷新
                 this.nodes = JSON.parse(JSON.stringify(res.data.nodes || []))
                 this.selectedNodeId = null
-                logger.info('Store', `✅ 成功切换任务 [${res.data.task_name}] | 关联节点数: ${this.nodes.length}`)
+                logger.info('Store', `✅ 成功加载任务数据 | 节点数: ${this.nodes.length}`)
             } catch (err) {
                 logger.error('Store', '加载任务数据失败', err)
-                this.currentTaskData = null
-                this.nodes = []
-                this.selectedNodeId = null
             }
         },
 

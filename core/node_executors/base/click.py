@@ -24,37 +24,36 @@ class ClickNodeExecutor(BaseNodeExecutor):
             win_rect = context.get_window_rect()
             wx, wy = win_rect[0], win_rect[1]
 
+        success = True
         # 模拟器模式 (ADB 后台静默点击)
         if context.is_emulator and context.device_id:
             if context.android_width and context.android_height:
                 win_rect = context.get_window_rect()
                 win_w, win_h = win_rect[2], win_rect[3]
 
-                # ⭐ 动态横竖屏方向校正算法
                 raw_a_w, raw_a_h = context.android_width, context.android_height
-                if win_w > win_h:  # PC 窗口为横屏
+                if win_w > win_h:
                     real_a_w = max(raw_a_w, raw_a_h)
                     real_a_h = min(raw_a_w, raw_a_h)
-                else:  # PC 窗口为竖屏
+                else:
                     real_a_w = min(raw_a_w, raw_a_h)
                     real_a_h = max(raw_a_w, raw_a_h)
 
-                # 映射到 Android 动态校正后的物理坐标
                 android_x = int((x / win_w) * real_a_w)
                 android_y = int((y / win_h) * real_a_h)
 
-                context.log(
-                    f"📱 ADB 静默点击 [横竖屏已矫正]: 窗口相对({x},{y}) -> Android物理({android_x},{android_y}) | 当前画幅:{real_a_w}x{real_a_h}")
-                return self._adb_click(context.device_id, android_x, android_y, context)
+                context.log(f"📱 ADB 静默点击 [横竖屏已矫正]: 窗口相对({x},{y}) -> Android物理({android_x},{android_y})")
+                res = self._adb_click(context.device_id, android_x, android_y, context)
+                success = res.get("success", True)
             else:
                 context.log("⚠️ Android 分辨率未获取，回退为 PC 物理点击", "warning")
                 pyautogui.click(wx + x, wy + y)
-                return {"success": True}
         else:
-            # PC 模式 (物理移动鼠标)
             context.log(f"🖱️ PC 物理鼠标点击: 屏幕绝对坐标({wx + x}, {wy + y})")
             pyautogui.click(wx + x, wy + y)
-            return {"success": True}
+
+        # ⭐ 支持通过 on_success 灵活控制跳转
+        return self.build_jump_result(success, params.get("on_success", {}))
 
     def _adb_click(self, device_id, x, y, context):
         try:

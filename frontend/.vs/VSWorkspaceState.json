@@ -2,10 +2,12 @@
   "ExpandedNodes": [
     "",
     "\\src",
+    "\\src\\assets",
     "\\src\\components",
     "\\src\\components\\panels",
-    "\\src\\stores"
+    "\\src\\stores",
+    "\\src\\utils"
   ],
-  "SelectedNode": "\\src\\components\\PanelContainer.vue",
+  "SelectedNode": "\\src\\components\\WorkflowCanvas.vue",
   "PreviewInSolutionExplorer": false
 }

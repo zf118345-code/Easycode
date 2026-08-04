@@ -10,7 +10,7 @@
             <div class="params-container">
                 <!-- 1. 通用字段渲染 -->
                 <template v-for="(config, paramName) in allParams" :key="paramName">
-                    <!-- 区域坐标显隐：兼容 ocr_recognition 和 image_recognition 的 region_value -->
+                    <!-- 区域坐标显隐 -->
                     <div v-if="paramName === 'region_value'"
                          v-show="shouldShowRegionValue"
                          class="param-item">
@@ -36,8 +36,8 @@
                                    @input="debounceRefreshRealtime" />
                     </div>
 
-                    <!-- 其他通用组件（排除成功失败跳转，由下方统一接管渲染） -->
-                    <div v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure'].includes(paramName)"
+                    <!-- 其他通用组件（排除跳转和候选列表，由下方独立接管） -->
+                    <div v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'candidates'].includes(paramName)"
                          class="param-item">
                         <ParamRenderer :key="paramName + store.selectedNodeId"
                                        :config="config"
@@ -48,7 +48,17 @@
                     </div>
                 </template>
 
-                <!-- ⭐⭐⭐ 2. 文字识别 (OCR) 实时调优卡片 -->
+                <!-- ⭐⭐⭐ 2. 特别针对 branch 节点的 candidates 候选条件列表独立渲染 -->
+                <div v-if="store.selectedNode.node_type === 'branch' && allParams.candidates" class="param-item">
+                    <ParamRenderer :key="'candidates_' + store.selectedNodeId"
+                                   :config="allParams.candidates"
+                                   :value="store.selectedNode.params.candidates"
+                                   :label="allParams.candidates.label || '多分支判定列表'"
+                                   :context="store.selectedNode.params"
+                                   @update="(val) => handleParamUpdate('candidates', val)" />
+                </div>
+
+                <!-- ⭐⭐⭐ 3. 文字识别 (OCR) 实时调优卡片 -->
                 <div v-if="store.selectedNode.node_type === 'ocr_recognition'" class="interactive-preview-card">
                     <div class="preview-header">
                         <span>👁️ OCR 实时视场与文本预览</span>
@@ -71,7 +81,7 @@
                     </div>
                 </div>
 
-                <!-- ⭐⭐⭐ 3. 图像识别 实时调优卡片 -->
+                <!-- ⭐⭐⭐ 4. 图像识别 实时调优卡片 -->
                 <div v-if="store.selectedNode.node_type === 'image_recognition'" class="interactive-preview-card">
                     <div class="preview-header">
                         <span>🎯 图像匹配实时对比分析</span>
@@ -98,11 +108,11 @@
                     </div>
                 </div>
 
-                <!-- ⭐⭐⭐ 4. 恢复所有判断/行为节点的【成功跳转】与【失败跳转】配置区 -->
+                <!-- ⭐⭐⭐ 5. 恢复所有判断/行为节点的【成功跳转】与【失败跳转】配置区 -->
                 <template v-if="hasJumpConfig">
-                    <div v-for="jumpKey in ['on_success', 'on_failure']" :key="jumpKey" class="jump-section">
+                    <div v-for="jumpKey in jumpKeysList" :key="jumpKey" class="jump-section">
                         <el-divider content-position="left">
-                            {{ jumpKey === 'on_success' ? '成功跳转' : '失败跳转' }}
+                            {{ jumpKey === 'on_success' ? '成功跳转' : (store.selectedNode.node_type === 'branch' ? '兜底失败跳转 (全不满足时)' : '失败跳转') }}
                         </el-divider>
                         <div class="jump-config">
                             <div class="param-item">
@@ -176,18 +186,26 @@
                 return store.params[node.node_type]?.label || node.node_type
             })
 
-            // 判断当前节点是否包含跳转配置（定义里有 on_success 的节点）
+            // 判断当前节点是否包含跳转配置
             const hasJumpConfig = computed(() => {
                 const defs = paramDefs.value
-                return defs && ('on_success' in defs)
+                return defs && ('on_success' in defs || 'on_failure' in defs)
             })
 
-            // OCR 或图像识别的区域显隐逻辑
+            // 动态决定要渲染哪些跳转区
+            const jumpKeysList = computed(() => {
+                const defs = paramDefs.value
+                const keys = []
+                if ('on_success' in defs) keys.push('on_success')
+                if ('on_failure' in defs) keys.push('on_failure')
+                return keys
+            })
+
             const shouldShowRegionValue = computed(() => {
                 const node = store.selectedNode
                 if (!node || !node.params) return false
                 const nodeType = node.node_type
-                if (nodeType === 'ocr_recognition') return true // OCR 默认显示自定义范围
+                if (nodeType === 'ocr_recognition') return true
                 const regionType = node.params.region_type
                 return regionType === 'recorded' || regionType === 'custom'
             })
@@ -368,6 +386,7 @@
                 allParams,
                 shouldShowRegionValue,
                 hasJumpConfig,
+                jumpKeysList,
                 jumpTypeConfig,
                 getTargetConfig,
                 getTargetNodeConfig,
@@ -512,6 +531,7 @@
     }
 
     .placeholder {
+        content: "";
         color: var(--el-text-color-placeholder);
         font-size: 11px;
         text-align: center;

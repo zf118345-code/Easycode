@@ -89,78 +89,132 @@ async def verify_project(project_path: str):
     }
 
 
+# ====== api.py 中用于替换任务读写的完整后端函数 ======
+
+BLUEPRINT_FILE = "project_blueprint.json"
+
+
+def get_blueprint_path(project_path):
+    return os.path.join(project_path, BLUEPRINT_FILE)
+
+
+def load_blueprint(project_path):
+    bp_path = get_blueprint_path(project_path)
+    if os.path.exists(bp_path):
+        with open(bp_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    # 默认空蓝图结构
+    return {"project_name": os.path.basename(project_path), "tasks": [], "variables": {}}
+
+
+def save_blueprint(project_path, data):
+    bp_path = get_blueprint_path(project_path)
+    with open(bp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
 @app.get("/api/tasks")
 async def list_tasks(project_path: str):
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目路径不存在")
     try:
-        project = load_project(project_path)
+        bp_data = load_blueprint(project_path)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"加载蓝图失败: {str(e)}")
 
     task_list = []
-    for task_id, task in project.tasks.items():
+    for task in bp_data.get("tasks", []):
         task_list.append({
-            "task_id": task.task_id,
-            "task_name": task.task_name,
-            "node_count": len(task.nodes)
+            "task_id": task.get("task_id"),
+            "task_name": task.get("task_name"),
+            "node_count": len(task.get("nodes", []))
         })
 
-    project_json_path = os.path.join(project_path, "project.json")
-    order = []
-    if os.path.exists(project_json_path):
-        with open(project_json_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            order = data.get("task_order", [])
+    order = [t["task_id"] for t in task_list]
     return {"tasks": task_list, "order": order}
 
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str, project_path: str):
-    if not os.path.exists(project_path):
-        raise HTTPException(status_code=404, detail="项目路径不存在")
-    try:
-        project = load_project(project_path)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
+    bp_data = load_blueprint(project_path)
+    # 如果大文件里有 tasks 数组
+    if "tasks" in bp_data:
+        for task in bp_data.get("tasks", []):
+            if task.get("task_id") == task_id:
+                return task
+        # 默认返回第一个
+        if bp_data["tasks"]:
+            return bp_data["tasks"][0]
 
-    task = project.tasks.get(task_id)
-    if not task:
+    # 如果大文件本身就是单任务结构
+    return bp_data
+
+
+@app.put("/api/tasks/{task_id}")
+async def save_task(task_id: str, request: SaveTaskRequest):
+    project_path = request.project_path
+    task_data = request.task_data
+    if not project_path or not task_data:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    bp_data = load_blueprint(project_path)
+    tasks = bp_data.setdefault("tasks", [])
+
+    task_data["task_id"] = task_id
+    if "task_name" not in task_data or not task_data["task_name"]:
+        task_data["task_name"] = task_id
+
+    # 更新或追加对应任务
+    found = False
+    for i, t in enumerate(tasks):
+        if t.get("task_id") == task_id:
+            tasks[i] = task_data
+            found = True
+            break
+    if not found:
+        tasks.append(task_data)
+
+    save_blueprint(project_path, bp_data)
+    return {"status": "success"}
+
+
+@app.post("/api/tasks")
+async def create_task(request: SaveTaskRequest):
+    project_path = request.project_path
+    task_data = request.task_data
+    if not project_path or not task_data:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    bp_data = load_blueprint(project_path)
+    tasks = bp_data.setdefault("tasks", [])
+    task_name = task_data.get("task_name", "新任务组")
+
+    if any(t.get("task_name") == task_name for t in tasks):
+        raise HTTPException(status_code=400, detail="任务名称已存在")
+
+    task_id = f"task_{int(time.time() * 1000)}"
+    task_data["task_id"] = task_id
+    task_data["task_name"] = task_name
+    if "nodes" not in task_data:
+        task_data["nodes"] = []
+
+    tasks.append(task_data)
+    save_blueprint(project_path, bp_data)
+    return {"status": "success", "task_id": task_id}
+
+
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: str, project_path: str):
+    bp_data = load_blueprint(project_path)
+    tasks = bp_data.get("tasks", [])
+
+    new_tasks = [t for t in tasks if t.get("task_id") != task_id]
+    if len(new_tasks) == len(tasks):
         raise HTTPException(status_code=404, detail="任务不存在")
 
-    task_dict = {
-        "task_id": task.task_id,
-        "task_name": task.task_name,
-        "loop_count": task.loop_count,
-        "loop_interval": task.loop_interval,
-        "nodes": []
-    }
-    for node in task.nodes:
-        node_dict = {
-            "node_id": node.node_id,
-            "node_name": node.node_name,
-            "node_type": node.node_type,
-            "params": node.params,
-            "delay_before": node.delay_before,
-            "loop_count": node.loop_count,
-            "enabled": node.enabled,
-            "on_success": {
-                "type": node.on_success.type,
-                "target": node.on_success.target,
-                "target_node": node.on_success.target_node,
-                "return_on_complete": node.on_success.return_on_complete
-            },
-            "on_failure": {
-                "type": node.on_failure.type,
-                "target": node.on_failure.target,
-                "target_node": node.on_failure.target_node,
-                "return_on_complete": node.on_failure.return_on_complete
-            },
-            "position": node.position
-        }
-        task_dict["nodes"].append(node_dict)
-    return task_dict
-
+    bp_data["tasks"] = new_tasks
+    save_blueprint(project_path, bp_data)
+    return {"status": "success"}
 
 @app.get("/api/tasks/{task_id}/nodes")
 async def get_task_nodes(task_id: str, project_path: str):
@@ -174,71 +228,6 @@ async def get_task_nodes(task_id: str, project_path: str):
     if not task:
         raise HTTPException(status_code=404, detail="任务不存在")
     return [{"node_id": n.node_id, "node_name": n.node_name} for n in task.nodes]
-
-
-@app.put("/api/tasks/{task_id}")
-async def save_task(task_id: str, request: SaveTaskRequest):
-    project_path = request.project_path
-    task_data = request.task_data
-    if not project_path or not task_data:
-        raise HTTPException(status_code=400, detail="缺少必要参数")
-
-    tasks_dir = os.path.join(project_path, "tasks")
-    os.makedirs(tasks_dir, exist_ok=True)
-    task_data["task_id"] = task_id
-    if "task_name" not in task_data or not task_data["task_name"]:
-        task_data["task_name"] = task_id
-
-    task_data.pop("description", None)
-    task_data.pop("delay_before", None)
-    if "nodes" not in task_data:
-        task_data["nodes"] = []
-
-    file_path = os.path.join(tasks_dir, f"{task_id}.json")
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(task_data, f, indent=2, ensure_ascii=False)
-    return {"status": "success"}
-
-
-@app.post("/api/tasks")
-async def create_task(request: SaveTaskRequest):
-    project_path = request.project_path
-    task_data = request.task_data
-    if not project_path or not task_data:
-        raise HTTPException(status_code=400, detail="缺少必要参数")
-
-    tasks_dir = os.path.join(project_path, "tasks")
-    os.makedirs(tasks_dir, exist_ok=True)
-    task_name = task_data.get("task_name", "新任务")
-
-    for filename in os.listdir(tasks_dir):
-        if filename.endswith(".json"):
-            with open(os.path.join(tasks_dir, filename), "r", encoding="utf-8") as f:
-                existing = json.load(f)
-                if existing.get("task_name") == task_name:
-                    raise HTTPException(status_code=400, detail="任务名称已存在")
-
-    task_id = f"task_{int(time.time() * 1000)}"
-    task_data["task_id"] = task_id
-    task_data.pop("description", None)
-    task_data.pop("delay_before", None)
-    if "nodes" not in task_data:
-        task_data["nodes"] = []
-
-    file_path = os.path.join(tasks_dir, f"{task_id}.json")
-    with open(file_path, "w", encoding="utf-8") as f:
-        json.dump(task_data, f, indent=2, ensure_ascii=False)
-    return {"status": "success", "task_id": task_id}
-
-
-@app.delete("/api/tasks/{task_id}")
-async def delete_task(task_id: str, project_path: str):
-    file_path = os.path.join(project_path, "tasks", f"{task_id}.json")
-    if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="任务不存在")
-    os.remove(file_path)
-    return {"status": "success"}
-
 
 @app.post("/api/tasks/order")
 async def save_task_order(request: TaskOrderRequest):
