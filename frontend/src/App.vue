@@ -1,5 +1,5 @@
 <template>
-  <div id="app">
+  <div id="app" @contextmenu.prevent>
     <!-- 主界面 -->
     <template v-if="store.currentProjectPath && projectLoaded">
       <AppHeader />

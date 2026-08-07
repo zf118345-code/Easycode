@@ -99,12 +99,17 @@ class GraphExecutor:
                 result = self._execute_node(node)
 
                 jump = None
-                if "jump" in result:
-                    jump = self._dict_to_jump(result["jump"])
-                elif result.get("success") and node.on_success:
-                    jump = node.on_success
-                elif not result.get("success") and node.on_failure:
+                is_success = result.get("success", True)
+
+                # ⭐ 核心修复：如果失败且配置了失败分支，优先走失败路由
+                if not is_success and node.on_failure:
                     jump = node.on_failure
+                # 如果成功且配置了成功分支，走成功路由
+                elif is_success and node.on_success:
+                    jump = node.on_success
+                # 兼容兜底：如果上面没匹配到，但 result 里自带了显式 jump
+                elif "jump" in result:
+                    jump = self._dict_to_jump(result["jump"])
 
                 if jump:
                     self._handle_jump(jump)

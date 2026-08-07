@@ -1,117 +1,107 @@
 <template>
-    <Splitpanes class="panel-container" :dbl-click-splitter="false">
-        <!-- 左侧：垂直分割（任务列表 + 节点列表/视图） -->
-        <Pane size="30" min-size="20" max-size="45">
-            <Splitpanes horizontal class="left-sub" :dbl-click-splitter="false">
-                <Pane size="35" min-size="15" max-size="50">
-                    <TaskListPanel />
-                </Pane>
-
-                <!-- 如果是列表模式，展示原生的节点列表面板 -->
-                <Pane v-if="store.viewMode === 'list'" size="65" min-size="20" max-size="85">
-                    <NodeListPanel />
-                </Pane>
-            </Splitpanes>
-        </Pane>
-
-        <!-- 右侧：中间流程图画布或节点详情 + 执行日志 -->
-        <Pane size="70">
-            <!-- 如果处于 [🔀 流程图画布] 模式，中间展现全屏可视化流程图 -->
-            <template v-if="store.viewMode === 'flow'">
-                <Splitpanes horizontal class="right-sub" :dbl-click-splitter="false">
-                    <Pane size="65" min-size="30" max-size="85">
-                        <div class="pane-content">
-                            <PanelHeader title="可视化流程图 (拖拽/连线/节点感知)" :actions="[]" />
-                            <WorkflowCanvas />
-                        </div>
-                    </Pane>
-                    <Pane size="35" min-size="15" max-size="70">
-                        <div class="pane-content">
-                            <PanelHeader title="执行日志" :actions="[]" />
-                            <LogPanel />
-                        </div>
-                    </Pane>
-                </Splitpanes>
-            </template>
-
-            <!-- 如果处于 [📊 列表] 模式，展现经典三栏布局 -->
-            <template v-else>
-                <Splitpanes horizontal class="right-sub" :dbl-click-splitter="false">
-                    <Pane size="65" min-size="20" max-size="80">
-                        <div class="pane-content">
-                            <PanelHeader title="节点详情" :actions="getActions('nodeEditor')" @action="handleAction" />
-                            <NodeEditorPanel />
-                        </div>
-                    </Pane>
-                    <Pane size="35" min-size="20" max-size="80">
-                        <div class="pane-content">
-                            <PanelHeader title="执行日志" :actions="[]" />
-                            <LogPanel />
-                        </div>
-                    </Pane>
-                </Splitpanes>
-            </template>
-        </Pane>
-    </Splitpanes>
+    <div class="main-layout-container">
+        <!-- 上方：全屏可视化流程图画布 -->
+        <div class="pane-content">
+            <PanelHeader title="可视化全景流程图 (多组同屏、右键管理、跨组连线)" :actions="[]">
+                <!-- 直接在这里塞入工作面板切换器 -->
+                <div class="workspace-switcher-badge" @click="openWorkspaceSelector">
+                    <span class="device-icon">💻</span>
+                    <span class="workspace-label">工作面板:</span>
+                    <span class="workspace-name">{{ store.currentWorkspace || 'Windows 桌面' }}</span>
+                    <span class="dropdown-arrow">▼</span>
+                </div>
+            </PanelHeader>
+            <WorkflowCanvas />
+        </div>
+    </div>
 </template>
 
 <script>
-    import { Splitpanes, Pane } from 'splitpanes'
-    import 'splitpanes/dist/splitpanes.css'
-
     import PanelHeader from './PanelHeader.vue'
-    import TaskListPanel from './panels/TaskListPanel.vue'
-    import NodeListPanel from './panels/NodeListPanel.vue'
-    import NodeEditorPanel from './panels/NodeEditorPanel.vue'
-    import LogPanel from './panels/LogPanel.vue'
-    import WorkflowCanvas from './WorkflowCanvas.vue' // ⭐ 引入流程图画布组件
-    import { panelConfigs } from '@/config/panels.js'
+    import WorkflowCanvas from './WorkflowCanvas.vue'
     import { useMainStore } from '@/stores'
+    import { ElMessage } from 'element-plus'
 
     export default {
         components: {
-            Splitpanes,
-            Pane,
             PanelHeader,
-            TaskListPanel,
-            NodeListPanel,
-            NodeEditorPanel,
-            LogPanel,
             WorkflowCanvas
         },
         setup() {
             const store = useMainStore()
-            return { store }
-        },
-        methods: {
-            getActions(panelId) {
-                return panelConfigs[panelId]?.actions || []
-            },
-            handleAction({ panelId, method }) {
-                console.log(`面板 ${panelId} 触发操作: ${method}`)
+
+            const openWorkspaceSelector = () => {
+                ElMessage.info('正在打开工作面板切换设置...')
+            }
+
+            return {
+                store,
+                openWorkspaceSelector
             }
         }
     }
 </script>
 
 <style scoped>
-    .panel-container {
+    .main-layout-container {
         width: 100%;
         height: 100%;
         background: var(--el-bg-color-page);
-    }
-
-    .left-sub, .right-sub {
-        height: 100%;
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
     }
 
     .pane-content {
         display: flex;
         flex-direction: column;
         height: 100%;
+        width: 100%;
         padding: 4px;
         background: var(--el-bg-color);
         border-radius: 6px;
         overflow: hidden;
+        box-sizing: border-box;
+    }
+
+    /* 顶栏精致的胶囊工作区切换按钮样式 */
+    .workspace-switcher-badge {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: rgba(25, 26, 38, 0.85);
+        border: 1px solid var(--el-border-color-light, #313352);
+        padding: 2px 10px;
+        border-radius: 14px;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        user-select: none;
+        height: 26px;
+        box-sizing: border-box;
+    }
+
+        .workspace-switcher-badge:hover {
+            border-color: var(--el-color-primary, #4ed19c);
+            background: rgba(38, 40, 61, 0.95);
+        }
+
+    .device-icon {
+        font-size: 12px;
+    }
+
+    .workspace-label {
+        color: var(--el-text-color-secondary, #909399);
+    }
+
+    .workspace-name {
+        color: var(--el-color-primary, #4ed19c);
+        font-weight: 600;
+    }
+
+    .dropdown-arrow {
+        font-size: 9px;
+        color: var(--el-text-color-secondary);
+        margin-left: 2px;
     }
 </style>

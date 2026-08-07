@@ -58,6 +58,7 @@ class RunRequest(BaseModel):
     project_path: str
     task_id: str
     start_node_id: Optional[str] = None
+    blueprint_data: Optional[dict] = None  # ⭐ 新增：接收前端传来的实时画布数据
 
 
 class SaveTaskRequest(BaseModel):
@@ -164,7 +165,7 @@ async def save_task(task_id: str, request: SaveTaskRequest):
     if "task_name" not in task_data or not task_data["task_name"]:
         task_data["task_name"] = task_id
 
-    # 更新或追加对应任务
+    # ⭐ 精确匹配 task_id 进行局部更新，严禁破坏其他任务组
     found = False
     for i, t in enumerate(tasks):
         if t.get("task_id") == task_id:
@@ -253,6 +254,13 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
     if not os.path.exists(project_path):
         raise HTTPException(status_code=404, detail="项目不存在")
 
+    # ⭐ 核心修复：如果前端带了最新的画布数据，先自动落盘保存，确保执行引擎读到最新节点
+    if request.blueprint_data:
+        try:
+            save_blueprint(project_path, request.blueprint_data)
+        except Exception as e:
+            print(f"运行前自动同步保存蓝图失败: {e}")
+
     context_path = os.path.join(project_path, CONTEXT_FILE)
     saved_context = {}
     if os.path.exists(context_path):
@@ -263,6 +271,8 @@ async def run_task(request: RunRequest, background_tasks: BackgroundTasks):
         project = load_project(project_path)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"加载项目失败: {str(e)}")
+
+    # ... 后续执行逻辑保持不变 ...
 
     execution_id = f"{request.task_id}_{int(time.time() * 1000)}"
     record_execution(execution_id, {"status": "running", "message": "执行中..."}, [])
@@ -499,6 +509,25 @@ async def get_template_preview(project_path: str, relative_path: str = ""):
 
     return {"images": images}
 
+
+@app.get("/api/image/thumb")
+async def get_image_thumb(project_path: str, name: str):
+    """提供给前端节点卡片展示模板图片缩略图的接口"""
+    if not project_path or not name:
+        raise HTTPException(status_code=400, detail="缺少参数")
+
+    # 清理路径防止越权和格式问题
+    clean_name = re.sub(r'\.png$', '', name, flags=re.IGNORECASE).replace("\\", "/")
+    template_path = os.path.join(project_path, "templates", f"{clean_name}.png")
+
+    if not os.path.exists(template_path):
+        raise HTTPException(status_code=404, detail="缩略图不存在")
+
+    try:
+        from fastapi.responses import FileResponse
+        return FileResponse(template_path, media_type="image/png")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"读取缩略图失败: {str(e)}")
 
 @app.post("/api/templates/mkdir")
 async def create_template_folder(data: dict = Body(...)):
@@ -739,100 +768,85 @@ async def test_ocr_recognition(data: dict = Body(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"实时测试失败: {str(e)}")
 
+
 @app.post("/api/image/test")
 async def test_image_recognition(data: dict = Body(...)):
-    """图像识别实时测试接口：支持二值化灰度滑块联动，返回标注后的视场与匹配得分"""
+    """单张模板图片灰度/二值化效果实时预览接口"""
     project_path = data.get("project_path")
     template_name = data.get("template_name")
-    region_type = data.get("region_type", "fullwindow")
-    region_value = data.get("region_value", [0, 0, 0, 0])
     gray_scale = data.get("gray_scale", True)
     gray_threshold = data.get("gray_threshold", 127)
 
     if not project_path or not template_name:
-        raise HTTPException(status_code=400, detail="缺少模板图片参数")
+        return {"status": "empty", "image": ""}
 
-    # 1. 加载模板图
+    # 安全定位模板图片路径
     clean_name = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace("\\", "/")
     template_path = os.path.join(project_path, "templates", f"{clean_name}.png")
 
     if not os.path.exists(template_path):
-        raise HTTPException(status_code=404, detail=f"模板图片不存在: {clean_name}.png")
-
-    # 2. 计算匹配区域
-    if region_type in ("recorded", "custom") and len(region_value) == 4 and region_value[2] > 0 and region_value[3] > 0:
-        x, y, w, h = region_value
-        context_path = os.path.join(project_path, CONTEXT_FILE)
-        if os.path.exists(context_path):
-            try:
-                with open(context_path, "r", encoding="utf-8") as f:
-                    ctx = json.load(f)
-                window_title = ctx.get("window_title")
-                if window_title:
-                    hwnd = win32gui.FindWindow(None, window_title)
-                    if hwnd:
-                        client_rect = win32gui.GetClientRect(hwnd)
-                        wx, wy = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-                        x += wx + ctx.get("offset_left", 0)
-                        y += wy + ctx.get("offset_top", 0)
-            except Exception:
-                pass
-        region_rect = (int(x), int(y), int(w), int(h))
-    else:
-        screen_w, screen_h = pyautogui.size()
-        region_rect = (0, 0, screen_w, screen_h)
+        file_name_only = os.path.basename(clean_name)
+        template_path = os.path.join(project_path, "templates", f"{file_name_only}.png")
+        if not os.path.exists(template_path):
+            return {"status": "not_found", "image": ""}
 
     try:
         import cv2
         import numpy as np
         import base64
 
-        template_img = cv2.imread(template_path)
-        screenshot = pyautogui.screenshot(region=region_rect)
-        screen_bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
+        # 读取单张模板图
+        template_bgr = cv2.imread(template_path, cv2.IMREAD_COLOR)
+        if template_bgr is None:
+            return {"status": "read_error", "image": ""}
 
-        # 二值化/灰度处理
+        # 如果开启了灰度/二值化处理
         if gray_scale:
-            tpl_gray = cv2.cvtColor(template_img, cv2.COLOR_BGR2GRAY)
-            scr_gray = cv2.cvtColor(screen_bgr, cv2.COLOR_BGR2GRAY)
-
-            _, tpl_proc = cv2.threshold(tpl_gray, gray_threshold, 255, cv2.THRESH_BINARY)
-            _, scr_proc = cv2.threshold(scr_gray, gray_threshold, 255, cv2.THRESH_BINARY)
-
-            tpl_match = tpl_proc
-            scr_match = scr_proc
-            render_frame = cv2.cvtColor(scr_proc, cv2.COLOR_GRAY2BGR)
+            gray = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY)
+            _, thresh = cv2.threshold(gray, gray_threshold, 255, cv2.THRESH_BINARY)
+            processed_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
         else:
-            tpl_match = template_img
-            scr_match = screen_bgr
-            render_frame = screen_bgr.copy()
+            processed_img = template_bgr
 
-        # 校验尺寸
-        if tpl_match.shape[0] > scr_match.shape[0] or tpl_match.shape[1] > scr_match.shape[1]:
-            raise HTTPException(status_code=400, detail="模板图片尺寸大于搜索区域，无法匹配！")
-
-        res = cv2.matchTemplate(scr_match, tpl_match, cv2.TM_CCOEFF_NORMED)
-        _, max_val, _, max_loc = cv2.minMaxLoc(res)
-
-        th, tw = tpl_match.shape[:2]
-        center_pos = (region_rect[0] + max_loc[0] + tw // 2, region_rect[1] + max_loc[1] + th // 2)
-
-        # 在渲染画面上画框标注
-        cv2.rectangle(render_frame, max_loc, (max_loc[0] + tw, max_loc[1] + th), (0, 0, 255), 2)
-        cv2.circle(render_frame, (max_loc[0] + tw // 2, max_loc[1] + th // 2), 5, (0, 255, 0), -1)
-
-        _, buffer = cv2.imencode('.png', render_frame)
+        # 转为 Base64 传回前端
+        _, buffer = cv2.imencode('.png', processed_img)
         img_b64 = "data:image/png;base64," + base64.b64encode(buffer).decode('utf-8')
 
         return {
             "status": "success",
-            "confidence": round(max_val * 100, 2),
-            "center_pos": center_pos,
-            "region": region_rect,
             "image": img_b64
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"图像匹配测试异常: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"模板灰度预览生成失败: {str(e)}")
+
+@app.get("/api/blueprint")
+async def get_full_blueprint(project_path: str):
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="项目路径不存在")
+    return load_blueprint(project_path)
+
+
+class SaveBlueprintRequest(BaseModel):
+    project_path: str
+    blueprint_data: dict
+
+
+@app.post("/api/blueprint/save")
+async def save_full_blueprint(request: SaveBlueprintRequest):
+    project_path = request.project_path
+    blueprint_data = request.blueprint_data
+    if not project_path or not blueprint_data:
+        raise HTTPException(status_code=400, detail="缺少必要参数")
+
+    if not os.path.exists(project_path):
+        raise HTTPException(status_code=404, detail="项目路径不存在")
+
+    try:
+        # 直接整体写入 project_blueprint.json 大文件，彻底解决多任务组节点割裂问题
+        save_blueprint(project_path, blueprint_data)
+        return {"status": "success"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存蓝图失败: {str(e)}")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000)

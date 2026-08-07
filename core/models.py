@@ -11,30 +11,16 @@ class Jump:
     return_on_complete: bool = False
 
 @dataclass
-class Condition:
-    condition_type: str
-    params: Dict[str, Any] = field(default_factory=dict)
-    timeout: int = 3000
-    check_count: int = 1
-
-@dataclass
-class ExecutionCondition:
-    type: str = "always"
-    conditions: List[Condition] = field(default_factory=list)
-    logic: str = "and"
-
-@dataclass
 class Node:
     node_id: str                    # 唯一标识，自动生成
     node_name: str                  # 用户自定义名称
     node_type: str                  # 节点类型
-    params: Dict[str, Any] = field(default_factory=dict)
+    params: Dict[str, Any] = field(default_factory=dict) # 参数
     delay_before: int = 0           # 执行前等待（毫秒）
     loop_count: int = 1             # 循环次数（-1 无限）
     enabled: bool = True
-    execution_condition: Optional[ExecutionCondition] = None
-    on_success: Jump = field(default_factory=Jump)
-    on_failure: Jump = field(default_factory=Jump)
+    on_success: Optional[Jump] = None  # ⭐ 补上成功跳转字段
+    on_failure: Optional[Jump] = None  # ⭐ 补上失败跳转字段
     position: Optional[Dict[str, int]] = None
 
     @staticmethod

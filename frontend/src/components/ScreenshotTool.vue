@@ -1,76 +1,83 @@
 <template>
-    <div v-if="visible" class="screenshot-overlay" @keydown.stop="handleKeyDown" tabindex="0" ref="overlayRef">
-        <div class="main-layout">
-            <!-- 左侧：工作区 Canvas 画面 -->
-            <div class="canvas-wrapper" ref="containerRef">
-                <canvas ref="canvasRef"
-                        @mousedown="onMouseDown"
-                        @mousemove="onMouseMove"
-                        @mouseup="onMouseUp"></canvas>
-            </div>
-
-            <!-- 右侧：固定微调与放大预览面板 -->
-            <div class="sidebar-panel">
-                <div class="panel-header">
-                    <span v-if="mode === 'template'">📷 模板截图录入</span>
-                    <span v-else-if="mode === 'point'">📍 坐标点提取</span>
-                    <span v-else-if="mode === 'region'">📐 区域框选</span>
+    <teleport to="body">
+        <div v-if="visible"
+             class="screenshot-overlay"
+             @click.self="close"
+             @keydown.stop="handleKeyDown"
+             tabindex="0"
+             ref="overlayRef">
+            <div class="main-layout" @click.stop>
+                <!-- 左侧：工作区 Canvas 画面 -->
+                <div class="canvas-wrapper" ref="containerRef">
+                    <canvas ref="canvasRef"
+                            @mousedown="onMouseDown"
+                            @mousemove="onMouseMove"
+                            @mouseup="onMouseUp"></canvas>
                 </div>
 
-                <!-- 选点模式预览 -->
-                <div v-if="mode === 'point'" class="panel-section">
-                    <div class="section-title">标定点局域放大</div>
-                    <div class="preview-box">
-                        <canvas ref="pointCanvasRef" width="160" height="160"></canvas>
+                <!-- 右侧：固定微调与放大预览面板 -->
+                <div class="sidebar-panel">
+                    <div class="panel-header">
+                        <span v-if="mode === 'template'">📷 模板截图录入</span>
+                        <span v-else-if="mode === 'point'">📍 坐标点提取</span>
+                        <span v-else-if="mode === 'region'">📐 区域框选</span>
                     </div>
-                    <div class="data-group">
-                        <div class="data-item">
-                            <span class="label">工作区相对坐标:</span>
-                            <span class="value">{{ point ? `${point.x}, ${point.y}` : '未点击选点' }}</span>
-                        </div>
-                    </div>
-                    <div class="tips-box">
-                        <p>💡 点击左侧画板标定坐标点</p>
-                        <p>💡 **方向键 (↑↓←→)** 微调像素点位</p>
-                        <p>💡 **回车 (Enter)** 确认并填入</p>
-                    </div>
-                </div>
 
-                <!-- 选区 / 模板模式预览 -->
-                <div v-else class="panel-section">
-                    <div class="section-title">选区高精放大预览</div>
-                    <div class="preview-box">
-                        <canvas ref="regionCanvasRef" width="220" height="150"></canvas>
-                    </div>
-                    <div class="data-group">
-                        <div class="data-item">
-                            <span class="label">起点 (X, Y):</span>
-                            <span class="value">{{ selection ? `${selection.x}, ${selection.y}` : '0, 0' }}</span>
+                    <!-- 选点模式预览 -->
+                    <div v-if="mode === 'point'" class="panel-section">
+                        <div class="section-title">标定点局域放大</div>
+                        <div class="preview-box">
+                            <canvas ref="pointCanvasRef" width="160" height="160"></canvas>
                         </div>
-                        <div class="data-item">
-                            <span class="label">尺寸 (W × H):</span>
-                            <span class="value highlight">{{ selection ? `${selection.w} × ${selection.h}` : '0 × 0' }}</span>
+                        <div class="data-group">
+                            <div class="data-item">
+                                <span class="label">工作区相对坐标:</span>
+                                <span class="value">{{ point ? `${point.x}, ${point.y}` : '未点击选点' }}</span>
+                            </div>
+                        </div>
+                        <div class="tips-box">
+                            <p>💡 点击左侧画板标定坐标点</p>
+                            <p>💡 <b>方向键 (↑↓←→)</b> 微调像素点位</p>
+                            <p>💡 <b>回车 (Enter)</b> 确认并填入</p>
                         </div>
                     </div>
-                    <div class="tips-box">
-                        <p>💡 拖拽鼠标划定框选范围</p>
-                        <p>💡 **方向键 (↑↓←→)** 平移位置</p>
-                        <p>💡 **Shift + 方向键** 调整宽高</p>
-                        <p>💡 **回车 (Enter)** 确认并进入保存</p>
-                    </div>
-                </div>
 
-                <div class="panel-footer">
-                    <el-button type="success" style="width: 100%; margin-bottom: 8px;" @click="confirmSelection">
-                        确认选择 (Enter)
-                    </el-button>
-                    <el-button type="info" style="width: 100%; margin-left: 0;" @click="close">
-                        取消 (Esc)
-                    </el-button>
+                    <!-- 选区 / 模板模式预览 -->
+                    <div v-else class="panel-section">
+                        <div class="section-title">选区高精放大预览</div>
+                        <div class="preview-box">
+                            <canvas ref="regionCanvasRef" width="220" height="150"></canvas>
+                        </div>
+                        <div class="data-group">
+                            <div class="data-item">
+                                <span class="label">起点 (X, Y):</span>
+                                <span class="value">{{ selection ? `${selection.x}, ${selection.y}` : '0, 0' }}</span>
+                            </div>
+                            <div class="data-item">
+                                <span class="label">尺寸 (W × H):</span>
+                                <span class="value highlight">{{ selection ? `${selection.w} × ${selection.h}` : '0 × 0' }}</span>
+                            </div>
+                        </div>
+                        <div class="tips-box">
+                            <p>💡 拖拽鼠标划定框选范围</p>
+                            <p>💡 <b>方向键 (↑↓←→)</b> 平移位置</p>
+                            <p>💡 <b>Shift + 方向键</b> 调整宽高</p>
+                            <p>💡 <b>回车 (Enter)</b> 确认并进入保存</p>
+                        </div>
+                    </div>
+
+                    <div class="panel-footer">
+                        <el-button type="success" style="width: 100%; margin-bottom: 8px;" @click="confirmSelection">
+                            确认选择 (Enter)
+                        </el-button>
+                        <el-button type="info" style="width: 100%; margin-left: 0;" @click="close">
+                            取消 (Esc)
+                        </el-button>
+                    </div>
                 </div>
             </div>
         </div>
-    </div>
+    </teleport>
 </template>
 
 <script>
@@ -393,15 +400,19 @@
         left: 0;
         right: 0;
         bottom: 0;
-        z-index: 1000;
+        z-index: 2000;
         outline: none;
-        background: var(--el-bg-color-page);
+        background: rgba(15, 16, 26, 0.85);
+        display: flex;
+        justify-content: center;
+        align-items: center;
     }
 
     .main-layout {
         display: flex;
         width: 100vw;
         height: 100vh;
+        background: var(--el-bg-color-page);
     }
 
     .canvas-wrapper {

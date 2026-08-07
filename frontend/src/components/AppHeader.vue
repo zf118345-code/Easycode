@@ -26,14 +26,6 @@
             <el-menu-item index="run">运行</el-menu-item>
         </el-menu>
 
-        <!-- ⭐⭐⭐ 核心升级：视图切换模式 (列表模式 vs 流程图画布) -->
-        <div class="view-mode-switch">
-            <el-radio-group v-model="store.viewMode" size="small">
-                <el-radio-button label="list">📊 列表</el-radio-button>
-                <el-radio-button label="flow">🔀 画布</el-radio-button>
-            </el-radio-group>
-        </div>
-
         <div class="header-actions">
             <el-button type="primary" size="small" @click="runTask">▶ 运行</el-button>
         </div>
@@ -164,10 +156,6 @@
             height: 40px;
             line-height: 40px;
         }
-
-    .view-mode-switch {
-        margin-right: 8px;
-    }
 
     .header-actions {
         display: flex;

@@ -1,16 +1,16 @@
 # core/project_loader.py
 import os
 import json
-from core.models import Project, Task, Node, Jump
+from core.models import Project, Task, Node, Jump  # ⭐ 必须导入 Jump
 from core.utils import load_json
 
 
 def load_project(project_dir):
     """
-    强制优先读取 project_blueprint.json 或 project.json 大文件蓝图
+    修正版：绝对扁平化解析项目蓝图，支持同屏多任务组平铺读取
+    （纯连线驱动：废弃 jump_type，通过 target_node 和 target_task 统一路由）
     """
     try:
-        # 优先找蓝图大文件或标准 project.json
         for fname in ["project_blueprint.json", "project.json"]:
             blueprint_path = os.path.join(project_dir, fname)
             if os.path.exists(blueprint_path):
@@ -21,10 +21,8 @@ def load_project(project_dir):
                     variables=blueprint_data.get("variables", {}),
                 )
 
-                # 兼容处理：如果里面有 tasks 数组
                 tasks_data = blueprint_data.get("tasks", [])
                 if not tasks_data and "nodes" in blueprint_data:
-                    # 如果整个文件本身就是一个大 Task
                     tasks_data = [{
                         "task_id": "task_main",
                         "task_name": blueprint_data.get("project_name", "主任务组"),
@@ -33,23 +31,37 @@ def load_project(project_dir):
                         "nodes": blueprint_data.get("nodes", [])
                     }]
 
+                def parse_jump(jump_data):
+                    if not isinstance(jump_data, dict):
+                        return Jump(type="end")
+
+                    target_node = jump_data.get("target_node")
+                    target_task = jump_data.get("target_task") or jump_data.get("target")
+
+                    if target_node:
+                        return Jump(type="node", target_node=target_node, target=target_task)
+                    else:
+                        return Jump(type="end")
+
                 for task_data in tasks_data:
                     nodes = []
-                    for node_data in task_data.get("nodes", []):
+                    raw_nodes = task_data.get("nodes", [])
+                    for node_data in raw_nodes:
                         try:
-                            on_success = node_data.get("on_success", {})
-                            on_failure = node_data.get("on_failure", {})
+                            params_data = node_data.get("params", {})
+                            on_success = params_data.get("on_success", {})
+                            on_failure = params_data.get("on_failure", {})
 
                             node = Node(
                                 node_id=node_data["node_id"],
                                 node_name=node_data.get("node_name", node_data["node_id"]),
                                 node_type=node_data["node_type"],
-                                params=node_data.get("params", {}),
+                                params=params_data,
                                 delay_before=node_data.get("delay_before", 0),
                                 loop_count=node_data.get("loop_count", 1),
                                 enabled=node_data.get("enabled", True),
-                                on_success=Jump(**on_success) if isinstance(on_success, dict) else Jump(),
-                                on_failure=Jump(**on_failure) if isinstance(on_failure, dict) else Jump(),
+                                on_success=parse_jump(on_success),
+                                on_failure=parse_jump(on_failure),
                                 position=node_data.get("position")
                             )
                             nodes.append(node)
@@ -67,7 +79,6 @@ def load_project(project_dir):
                     project.tasks[task.task_id] = task
                 return project
 
-        # 兜底空项目
         return Project(project_name=os.path.basename(project_dir), variables={})
 
     except Exception as e:

@@ -32,8 +32,10 @@ export const useMainStore = defineStore('main', {
             targetContentWidth: 0,
             targetContentHeight: 0
         },
+        minimapExpanded: false, // 全景导航默认收起
+        logExpanded: false ,     // 运行日志默认收起
         // ⭐ 新增：视图模式状态（'list' 为列表模式，'flow' 为可视化流程图画布模式）
-        viewMode: 'list'
+        viewMode: 'flow'
     }),
 
     actions: {
@@ -46,7 +48,12 @@ export const useMainStore = defineStore('main', {
                 logger.error('Store', '加载参数定义失败', err)
             }
         },
-
+        toggleMinimap() {
+            this.minimapExpanded = !this.minimapExpanded;
+        },
+        toggleLogPanel() {
+            this.logExpanded = !this.logExpanded;
+        },
         // ====== 上下文管理 ======
         async loadContext() {
             if (!this.currentProjectPath) return
@@ -137,14 +144,15 @@ export const useMainStore = defineStore('main', {
                 this.tasks = res.data.tasks || []
                 this.taskOrder = res.data.order || []
 
-                // ⭐ 新增：直接拉取整个蓝图大文件数据，挂载到 currentTaskData 供画布全局渲染
-                const blueprintRes = await axios.get(`/api/tasks/${this.tasks[0]?.task_id || 'main'}`, {
+                // ⭐ 核心：直接请求整份项目蓝图大文件！把所有任务组（包括“你好”）一把抓全！
+                const blueprintRes = await axios.get('/api/blueprint', {
                     params: { project_path: this.currentProjectPath }
                 }).catch(() => null)
 
                 if (blueprintRes && blueprintRes.data) {
-                    // 如果后端返回的是整个 blueprint 或单任务，统一兼容
-                    this.currentTaskData = blueprintRes.data
+                    this.currentTaskData = blueprintRes.data // 完美包含所有 tasks 数组
+                } else {
+                    this.currentTaskData = { tasks: [] }
                 }
 
                 if (this.tasks.length) {
@@ -161,18 +169,57 @@ export const useMainStore = defineStore('main', {
         async loadTaskData(taskId) {
             if (!this.currentProjectPath || !taskId) return
             try {
-                const res = await axios.get(`/api/tasks/${taskId}`, {
-                    params: { project_path: this.currentProjectPath }
-                })
                 this.currentTaskId = taskId
-                // 如果是单大文件蓝图，currentTaskData 应该保存包含所有 tasks 的完整结构
-                // 这里我们同时兼容单任务和多任务蓝图
-                this.currentTaskData = res.data
-                this.nodes = JSON.parse(JSON.stringify(res.data.nodes || []))
+                // 确保 currentTaskData 的 tasks 已经存在
+                if (!this.currentTaskData || !this.currentTaskData.tasks) {
+                    const res = await axios.get(`/api/tasks/${taskId}`, {
+                        params: { project_path: this.currentProjectPath }
+                    })
+                    this.currentTaskData = {
+                        tasks: [res.data]
+                    }
+                }
+
+                // 寻找当前激活任务的 nodes 供旧面板兼容使用
+                const currentGroup = this.currentTaskData.tasks.find(t => t.task_id === taskId) || this.currentTaskData.tasks[0]
+                this.nodes = JSON.parse(JSON.stringify(currentGroup?.nodes || []))
+
                 this.selectedNodeId = null
                 logger.info('Store', `✅ 成功加载任务数据 | 节点数: ${this.nodes.length}`)
             } catch (err) {
                 logger.error('Store', '加载任务数据失败', err)
+            }
+        },
+
+        async saveCurrentTask(noReload = false) {
+            if (!this.currentProjectPath || !this.currentTaskId || !this.currentTaskData) {
+                return
+            }
+            try {
+                // ⭐ 核心：保存当前大蓝图底下的所有 tasks，绝不把 tasks 往子任务里嵌套
+                const tasks = this.currentTaskData.tasks || []
+                tasks.forEach(t => {
+                    delete t.tasks // 严防死守：清除任何子嵌套
+                })
+
+                // 逐个保存或保存整体大蓝图（这里以保存当前激活任务为例）
+                const currentGroup = tasks.find(t => t.task_id === this.currentTaskId) || tasks[0]
+                if (currentGroup) {
+                    currentGroup.nodes = this.nodes
+                    await axios.put(`/api/tasks/${currentGroup.task_id}`, {
+                        project_path: this.currentProjectPath,
+                        task_data: currentGroup
+                    })
+                }
+
+                if (!noReload) {
+                    await this.loadTasks()
+                    await this.loadTaskData(this.currentTaskId)
+                }
+                return true
+            } catch (err) {
+                logger.error('Store', '保存任务失败', err)
+                throw err
             }
         },
 
@@ -192,26 +239,6 @@ export const useMainStore = defineStore('main', {
             }
         },
 
-        async saveCurrentTask(noReload = false) {
-            if (!this.currentProjectPath || !this.currentTaskId || !this.currentTaskData) {
-                return
-            }
-            try {
-                this.currentTaskData.nodes = this.nodes
-                await axios.put(`/api/tasks/${this.currentTaskId}`, {
-                    project_path: this.currentProjectPath,
-                    task_data: this.currentTaskData
-                })
-                if (!noReload) {
-                    await this.loadTasks()
-                    await this.loadTaskData(this.currentTaskId)
-                }
-                return true
-            } catch (err) {
-                logger.error('Store', '保存任务失败', err)
-                throw err
-            }
-        },
 
         async saveTaskOrder(order) {
             if (!this.currentProjectPath) return
@@ -267,24 +294,19 @@ export const useMainStore = defineStore('main', {
             }
         },
 
-        async runTask(taskId, startNodeId = null) {
-            if (!this.currentProjectPath) {
-                throw new Error('请先打开项目')
-            }
+        // 在 actions 中找到 runTask 方法
+        async runTask(taskId, startNodeId) {
             try {
-                const res = await axios.post('/api/run', {
+                const response = await axios.post('/api/run', {
                     project_path: this.currentProjectPath,
                     task_id: taskId,
-                    start_node_id: startNodeId
-                })
-
-                if (res.data.execution_id) {
-                    this.pollExecutionLogs(res.data.execution_id)
-                }
-                return res.data
+                    start_node_id: startNodeId,
+                    blueprint_data: this.currentTaskData  // ⭐ 核心修复：把当前画布内存数据带给后端
+                });
+                return response.data;
             } catch (err) {
-                logger.error('Store', '执行任务请求失败', err)
-                throw err
+                console.error('运行任务请求失败', err);
+                throw err;
             }
         },
 

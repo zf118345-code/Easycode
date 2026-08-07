@@ -9,8 +9,8 @@
             <!-- 1. 工作模式选择 -->
             <el-form-item label="工作模式">
                 <el-radio-group v-model="localContext.workMode">
-                    <el-radio label="window">指定窗口/模拟器</el-radio>
-                    <el-radio label="desktop">全桌面模式</el-radio>
+                    <el-radio value="window">指定窗口/模拟器</el-radio>
+                    <el-radio value="desktop">全桌面模式</el-radio>
                 </el-radio-group>
             </el-form-item>
 

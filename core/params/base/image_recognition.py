@@ -12,16 +12,37 @@ PARAM_DEFINITIONS = {
             "threshold": {
                 "type": "int",
                 "default": 85,
-                "label": "匹配成功阈值 (%)",
+                "label": "匹配相似度",
                 "min": 1,
                 "max": 100
             },
             "timeout": {
                 "type": "int",
                 "default": 3000,
-                "label": "超时时间 (ms)",
+                "label": "匹配超时时长",
                 "min": 100,
                 "step": 100
+            },
+
+            "region_type": {
+                "type": "select",
+                "options": [
+                    {"value": "fullwindow", "label": "整个工作面板"},
+                    {"value": "recorded", "label": "录制时的坐标区域"},
+                    {"value": "custom", "label": "自定义区域"}
+                ],
+                "default": "fullwindow",
+                "label": "匹配区域"
+            },
+            "region_value": {
+                "type": "list_int4_picker",
+                "default": [0, 0, 0, 0],
+                "label": "匹配区域坐标",
+                "visible_if": {
+                    "field": "region_type",
+                    "operator": "in",
+                    "value": ["recorded", "custom"]
+                }
             },
             "gray_scale": {
                 "type": "bool",
@@ -39,26 +60,6 @@ PARAM_DEFINITIONS = {
                     "field": "gray_scale",
                     "operator": "eq",
                     "value": True
-                }
-            },
-            "region_type": {
-                "type": "select",
-                "options": [
-                    {"value": "fullwindow", "label": "整个工作区"},
-                    {"value": "recorded", "label": "录入区域"},
-                    {"value": "custom", "label": "自定义区域"}
-                ],
-                "default": "fullwindow",
-                "label": "搜索区域模式"
-            },
-            "region_value": {
-                "type": "list_int4_picker",
-                "default": [0, 0, 0, 0],
-                "label": "区域坐标 [X, Y, W, H]",
-                "visible_if": {
-                    "field": "region_type",
-                    "operator": "in",
-                    "value": ["recorded", "custom"]
                 }
             },
             "on_success_action": {
