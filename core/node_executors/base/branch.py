@@ -1,114 +1,113 @@
 # core/node_executors/base/branch.py
-import os
-import pyautogui
+import time
+import copy
 from core.registry import NodeExecutorRegistry
 from core.node_executors.base_class import BaseNodeExecutor
-from core.utils import load_image, match_template_cv
-
-
-def evaluate_condition_with_score(cond, context):
-    """
-    评估条件并返回得分结构:
-    (is_passed: bool, score: float)
-    图片匹配返回实际置信度 (0.0 ~ 1.0)
-    变量比较成立返回 1.0，不成立返回 0.0
-    """
-    cond_type = cond.get("condition_type")
-    params = cond.get("params", {})
-
-    if cond_type == "image_exists":
-        template_name = params.get("image_source", "")
-        if not template_name:
-            return False, 0.0
-
-        templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
-        template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
-
-        if not os.path.exists(template_path):
-            return False, 0.0
-
-        try:
-            template = load_image(template_path)
-            screenshot = pyautogui.screenshot(region=context.get_window_rect())
-            threshold = params.get("threshold", 85) / 100.0
-            max_val, _ = match_template_cv(screenshot, template, gray_scale=params.get("gray_scale", True))
-
-            is_passed = max_val >= threshold
-            return is_passed, max_val
-        except Exception as e:
-            context.log(f"⚠️ [Branch] 图像评估异常: {e}", "warning")
-            return False, 0.0
-
-    elif cond_type == "var_compare":
-        var_name = params.get("var_name", "")
-        operator = params.get("operator", "eq")
-        target_val = params.get("target_value")
-
-        current_val = context.variables.get(var_name)
-        if current_val is None:
-            return False, 0.0
-
-        try:
-            c_num, t_num = float(current_val), float(target_val)
-            if operator == "eq": is_passed = (c_num == t_num)
-            elif operator == "ne": is_passed = (c_num != t_num)
-            elif operator == "gt": is_passed = (c_num > t_num)
-            elif operator == "gte": is_passed = (c_num >= t_num)
-            elif operator == "lt": is_passed = (c_num < t_num)
-            elif operator == "lte": is_passed = (c_num <= t_num)
-            else: is_passed = False
-        except (ValueError, TypeError):
-            c_str, t_str = str(current_val), str(target_val)
-            if operator == "eq": is_passed = (c_str == t_str)
-            elif operator == "ne": is_passed = (c_str != t_str)
-            else: is_passed = False
-
-        return is_passed, (1.0 if is_passed else 0.0)
-
-    return False, 0.0
+from core.conditions.evaluator import evaluate_condition
 
 
 @NodeExecutorRegistry.register("branch")
 class BranchNodeExecutor(BaseNodeExecutor):
+    def _get_cond_desc(self, condition):
+        """格式化 5 大类判定条件的日志描述"""
+        cond_type = condition.get("condition_type") or condition.get("type", "variable_check")
+        cond_params = condition.get("params", condition)
+
+        if cond_type == "image_exists":
+            mode_str = "不存在" if cond_params.get("exist_mode") == "not_exists" else "存在"
+            return f"图片{mode_str} [{cond_params.get('image_source', '未选图片')}]"
+        elif cond_type == "text_contains":
+            mode_str = cond_params.get("exist_mode", "contains")
+            return f"文本({mode_str}) [{cond_params.get('target_text', '')}]"
+        elif cond_type == "variable_check":
+            var_name = cond_params.get('variable_name') or cond_params.get('var_name', '')
+            val = cond_params.get('compare_value') if cond_params.get('compare_value') is not None else cond_params.get('target_value', '')
+            return f"变量 [{var_name}] {cond_params.get('operator', 'eq')} [{val}]"
+        elif cond_type == "window_state":
+            return f"窗口 [{cond_params.get('window_title', '')}] ({cond_params.get('state_check', 'exists')})"
+        elif cond_type == "file_exists":
+            return f"文件检查 [{cond_params.get('file_path', '')}]"
+        return f"条件 [{cond_type}]"
+
     def execute(self, node, context):
         params = node.params
         candidates = params.get("candidates", [])
-        best_match_mode = params.get("best_match_mode", True)
+        match_strategy = params.get("match_strategy", "first")
+        timeout_ms = float(params.get("timeout", 3000))
+        timeout_sec = timeout_ms / 1000.0
 
         if not candidates:
-            context.log("❌ branch 节点未配置任何候选条件分支", "error")
+            context.log("❌ [Branch 分流] 未配置任何候选分支条件", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="no candidates")
 
-        context.log(f"🔀 [Branch 分流] 评估模式: {'最高置信度竞态' if best_match_mode else '顺序优先'} | 分支数: {len(candidates)}")
+        strategy_label = "顺序优先" if match_strategy == "first" else "择优优先"
+        context.log(f"🔀 [Branch 分流] 开始评估分支列表 | 策略: {strategy_label} | 候选数: {len(candidates)} | 超时: {int(timeout_ms)}ms")
 
-        best_cand = None
-        highest_score = -1.0
+        start_time = time.time()
+        attempt = 0
 
-        for idx, cand in enumerate(candidates):
-            condition = cand.get("condition", {})
-            jump_target = cand.get("on_success", {})
+        while True:
+            attempt += 1
+            passed_candidates = []
 
-            is_passed, score = evaluate_condition_with_score(condition, context)
-            cond_desc = f"图片 [{condition.get('params', {}).get('image_source')}]" if condition.get("condition_type") == "image_exists" else f"变量 [{condition.get('params', {}).get('var_name')}]"
+            for idx, cand in enumerate(candidates):
+                condition = cand.get("condition", {})
+                jump_target = cand.get("on_success", {})
 
-            if is_passed:
-                context.log(f"  ├─ 分支 {idx + 1} ({cond_desc}): 匹配通过 ✅ | 得分/置信度: {score:.3f}")
+                eval_cond = copy.deepcopy(condition)
+                if "params" in eval_cond and isinstance(eval_cond["params"], dict):
+                    eval_cond["params"]["timeout"] = 0
+                else:
+                    eval_cond["timeout"] = 0
 
-                # 顺序优先模式：直接命中并退出
-                if not best_match_mode:
-                    context.log(f"🎯 [Branch 顺序命中] 走向分支 {idx + 1} 的成功跳转")
-                    return self.build_jump_result(True, jump_target)
+                # ⚡ 测算单项条件匹配耗时与得分
+                cond_start_time = time.time()
+                context.last_match_score = 0.0  # 重置得分基准
 
-                # 竞态模式：记录得分最高的分支
-                if score > highest_score:
-                    highest_score = score
-                    best_cand = cand
-            else:
-                context.log(f"  ├─ 分支 {idx + 1} ({cond_desc}): 未通过 ❌ | 最高得分: {score:.3f}")
+                is_passed = evaluate_condition(eval_cond, context)
+                cond_elapsed_ms = (time.time() - cond_start_time) * 1000.0
 
-        if best_match_mode and best_cand:
-            context.log(f"🏆 [Branch 竞态获胜] 最高得分分支 (分数: {highest_score:.3f})，走向其成功跳转")
-            return self.build_jump_result(True, best_cand.get("on_success", {}))
+                # 获取条件计算出的真实得分（图像相似度 / 逻辑布尔值 1.0 或 0.0）
+                score = float(getattr(context, "last_match_score", 1.0 if is_passed else 0.0))
+                if not is_passed and score == 1.0:
+                    score = 0.0
 
-        context.log("⏰ [Branch 兜底] 所有分支条件均未成立，触发通用失败跳转")
+                desc = self._get_cond_desc(condition)
+
+                if is_passed:
+                    context.log(f"  ├─ 分支 {idx + 1} ({desc}): 匹配成功 ✅ | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms")
+                    passed_candidates.append({
+                        "index": idx,
+                        "desc": desc,
+                        "jump_target": jump_target,
+                        "score": score
+                    })
+
+                    # 模式一：顺序优先 (命中即跳)
+                    if match_strategy == "first":
+                        context.log(f"🎯 [Branch 命中] [顺序优先] 走向分支 {idx + 1} (branch_{idx}) 连线目标 (第 {attempt} 次轮询)")
+                        return self.build_jump_result(True, jump_target)
+                else:
+                    context.log(f"  ├─ 分支 {idx + 1} ({desc}): 未匹配 ❌ | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms")
+
+            # 模式二：择优优先 (对比全部成立项后取最高分)
+            if match_strategy == "best" and passed_candidates:
+                passed_candidates.sort(key=lambda x: x["score"], reverse=True)
+                best_match = passed_candidates[0]
+                best_idx = best_match["index"]
+                best_desc = best_match["desc"]
+                best_score = best_match["score"]
+
+                context.log(f"  ├─ 本轮评估共 {len(passed_candidates)} 项条件成立，最高得分项: 分支 {best_idx + 1} (得分: {best_score:.2f})")
+                context.log(f"🎯 [Branch 命中] [择优优先] 走向最高得分分支 {best_idx + 1} ({best_desc}) 连线目标")
+                return self.build_jump_result(True, best_match["jump_target"])
+
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_sec:
+                break
+
+            time.sleep(0.1)  # 100ms 高速轮询间隔
+
+        total_elapsed_ms = (time.time() - start_time) * 1000.0
+        context.log(f"⏰ [Branch 兜底] 轮询 {int(total_elapsed_ms)}ms 后所有候选条件均未成立 ──> 走向 Else 兜底连线")
         return self.build_jump_result(False, params.get("on_failure", {}))

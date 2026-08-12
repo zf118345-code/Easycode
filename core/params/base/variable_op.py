@@ -1,37 +1,75 @@
 # core/params/base/variable_op.py
+from typing import Dict, Any
+from core.variables import VariableTypeRegistry
 
-PARAM_DEFINITIONS = {
-    "variable_op": {
-        "label": "变量操作",
-        "params": {
-            "var_name": {
-                "type": "str",
-                "default": "",
-                "label": "目标变量名 (如: run_count)"
-            },
-            "op_type": {
+
+def build_variable_op_params() -> Dict[str, Any]:
+    """根据注册的数据类型，动态生成变量操作节点的参数定义"""
+    all_types = VariableTypeRegistry.get_all_types()
+
+    type_options = []
+    dynamic_sub_params: Dict[str, Any] = {}
+
+    for type_id, type_cls in all_types.items():
+        type_options.append({"value": type_id, "label": type_cls.label})
+        schema = type_cls.get_schema()
+        dynamic_sub_params.update(schema)
+
+    params_def: Dict[str, Any] = {
+        "target_var": {
+            "type": "variable",  # ⚡ 强变量选择：必须选择已有或侧边栏创建的变量名
+            "label": "目标变量",
+            "default": ""
+        },
+        "var_type": {
+            "type": "select",
+            "label": "变量类型",
+            "options": type_options,
+            "default": "number"
+        },
+        "op_action": {
+            "type": "select",
+            "label": "操作方式",
+            "options": [
+                {"value": "set", "label": "赋值 (=)"},
+                {"value": "add", "label": "加 (+)"},
+                {"value": "sub", "label": "减 (-)"},
+                {"value": "mul", "label": "乘 (*)"},
+                {"value": "div", "label": "除 (/)"},
+                {"value": "append", "label": "文本/列表追加 (Append)"},
+                {"value": "clear", "label": "重置/清空 (Clear)"}  # ⚡ 扩展 Clear 重置清空能力
+            ],
+            "default": "set"
+        }
+    }
+
+    params_def.update(dynamic_sub_params)
+
+    on_success_config: Dict[str, Any] = {
+        "type": "dict",
+        "label": "成功跳转",
+        "sub": {
+            "jump_type": {
                 "type": "select",
                 "options": [
-                    {"value": "set", "label": "赋值 (=)"},
-                    {"value": "add", "label": "加法 (+)"},
-                    {"value": "sub", "label": "减法 (-)"},
-                    {"value": "mul", "label": "乘法 (*)"},
-                    {"value": "div", "label": "除法 (/)"},
-                    {"value": "clear", "label": "清空变量"}
+                    {"value": "next", "label": "下一个节点"},
+                    {"value": "node", "label": "跳转节点"},
+                    {"value": "end", "label": "结束流程"}
                 ],
-                "default": "set",
-                "label": "操作类型"
-            },
-            "value": {
-                "type": "str",
-                "default": "",
-                "label": "操作数值/表达式",
-                "visible_if": {
-                    "field": "op_type",
-                    "operator": "ne",
-                    "value": "clear"
-                }
+                "default": "next",
+                "label": "跳转类型"
             }
         }
+    }
+
+    params_def["on_success"] = on_success_config
+
+    return params_def
+
+
+PARAM_DEFINITIONS: Dict[str, Any] = {
+    "variable_op": {
+        "label": "变量操作",
+        "params": build_variable_op_params()
     }
 }

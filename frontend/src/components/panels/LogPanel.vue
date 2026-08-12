@@ -1,7 +1,8 @@
-﻿<template>
+﻿<!-- frontend/src/components/panels/LogPanel.vue -->
+<template>
     <div class="log-panel">
         <div class="log-toolbar">
-            <span class="log-count">共 {{ logs.length }} 条日志</span>
+            <span class="log-count">共 {{ logs.length }} 条日志 ({{ runStatus }})</span>
             <el-button type="info" link size="small" @click="clearLogs">🗑️ 清空日志</el-button>
         </div>
         <div class="log-container" ref="logContainerRef">
@@ -9,18 +10,18 @@
                  :key="idx"
                  class="log-line"
                  :class="getLogLevelClass(item)">
-                <span class="log-time">[{{ getItemTime(item) }}]</span>
-                <span class="log-text">{{ getItemText(item) }}</span>
+                <span class="log-time">[{{ item.time || 'INFO' }}]</span>
+                <span class="log-text">{{ item.message }}</span>
 
-                <!-- ⭐ 调试截图悬浮预览 -->
-                <template v-if="getItemImage(item)">
+                <!-- 调试截图悬浮预览 -->
+                <template v-if="item.image">
                     <el-popover placement="left" :width="350" trigger="hover" append-to-body>
                         <template #reference>
                             <el-tag size="small" type="success" class="img-badge">🖼️ 查看调试截图</el-tag>
                         </template>
                         <div class="img-preview-card">
                             <div class="preview-title">🎯 实际框选识别区域图像</div>
-                            <img :src="getItemImage(item)" style="width: 100%; border-radius: 4px; border: 1px solid #67C23A;" />
+                            <img :src="item.image" style="width: 100%; border-radius: 4px; border: 1px solid #67C23A;" />
                         </div>
                     </el-popover>
                 </template>
@@ -32,67 +33,80 @@
     </div>
 </template>
 
-<script>
-    import { computed, ref, watch, nextTick } from 'vue'
+<script setup>
+    import { ref, watch, nextTick, onUnmounted } from 'vue'
     import { useMainStore } from '@/stores'
 
-    export default {
-        name: 'LogPanel',
-        setup() {
-            const store = useMainStore()
-            const logContainerRef = ref(null)
+    const store = useMainStore()
+    const logContainerRef = ref(null)
+    const logs = ref([])
+    const runStatus = ref('就绪')
 
-            const logs = computed(() => store.executionLogs || [])
+    let eventSource = null
 
-            watch(
-                () => logs.value.length,
-                () => {
-                    nextTick(() => {
-                        if (logContainerRef.value) {
-                            logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight
-                        }
-                    })
+    // 监听 store 中当前活跃的 executionId 并自动开启 SSE 订阅
+    watch(() => store.currentExecutionId, (execId) => {
+        if (eventSource) {
+            eventSource.close()
+            eventSource = null
+        }
+
+        if (!execId) return
+
+        logs.value = []
+        eventSource = new EventSource(`/api/execution/${execId}/stream`)
+
+        eventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data)
+                if (data.status) {
+                    runStatus.value = data.status.message || data.status.status
                 }
-            )
-
-            const getItemTime = (item) => {
-                if (typeof item === 'object' && item !== null) return item.time || 'INFO'
-                return 'INFO'
-            }
-
-            const getItemText = (item) => {
-                if (typeof item === 'object' && item !== null) return item.message || JSON.stringify(item)
-                return String(item)
-            }
-
-            const getItemImage = (item) => {
-                if (typeof item === 'object' && item !== null) return item.image || null
-                return null
-            }
-
-            const getLogLevelClass = (item) => {
-                const msg = getItemText(item)
-                if (msg.includes('💥') || msg.includes('❌') || msg.includes('ERROR')) return 'log-error'
-                if (msg.includes('⚠️') || msg.includes('WARNING')) return 'log-warn'
-                if (msg.includes('🎯') || msg.includes('✅')) return 'log-success'
-                return 'log-info'
-            }
-
-            const clearLogs = () => {
-                store.executionLogs = []
-            }
-
-            return {
-                logs,
-                logContainerRef,
-                getItemTime,
-                getItemText,
-                getItemImage,
-                getLogLevelClass,
-                clearLogs
+                if (data.logs && data.logs.length > 0) {
+                    logs.value.push(...data.logs)
+                }
+                if (data.status && ['success', 'error'].includes(data.status.status)) {
+                    eventSource.close()
+                    eventSource = null
+                }
+            } catch (e) {
+                console.error('解析 SSE 数据异常', e)
             }
         }
+
+        eventSource.onerror = () => {
+            if (eventSource) {
+                eventSource.close()
+                eventSource = null
+            }
+        }
+    }, { immediate: true })
+
+    watch(() => logs.value.length, () => {
+        nextTick(() => {
+            if (logContainerRef.value) {
+                logContainerRef.value.scrollTop = logContainerRef.value.scrollHeight
+            }
+        })
+    })
+
+    const getLogLevelClass = (item) => {
+        const msg = item.message || ''
+        if (msg.includes('💥') || msg.includes('❌') || msg.includes('ERROR')) return 'log-error'
+        if (msg.includes('⚠️') || msg.includes('WARNING')) return 'log-warn'
+        if (msg.includes('🎯') || msg.includes('✅')) return 'log-success'
+        return 'log-info'
     }
+
+    const clearLogs = () => {
+        logs.value = []
+    }
+
+    onUnmounted(() => {
+        if (eventSource) {
+            eventSource.close()
+        }
+    })
 </script>
 
 <style scoped>

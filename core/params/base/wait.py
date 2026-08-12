@@ -9,7 +9,8 @@ PARAM_DEFINITIONS = {
                 "default": 1.0,
                 "min": 0,
                 "max": 60,
-                "label": "等待秒数"
+                "label": "等待时长",
+                "suffix": "秒"  # ⚡ 增加单位后缀
             },
             "on_success": {
                 "type": "dict",

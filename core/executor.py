@@ -7,9 +7,11 @@ import win32gui
 import win32con
 import subprocess
 import re
+from typing import Any, Optional
 from datetime import datetime
 from core.registry import NodeExecutorRegistry
 from core.models import Task, Node, Jump
+from core.utils import resolve_template_string
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +24,13 @@ class GraphExecutor:
         self.current_task = None
         self.current_task_id = None
         self.current_node_index = 0
+        self.current_node = None
+        self.current_task_name = "unknown"
         self._stop = False
         self.text_log_enabled = text_log_enabled
         self.image_log_enabled = image_log_enabled
-        self.logs = []  # 核心日志容器，供 API 透传前端
+        self.logs = []
 
-        # 窗口与模拟器全局上下文
         self.is_emulator = False
         self.device_id = None
         self.android_width = None
@@ -39,39 +42,39 @@ class GraphExecutor:
         if initial_context:
             self._apply_context(initial_context)
 
-    # ⭐⭐⭐ 核心统一日志管线：接管所有 log，同时存入数组与终端输出
+    def parse_expr(self, text: Any) -> Any:
+        return resolve_template_string(text, self)
+
     def log(self, msg, level="info", image=None):
+        resolved_msg = resolve_template_string(str(msg), self)
         now_str = datetime.now().strftime("%H:%M:%S")
 
-        # 1. 存入内存数组（供前端轮询）
         log_item = {
             "time": now_str,
-            "message": str(msg),
+            "message": resolved_msg,
             "level": level,
             "image": image
         }
         self.logs.append(log_item)
 
-        # 2. 打印终端控制台
         prefix = f"[{level.upper()}]"
-        print(f"{now_str} - {prefix} - {msg}")
+        print(f"{now_str} - {prefix} - {resolved_msg}")
 
-        # 3. 关联原生 logger
         if level == "error":
-            logger.error(msg)
+            logger.error(resolved_msg)
         elif level == "warning":
-            logger.warning(msg)
+            logger.warning(resolved_msg)
         else:
-            logger.info(msg)
+            logger.info(resolved_msg)
 
     def run(self, entry_task_id="main_task", start_node_id=None):
-        self.log(f"🚀 [Executor] 启动执行引擎 | 目标任务: {entry_task_id} | 起始节点: {start_node_id or '第一个节点'}")
+        self.log(f"🚀 [Executor] 启动纯图执行引擎 | 目标任务: {entry_task_id} | 起始节点: {start_node_id or '第一个节点'}")
         try:
             self._execute_task(entry_task_id, start_node_id)
         except StopIteration:
-            self.log("🏁 [Executor] 收到 StopIteration 指令，流程顺利结束")
+            self.log("🏁 [Executor] 当前分支连线到达终点，流程顺利结束")
         except Exception as e:
-            self.log(f"💥 [Executor] 发生未处理异常: {e}", "error")
+            self.log(f"💥 [Executor] 发生未处理系统级异常: {e}", "error")
             raise
 
     def _execute_task(self, task_id, start_node_id=None):
@@ -82,6 +85,7 @@ class GraphExecutor:
 
         self.current_task = task
         self.current_task_id = task_id
+        self.current_task_name = task.task_name or task_id
 
         if start_node_id:
             idx = next((i for i, n in enumerate(task.nodes) if n.node_id == start_node_id), 0)
@@ -90,34 +94,40 @@ class GraphExecutor:
             self.current_node_index = 0
 
         node_count = len(task.nodes)
-        self.log(
-            f"📋 [Task] 进入任务 [{task.task_name}] | 总节点数: {node_count} | 从索引 [{self.current_node_index}] 开始")
+        self.log(f"📋 [Task] 进入任务 [{task.task_name}] | 总节点数: {node_count}")
 
         while self.current_node_index < node_count and not self._stop:
             node = task.nodes[self.current_node_index]
             if node.enabled:
-                result = self._execute_node(node)
+                result = self._execute_node_safely(node)
 
                 jump = None
                 is_success = result.get("success", True)
 
-                # ⭐ 核心修复：如果失败且配置了失败分支，优先走失败路由
-                if not is_success and node.on_failure:
+                # ⚡ 纯图连线路由规则：直接匹配 Jump Payload，绝不依赖数组索引线性平移
+                if "jump" in result and result["jump"]:
+                    jump = Jump.from_dict(result["jump"])
+                elif not is_success and node.on_failure:
                     jump = node.on_failure
-                # 如果成功且配置了成功分支，走成功路由
                 elif is_success and node.on_success:
                     jump = node.on_success
-                # 兼容兜底：如果上面没匹配到，但 result 里自带了显式 jump
-                elif "jump" in result:
-                    jump = self._dict_to_jump(result["jump"])
 
-                if jump:
-                    self._handle_jump(jump)
-                else:
-                    self.current_node_index += 1
+                # 执行精准跳转或自然终止
+                self._handle_jump(jump)
             else:
                 self.log(f"⏸️ [Node] 节点 [{node.node_name}] (ID: {node.node_id}) 已禁用，自动跳过", "warning")
                 self.current_node_index += 1
+
+    def _execute_node_safely(self, node):
+        try:
+            return self._execute_node(node)
+        except Exception as err:
+            self.log(f"💥 [Sandbox 异常捕获] 节点 [{node.node_name}] 执行崩溃: {str(err)}", level="error")
+            return {
+                "success": False,
+                "error": str(err),
+                "jump": node.on_failure
+            }
 
     def _execute_node(self, node):
         executor_class = NodeExecutorRegistry.get(node.node_type)
@@ -137,57 +147,51 @@ class GraphExecutor:
         self.current_node = node
         self.current_task_name = self.current_task.task_name if self.current_task else "unknown"
 
-        self.log(f"▶️ [Node 执行] 第 {self.current_node_index + 1} 个 | [{node.node_name}] ({node.node_type})")
+        self.log(f"▶️ [Node 执行] [{node.node_name}] ({node.node_type})")
         start_time = time.time()
 
         for i in range(int(loop_count)):
-            result = executor.execute(node, self)
+            try:
+                result = executor.execute(node, self)
+            except Exception as e:
+                result = {"success": False, "error": str(e)}
+
             if result.get("success") and node.loop_count != -1:
                 break
             if not result.get("success"):
                 break
 
         elapsed = (time.time() - start_time) * 1000
-        status_str = "✅ 成功" if result.get("success") else "❌ 失败"
+        status_str = "✅ 成功" if result and result.get("success") else "❌ 失败"
         self.log(f"⏹️ [Node 完成] {status_str} | 耗时: {elapsed:.2f}ms | 结果: {result}")
 
         return result or {"success": False}
 
-    def _handle_jump(self, jump):
-        self.log(f"🔀 [Jump 路由] 类型: {jump.type} | 目标任务: {jump.target} | 目标节点: {jump.target_node}")
-
-        if jump.type == "next" or not jump.type:
-            self.current_node_index += 1
-
-        elif jump.type == "node":
-            target_node = next((n for n in self.current_task.nodes if n.node_id == jump.target_node), None)
-            if target_node:
-                self.current_node_index = self.current_task.nodes.index(target_node)
-            else:
-                self.log(f"❌ 未在当前任务中找到目标节点: {jump.target_node}，默认推进到下一节点", "error")
-                self.current_node_index += 1
-
-        elif jump.type == "task":
-            self._execute_task(jump.target, jump.target_node)
-            if not jump.return_on_complete:
-                self._stop = True
-
-        elif jump.type == "end":
+    # ⚡ 100% 纯图驱动路由处理器
+    def _handle_jump(self, jump: Optional[Jump]):
+        # 规则 1：无 Jump 对象或 Jump 内未指定 target_node ➔ 视为无输出连线，流程自然停止
+        if not jump or not jump.target_node:
+            self.log("🏁 [Flow 终点] 当前输出端口未连线，分支流程自然结束")
             self._stop = True
             raise StopIteration()
 
-        else:
-            self.current_node_index += 1
+        self.log(f"🔀 [Jump 连线路由] ➔ 目标节点: {jump.target_node} (任务组: {jump.target or '当前组'})")
 
-    def _dict_to_jump(self, d):
-        if isinstance(d, Jump):
-            return d
-        return Jump(
-            type=d.get("type", "next"),
-            target=d.get("target") or d.get("target_task"),
-            target_node=d.get("target_node"),
-            return_on_complete=d.get("return_on_complete", False)
-        )
+        # 规则 2：跨任务组连线跳转
+        if jump.target and jump.target != self.current_task_id:
+            self._execute_task(jump.target, jump.target_node)
+            if not jump.return_on_complete:
+                self._stop = True
+            return
+
+        # 规则 3：同任务组精准节点连线跳转
+        target_node = next((n for n in self.current_task.nodes if n.node_id == jump.target_node), None)
+        if target_node:
+            self.current_node_index = self.current_task.nodes.index(target_node)
+        else:
+            self.log(f"❌ 找不到连线指向的目标节点 [{jump.target_node}]，流程终止", "error")
+            self._stop = True
+            raise StopIteration()
 
     def get_window_rect(self):
         if self.window_rect is not None:
@@ -199,7 +203,6 @@ class GraphExecutor:
     def is_window_mode(self):
         return self.window_rect is not None
 
-    # Global Footer 预热逻辑
     def _apply_context(self, context):
         window_title = context.get("window_title") or context.get("windowTitle", "")
         if not window_title:

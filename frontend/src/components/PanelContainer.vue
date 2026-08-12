@@ -1,43 +1,55 @@
+<!-- frontend/src/components/PanelContainer.vue -->
 <template>
     <div class="main-layout-container">
-        <!-- 上方：全屏可视化流程图画布 -->
         <div class="pane-content">
-            <PanelHeader title="可视化全景流程图 (多组同屏、右键管理、跨组连线)" :actions="[]">
-                <!-- 直接在这里塞入工作面板切换器 -->
-                <div class="workspace-switcher-badge" @click="openWorkspaceSelector">
+            <PanelHeader title="可视化全景流程图 (多组同屏、右键管理、跨组连线)">
+                <div class="workspace-switcher-badge" @click="openPanelSettings">
                     <span class="device-icon">💻</span>
                     <span class="workspace-label">工作面板:</span>
-                    <span class="workspace-name">{{ store.currentWorkspace || 'Windows 桌面' }}</span>
+                    <span class="workspace-name">{{ currentWorkspaceName }}</span>
                     <span class="dropdown-arrow">▼</span>
                 </div>
             </PanelHeader>
-            <WorkflowCanvas />
+
+            <div class="canvas-viewport-wrapper">
+                <WorkflowCanvas />
+            </div>
         </div>
+
+        <PanelSettingsDialog v-model:visible="dialogVisible"
+                             @apply="handleApplyContext" />
     </div>
 </template>
 
-<script>
-    import PanelHeader from './PanelHeader.vue'
-    import WorkflowCanvas from './WorkflowCanvas.vue'
+<script setup>
+    import { ref, computed } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage } from 'element-plus'
+    import PanelHeader from './PanelHeader.vue'
+    import WorkflowCanvas from './WorkflowCanvas.vue'
+    import PanelSettingsDialog from './PanelSettingsDialog.vue'
 
-    export default {
-        components: {
-            PanelHeader,
-            WorkflowCanvas
-        },
-        setup() {
-            const store = useMainStore()
+    const store = useMainStore()
+    const dialogVisible = ref(false)
 
-            const openWorkspaceSelector = () => {
-                ElMessage.info('正在打开工作面板切换设置...')
-            }
+    const currentWorkspaceName = computed(() => {
+        const ctx = store.currentContext
+        if (ctx && ctx.windowTitle) {
+            return ctx.windowTitle
+        }
+        return 'Windows 桌面'
+    })
 
-            return {
-                store,
-                openWorkspaceSelector
-            }
+    const openPanelSettings = () => {
+        dialogVisible.value = true
+    }
+
+    const handleApplyContext = async (context) => {
+        try {
+            await store.setCurrentContext(context)
+            ElMessage.success('工作面板切换成功')
+        } catch (err) {
+            ElMessage.error('切换失败: ' + err.message)
         }
     }
 </script>
@@ -57,32 +69,34 @@
         flex-direction: column;
         height: 100%;
         width: 100%;
-        padding: 4px;
         background: var(--el-bg-color);
-        border-radius: 6px;
         overflow: hidden;
         box-sizing: border-box;
     }
 
-    /* 顶栏精致的胶囊工作区切换按钮样式 */
+    .canvas-viewport-wrapper {
+        flex: 1;
+        position: relative;
+        overflow: hidden;
+    }
+
     .workspace-switcher-badge {
         display: flex;
         align-items: center;
         gap: 6px;
         background: rgba(25, 26, 38, 0.85);
-        border: 1px solid var(--el-border-color-light, #313352);
+        border: 1px solid var(--el-border-color-light);
         padding: 2px 10px;
         border-radius: 14px;
         font-size: 12px;
         cursor: pointer;
         transition: all 0.2s ease;
         user-select: none;
-        height: 26px;
-        box-sizing: border-box;
+        height: 24px;
     }
 
         .workspace-switcher-badge:hover {
-            border-color: var(--el-color-primary, #4ed19c);
+            border-color: var(--el-color-primary);
             background: rgba(38, 40, 61, 0.95);
         }
 
@@ -91,11 +105,11 @@
     }
 
     .workspace-label {
-        color: var(--el-text-color-secondary, #909399);
+        color: var(--el-text-color-secondary);
     }
 
     .workspace-name {
-        color: var(--el-color-primary, #4ed19c);
+        color: var(--el-color-primary);
         font-weight: 600;
     }
 

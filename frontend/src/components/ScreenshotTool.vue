@@ -1,21 +1,23 @@
+<!-- frontend/src/components/ScreenshotTool.vue -->
 <template>
     <teleport to="body">
         <div v-if="visible"
+             ref="overlayRef"
              class="screenshot-overlay"
-             @click.self="close"
-             @keydown.stop="handleKeyDown"
+             :style="{ zIndex: overlayZIndex }"
              tabindex="0"
-             ref="overlayRef">
+             @click.self="close"
+             @keydown.stop="handleKeyDown">
             <div class="main-layout" @click.stop>
                 <!-- 左侧：工作区 Canvas 画面 -->
-                <div class="canvas-wrapper" ref="containerRef">
+                <div ref="containerRef" class="canvas-wrapper">
                     <canvas ref="canvasRef"
                             @mousedown="onMouseDown"
                             @mousemove="onMouseMove"
-                            @mouseup="onMouseUp"></canvas>
+                            @mouseup="onMouseUp" />
                 </div>
 
-                <!-- 右侧：固定微调与放大预览面板 -->
+                <!-- 右侧：微调与放大预览面板 -->
                 <div class="sidebar-panel">
                     <div class="panel-header">
                         <span v-if="mode === 'template'">📷 模板截图录入</span>
@@ -27,7 +29,7 @@
                     <div v-if="mode === 'point'" class="panel-section">
                         <div class="section-title">标定点局域放大</div>
                         <div class="preview-box">
-                            <canvas ref="pointCanvasRef" width="160" height="160"></canvas>
+                            <canvas ref="pointCanvasRef" width="160" height="160" />
                         </div>
                         <div class="data-group">
                             <div class="data-item">
@@ -46,7 +48,7 @@
                     <div v-else class="panel-section">
                         <div class="section-title">选区高精放大预览</div>
                         <div class="preview-box">
-                            <canvas ref="regionCanvasRef" width="220" height="150"></canvas>
+                            <canvas ref="regionCanvasRef" width="220" height="150" />
                         </div>
                         <div class="data-group">
                             <div class="data-item">
@@ -80,317 +82,302 @@
     </teleport>
 </template>
 
-<script>
-    import { ref, reactive, computed, nextTick } from 'vue'
+<script setup>
+    import { ref, reactive, nextTick } from 'vue'
     import { ElMessage } from 'element-plus'
     import { useMainStore } from '@/stores'
-    import axios from 'axios'
+    import { workspaceApi } from '@/api/workspaceApi'
+    import { getNextZIndex } from '@/utils/zIndexManager'
 
-    export default {
-        name: 'ScreenshotTool',
-        emits: ['template-crop-selected', 'point-selected', 'region-selected'],
-        setup(props, { emit }) {
-            const store = useMainStore()
+    const emit = defineEmits(['template-crop-selected', 'point-selected', 'region-selected'])
+    const store = useMainStore()
 
-            const visible = ref(false)
-            const mode = ref('template')
-            const isPausedForDialog = ref(false)
+    const visible = ref(false)
+    const mode = ref('template')
+    const isPausedForDialog = ref(false)
+    const overlayZIndex = ref(3000)
 
-            const canvasRef = ref(null)
-            const containerRef = ref(null)
-            const pointCanvasRef = ref(null)
-            const regionCanvasRef = ref(null)
-            const overlayRef = ref(null)
+    const canvasRef = ref(null)
+    const containerRef = ref(null)
+    const pointCanvasRef = ref(null)
+    const regionCanvasRef = ref(null)
+    const overlayRef = ref(null)
 
-            let imgObj = null
-            let isDrawing = false
-            let startImgPoint = { x: 0, y: 0 }
+    let imgObj = null
+    let isDrawing = false
+    let startImgPoint = { x: 0, y: 0 }
 
-            const drawScale = reactive({ scale: 1, offsetX: 0, offsetY: 0, imgW: 0, imgH: 0 })
+    const drawScale = reactive({ scale: 1, offsetX: 0, offsetY: 0, imgW: 0, imgH: 0 })
+    const selection = ref(null)
+    const point = ref(null)
 
-            const selection = ref(null)
-            const point = ref(null)
+    const open = async (targetMode = 'template') => {
+        mode.value = targetMode
+        selection.value = null
+        point.value = null
+        isPausedForDialog.value = false
 
-            const open = async (targetMode = 'template') => {
-                mode.value = targetMode
-                selection.value = null
-                point.value = null
-                isPausedForDialog.value = false
+        // ⚡ 核心修复：调取与 Element Plus 统一的 Z-Index 计数器，保证永远在当前所有 el-dialog 正上方
+        overlayZIndex.value = getNextZIndex(15)
 
-                try {
-                    const res = await axios.get('/api/screenshot/full', {
-                        params: { project_path: store.currentProjectPath }
-                    })
-                    if (!res.data.image) {
-                        return ElMessage.error('获取工作区截图失败')
-                    }
-
-                    visible.value = true
-                    await nextTick()
-
-                    if (overlayRef.value) overlayRef.value.focus()
-
-                    imgObj = new Image()
-                    imgObj.src = 'data:image/png;base64,' + res.data.image
-                    imgObj.onload = () => {
-                        initAspectCanvas(res.data.width, res.data.height)
-                    }
-                } catch (err) {
-                    ElMessage.error('调出截图工具失败')
-                }
+        try {
+            const res = await workspaceApi.getFullScreenshot(store.currentProjectPath)
+            if (!res || !res.image) {
+                return ElMessage.error('获取工作区截图失败')
             }
 
-            const setPauseState = (paused) => {
-                isPausedForDialog.value = paused
+            visible.value = true
+            await nextTick()
+
+            if (overlayRef.value) overlayRef.value.focus()
+
+            imgObj = new Image()
+            imgObj.src = 'data:image/png;base64,' + res.image
+            imgObj.onload = () => {
+                initAspectCanvas(res.width, res.height)
             }
+        } catch (err) {
+            ElMessage.error('调出截图工具失败: ' + err.message)
+        }
+    }
 
-            const initAspectCanvas = (rawW, rawH) => {
-                const canvas = canvasRef.value
-                if (!canvas || !containerRef.value) return
+    const setPauseState = (paused) => {
+        isPausedForDialog.value = paused
+    }
 
-                const screenW = containerRef.value.clientWidth
-                const screenH = containerRef.value.clientHeight
+    const initAspectCanvas = (rawW, rawH) => {
+        const canvas = canvasRef.value
+        if (!canvas || !containerRef.value) return
 
-                canvas.width = screenW
-                canvas.height = screenH
+        const screenW = containerRef.value.clientWidth
+        const screenH = containerRef.value.clientHeight
 
-                const scaleW = screenW / rawW
-                const scaleH = screenH / rawH
-                const scale = Math.min(scaleW, scaleH, 1)
+        canvas.width = screenW
+        canvas.height = screenH
 
-                const drawW = rawW * scale
-                const drawH = rawH * scale
-                const offsetX = (screenW - drawW) / 2
-                const offsetY = (screenH - drawH) / 2
+        const scaleW = screenW / rawW
+        const scaleH = screenH / rawH
+        const scale = Math.min(scaleW, scaleH, 1)
 
-                drawScale.scale = scale
-                drawScale.offsetX = offsetX
-                drawScale.offsetY = offsetY
-                drawScale.imgW = rawW
-                drawScale.imgH = rawH
+        const drawW = rawW * scale
+        const drawH = rawH * scale
+        const offsetX = (screenW - drawW) / 2
+        const offsetY = (screenH - drawH) / 2
 
+        drawScale.scale = scale
+        drawScale.offsetX = offsetX
+        drawScale.offsetY = offsetY
+        drawScale.imgW = rawW
+        drawScale.imgH = rawH
+
+        redrawCanvas()
+    }
+
+    const screenToImgPos = (clientX, clientY) => {
+        const rect = containerRef.value.getBoundingClientRect()
+        const xInCanvas = clientX - rect.left
+        const yInCanvas = clientY - rect.top
+
+        const ix = Math.round((xInCanvas - drawScale.offsetX) / drawScale.scale)
+        const iy = Math.round((yInCanvas - drawScale.offsetY) / drawScale.scale)
+        const clampedX = Math.max(0, Math.min(drawScale.imgW, ix))
+        const clampedY = Math.max(0, Math.min(drawScale.imgH, iy))
+        return { x: clampedX, y: clampedY }
+    }
+
+    const imgToCanvasPos = (imgX, imgY) => {
+        const cx = imgX * drawScale.scale + drawScale.offsetX
+        const cy = imgY * drawScale.scale + drawScale.offsetY
+        return { x: cx, y: cy }
+    }
+
+    const redrawCanvas = () => {
+        const canvas = canvasRef.value
+        if (!canvas || !imgObj) return
+        const ctx = canvas.getContext('2d')
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height)
+        ctx.fillStyle = 'rgba(15, 15, 25, 0.95)'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+
+        const { offsetX, offsetY, imgW, imgH, scale } = drawScale
+        const drawW = imgW * scale
+        const drawH = imgH * scale
+
+        ctx.drawImage(imgObj, offsetX, offsetY, drawW, drawH)
+
+        ctx.strokeStyle = '#409eff'
+        ctx.lineWidth = 1.5
+        ctx.strokeRect(offsetX, offsetY, drawW, drawH)
+
+        if (selection.value && (mode.value === 'template' || mode.value === 'region')) {
+            const { x, y, w, h } = selection.value
+            const p1 = imgToCanvasPos(x, y)
+            const p2 = imgToCanvasPos(x + w, y + h)
+            const cw = p2.x - p1.x
+            const ch = p2.y - p1.y
+
+            if (w > 0 && h > 0) {
+                ctx.drawImage(imgObj, x, y, w, h, p1.x, p1.y, cw, ch)
+                ctx.strokeStyle = '#67C23A'
+                ctx.lineWidth = 2
+                ctx.strokeRect(p1.x, p1.y, cw, ch)
+            }
+        }
+
+        if (point.value && mode.value === 'point') {
+            const cp = imgToCanvasPos(point.value.x, point.value.y)
+            ctx.beginPath()
+            ctx.arc(cp.x, cp.y, 6, 0, Math.PI * 2)
+            ctx.fillStyle = '#FF4D4F'
+            ctx.fill()
+            ctx.strokeStyle = '#FFFFFF'
+            ctx.lineWidth = 2
+            ctx.stroke()
+
+            ctx.beginPath()
+            ctx.moveTo(cp.x - 12, cp.y); ctx.lineTo(cp.x + 12, cp.y)
+            ctx.moveTo(cp.x, cp.y - 12); ctx.lineTo(cp.x, cp.y + 12)
+            ctx.strokeStyle = '#FF4D4F'
+            ctx.lineWidth = 1.5
+            ctx.stroke()
+        }
+
+        updateSidebarPreviews()
+    }
+
+    const updateSidebarPreviews = () => {
+        if (mode.value === 'point' && point.value) {
+            nextTick(() => {
+                const pCanvas = pointCanvasRef.value
+                if (!pCanvas || !imgObj) return
+                const pCtx = pCanvas.getContext('2d')
+                pCtx.clearRect(0, 0, 160, 160)
+                pCtx.drawImage(imgObj, point.value.x - 20, point.value.y - 20, 40, 40, 0, 0, 160, 160)
+                pCtx.strokeStyle = '#FF4D4F'
+                pCtx.lineWidth = 1
+                pCtx.beginPath()
+                pCtx.moveTo(80, 0); pCtx.lineTo(80, 160)
+                pCtx.moveTo(0, 80); pCtx.lineTo(160, 80)
+                pCtx.stroke()
+            })
+        }
+
+        if ((mode.value === 'region' || mode.value === 'template') && selection.value) {
+            const { x, y, w, h } = selection.value
+            if (w <= 0 || h <= 0) return
+            nextTick(() => {
+                const rCanvas = regionCanvasRef.value
+                if (!rCanvas || !imgObj) return
+                const rCtx = rCanvas.getContext('2d')
+                rCtx.clearRect(0, 0, rCanvas.width, rCanvas.height)
+                rCtx.fillStyle = '#0f0f19'
+                rCtx.fillRect(0, 0, rCanvas.width, rCanvas.height)
+
+                const pScale = Math.min(220 / w, 150 / h)
+                const pw = w * pScale
+                const ph = h * pScale
+                const px = (220 - pw) / 2
+                const py = (150 - ph) / 2
+
+                rCtx.drawImage(imgObj, x, y, w, h, px, py, pw, ph)
+                rCtx.strokeStyle = '#67C23A'
+                rCtx.lineWidth = 1.5
+                rCtx.strokeRect(px, py, pw, ph)
+            })
+        }
+    }
+
+    const onMouseDown = (e) => {
+        if (isPausedForDialog.value) return
+        isDrawing = true
+        const imgPos = screenToImgPos(e.clientX, e.clientY)
+        startImgPoint = imgPos
+
+        if (mode.value === 'point') {
+            point.value = { ...imgPos }
+            redrawCanvas()
+        } else {
+            selection.value = { x: imgPos.x, y: imgPos.y, w: 0, h: 0 }
+        }
+    }
+
+    const onMouseMove = (e) => {
+        if (isPausedForDialog.value || !isDrawing) return
+        const imgPos = screenToImgPos(e.clientX, e.clientY)
+
+        if (mode.value === 'point') {
+            point.value = { ...imgPos }
+        } else {
+            const x = Math.min(startImgPoint.x, imgPos.x)
+            const y = Math.min(startImgPoint.y, imgPos.y)
+            const w = Math.abs(imgPos.x - startImgPoint.x)
+            const h = Math.abs(imgPos.y - startImgPoint.y)
+            selection.value = { x, y, w, h }
+        }
+        redrawCanvas()
+    }
+
+    const onMouseUp = () => {
+        isDrawing = false
+    }
+
+    const handleKeyDown = (e) => {
+        if (isPausedForDialog.value) return
+
+        if (e.key === 'Escape') return close()
+        if (e.key === 'Enter') return confirmSelection()
+
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+            e.preventDefault()
+            const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
+            const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
+
+            if (mode.value === 'point' && point.value) {
+                point.value.x = Math.max(0, Math.min(drawScale.imgW, point.value.x + dx))
+                point.value.y = Math.max(0, Math.min(drawScale.imgH, point.value.y + dy))
                 redrawCanvas()
-            }
-
-            const screenToImgPos = (clientX, clientY) => {
-                const rect = containerRef.value.getBoundingClientRect()
-                const xInCanvas = clientX - rect.left
-                const yInCanvas = clientY - rect.top
-
-                const ix = Math.round((xInCanvas - drawScale.offsetX) / drawScale.scale)
-                const iy = Math.round((yInCanvas - drawScale.offsetY) / drawScale.scale)
-                const clampedX = Math.max(0, Math.min(drawScale.imgW, ix))
-                const clampedY = Math.max(0, Math.min(drawScale.imgH, iy))
-                return { x: clampedX, y: clampedY }
-            }
-
-            const imgToCanvasPos = (imgX, imgY) => {
-                const cx = imgX * drawScale.scale + drawScale.offsetX
-                const cy = imgY * drawScale.scale + drawScale.offsetY
-                return { x: cx, y: cy }
-            }
-
-            const redrawCanvas = () => {
-                const canvas = canvasRef.value
-                if (!canvas || !imgObj) return
-                const ctx = canvas.getContext('2d')
-
-                ctx.clearRect(0, 0, canvas.width, canvas.height)
-                ctx.fillStyle = 'rgba(15, 15, 25, 0.95)'
-                ctx.fillRect(0, 0, canvas.width, canvas.height)
-
-                const { offsetX, offsetY, imgW, imgH, scale } = drawScale
-                const drawW = imgW * scale
-                const drawH = imgH * scale
-
-                ctx.drawImage(imgObj, offsetX, offsetY, drawW, drawH)
-
-                ctx.strokeStyle = '#409eff'
-                ctx.lineWidth = 1.5
-                ctx.strokeRect(offsetX, offsetY, drawW, drawH)
-
-                if (selection.value && (mode.value === 'template' || mode.value === 'region')) {
-                    const { x, y, w, h } = selection.value
-                    const p1 = imgToCanvasPos(x, y)
-                    const p2 = imgToCanvasPos(x + w, y + h)
-                    const cw = p2.x - p1.x
-                    const ch = p2.y - p1.y
-
-                    if (w > 0 && h > 0) {
-                        ctx.drawImage(imgObj, x, y, w, h, p1.x, p1.y, cw, ch)
-                        ctx.strokeStyle = '#67C23A'
-                        ctx.lineWidth = 2
-                        ctx.strokeRect(p1.x, p1.y, cw, ch)
-                    }
-                }
-
-                if (point.value && mode.value === 'point') {
-                    const cp = imgToCanvasPos(point.value.x, point.value.y)
-                    ctx.beginPath()
-                    ctx.arc(cp.x, cp.y, 6, 0, Math.PI * 2)
-                    ctx.fillStyle = '#FF4D4F'
-                    ctx.fill()
-                    ctx.strokeStyle = '#FFFFFF'
-                    ctx.lineWidth = 2
-                    ctx.stroke()
-
-                    ctx.beginPath()
-                    ctx.moveTo(cp.x - 12, cp.y); ctx.lineTo(cp.x + 12, cp.y)
-                    ctx.moveTo(cp.x, cp.y - 12); ctx.lineTo(cp.x, cp.y + 12)
-                    ctx.strokeStyle = '#FF4D4F'
-                    ctx.lineWidth = 1.5
-                    ctx.stroke()
-                }
-
-                updateSidebarPreviews()
-            }
-
-            const updateSidebarPreviews = () => {
-                if (mode.value === 'point' && point.value) {
-                    nextTick(() => {
-                        const pCanvas = pointCanvasRef.value
-                        if (!pCanvas || !imgObj) return
-                        const pCtx = pCanvas.getContext('2d')
-                        pCtx.clearRect(0, 0, 160, 160)
-                        pCtx.drawImage(imgObj, point.value.x - 20, point.value.y - 20, 40, 40, 0, 0, 160, 160)
-                        pCtx.strokeStyle = '#FF4D4F'
-                        pCtx.lineWidth = 1
-                        pCtx.beginPath()
-                        pCtx.moveTo(80, 0); pCtx.lineTo(80, 160)
-                        pCtx.moveTo(0, 80); pCtx.lineTo(160, 80)
-                        pCtx.stroke()
-                    })
-                }
-
-                if ((mode.value === 'region' || mode.value === 'template') && selection.value) {
-                    const { x, y, w, h } = selection.value
-                    if (w <= 0 || h <= 0) return
-                    nextTick(() => {
-                        const rCanvas = regionCanvasRef.value
-                        if (!rCanvas || !imgObj) return
-                        const rCtx = rCanvas.getContext('2d')
-                        rCtx.clearRect(0, 0, rCanvas.width, rCanvas.height)
-                        rCtx.fillStyle = '#0f0f19'
-                        rCtx.fillRect(0, 0, rCanvas.width, rCanvas.height)
-
-                        const pScale = Math.min(220 / w, 150 / h)
-                        const pw = w * pScale
-                        const ph = h * pScale
-                        const px = (220 - pw) / 2
-                        const py = (150 - ph) / 2
-
-                        rCtx.drawImage(imgObj, x, y, w, h, px, py, pw, ph)
-                        rCtx.strokeStyle = '#67C23A'
-                        rCtx.lineWidth = 1.5
-                        rCtx.strokeRect(px, py, pw, ph)
-                    })
-                }
-            }
-
-            const onMouseDown = (e) => {
-                if (isPausedForDialog.value) return
-                isDrawing = true
-                const imgPos = screenToImgPos(e.clientX, e.clientY)
-                startImgPoint = imgPos
-
-                if (mode.value === 'point') {
-                    point.value = { ...imgPos }
-                    redrawCanvas()
+            } else if (selection.value) {
+                if (e.shiftKey) {
+                    selection.value.w = Math.max(1, selection.value.w + dx)
+                    selection.value.h = Math.max(1, selection.value.h + dy)
                 } else {
-                    selection.value = { x: imgPos.x, y: imgPos.y, w: 0, h: 0 }
-                }
-            }
-
-            const onMouseMove = (e) => {
-                if (isPausedForDialog.value || !isDrawing) return
-                const imgPos = screenToImgPos(e.clientX, e.clientY)
-
-                if (mode.value === 'point') {
-                    point.value = { ...imgPos }
-                } else {
-                    const x = Math.min(startImgPoint.x, imgPos.x)
-                    const y = Math.min(startImgPoint.y, imgPos.y)
-                    const w = Math.abs(imgPos.x - startImgPoint.x)
-                    const h = Math.abs(imgPos.y - startImgPoint.y)
-                    selection.value = { x, y, w, h }
+                    selection.value.x = Math.max(0, Math.min(drawScale.imgW - selection.value.w, selection.value.x + dx))
+                    selection.value.y = Math.max(0, Math.min(drawScale.imgH - selection.value.h, selection.value.y + dy))
                 }
                 redrawCanvas()
-            }
-
-            const onMouseUp = () => { isDrawing = false }
-
-            const handleKeyDown = (e) => {
-                if (isPausedForDialog.value) return
-
-                if (e.key === 'Escape') return close()
-                if (e.key === 'Enter') return confirmSelection()
-
-                if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
-                    e.preventDefault()
-                    const dx = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0
-                    const dy = e.key === 'ArrowUp' ? -1 : e.key === 'ArrowDown' ? 1 : 0
-
-                    if (mode.value === 'point' && point.value) {
-                        point.value.x = Math.max(0, Math.min(drawScale.imgW, point.value.x + dx))
-                        point.value.y = Math.max(0, Math.min(drawScale.imgH, point.value.y + dy))
-                        redrawCanvas()
-                    } else if (selection.value) {
-                        if (e.shiftKey) {
-                            selection.value.w = Math.max(1, selection.value.w + dx)
-                            selection.value.h = Math.max(1, selection.value.h + dy)
-                        } else {
-                            selection.value.x = Math.max(0, Math.min(drawScale.imgW - selection.value.w, selection.value.x + dx))
-                            selection.value.y = Math.max(0, Math.min(drawScale.imgH - selection.value.h, selection.value.y + dy))
-                        }
-                        redrawCanvas()
-                    }
-                }
-            }
-
-            const confirmSelection = () => {
-                if (mode.value === 'point') {
-                    if (!point.value) return ElMessage.warning('请先点击工作区选点')
-                    emit('point-selected', [point.value.x, point.value.y])
-                    close()
-                    return
-                }
-
-                if (mode.value === 'region') {
-                    if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定框选区域')
-                    emit('region-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
-                    close()
-                    return
-                }
-
-                if (mode.value === 'template') {
-                    if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定截取区域')
-                    emit('template-crop-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
-                }
-            }
-
-            const close = () => { visible.value = false; isPausedForDialog.value = false }
-
-            return {
-                visible,
-                mode,
-                canvasRef,
-                containerRef,
-                pointCanvasRef,
-                regionCanvasRef,
-                overlayRef,
-                selection,
-                point,
-                open,
-                setPauseState,
-                onMouseDown,
-                onMouseMove,
-                onMouseUp,
-                handleKeyDown,
-                confirmSelection,
-                close
             }
         }
     }
+
+    const confirmSelection = () => {
+        if (mode.value === 'point') {
+            if (!point.value) return ElMessage.warning('请先点击工作区选点')
+            emit('point-selected', [point.value.x, point.value.y])
+            close()
+            return
+        }
+
+        if (mode.value === 'region') {
+            if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定框选区域')
+            emit('region-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
+            close()
+            return
+        }
+
+        if (mode.value === 'template') {
+            if (!selection.value || selection.value.w === 0) return ElMessage.warning('请先划定截取区域')
+            emit('template-crop-selected', [selection.value.x, selection.value.y, selection.value.w, selection.value.h])
+            close()
+        }
+    }
+
+    const close = () => {
+        visible.value = false
+        isPausedForDialog.value = false
+    }
+
+    defineExpose({ open, close, setPauseState })
 </script>
 
 <style scoped>
@@ -400,7 +387,6 @@
         left: 0;
         right: 0;
         bottom: 0;
-        z-index: 2000;
         outline: none;
         background: rgba(15, 16, 26, 0.85);
         display: flex;
@@ -459,7 +445,7 @@
     .preview-box {
         background: var(--el-fill-color-blank);
         border: 1px dashed var(--el-border-color-light);
-        border-radius: 6px;
+        border-radius: var(--app-radius-sm, 6px);
         padding: 8px;
         display: flex;
         justify-content: center;
@@ -472,7 +458,7 @@
         gap: 6px;
         background: var(--el-fill-color-blank);
         padding: 10px;
-        border-radius: 6px;
+        border-radius: var(--app-radius-sm, 6px);
     }
 
     .data-item {

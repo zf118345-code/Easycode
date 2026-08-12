@@ -1,144 +1,116 @@
+<!-- frontend/src/App.vue -->
 <template>
-  <div id="app" @contextmenu.prevent>
-    <!-- 主界面 -->
-    <template v-if="store.currentProjectPath && projectLoaded">
-      <AppHeader />
-      <div class="main-content">
-        <PanelContainer />
-      </div>
-      <AppFooter />
-    </template>
+    <div id="app" @contextmenu.prevent>
+        <!-- 主界面：直接挂载新一代 IDE 骨架布局 -->
+        <template v-if="store.currentProjectPath && projectLoaded">
+            <IdeLayout />
+        </template>
 
-    <!-- 欢迎界面（无项目或加载失败） -->
-    <div v-else class="welcome">
-      <div class="welcome-content">
-        <h1>⚡ 节点自动化</h1>
-        <p>请打开一个项目文件夹</p>
+        <!-- 欢迎界面（无项目或加载失败） -->
+        <div v-else class="welcome">
+            <div class="welcome-content">
+                <h1>⚡ Easycode 自动化工作台</h1>
+                <p>请选择并打开一个项目文件夹以开始编排</p>
 
-        <!-- 缓存路径提示 -->
-        <div v-if="cachedPath" class="cached-hint">
-          <el-icon><InfoFilled /></el-icon>
-          <span>上次打开：{{ cachedPath }}</span>
+                <div v-if="cachedPath" class="cached-hint">
+                    <el-icon><InfoFilled /></el-icon>
+                    <span>上次打开：{{ cachedPath }}</span>
+                </div>
+
+                <div class="open-section">
+                    <el-input v-model="projectPathInput"
+                              placeholder="输入项目绝对路径，如 D:/MyProjects/demo"
+                              style="width: 500px;"
+                              clearable
+                              @keyup.enter="handleOpenProject" />
+                    <div style="margin-top: 12px;">
+                        <el-button type="primary" size="large" @click="handleOpenProject">
+                            📂 打开项目
+                        </el-button>
+                    </div>
+                </div>
+
+                <div v-if="store.recentProjects.length" class="recent">
+                    <span>最近打开：</span>
+                    <el-link v-for="p in store.recentProjects"
+                             :key="p.path"
+                             style="margin: 0 8px;"
+                             @click="handleOpenRecent(p.path)">
+                        {{ p.name }}
+                    </el-link>
+                </div>
+            </div>
         </div>
-
-        <div class="open-section">
-          <el-input
-            v-model="projectPathInput"
-            placeholder="输入项目完整路径，如 D:/MyProjects/demo"
-            style="width: 500px;"
-            clearable
-            @keyup.enter="handleOpenProject"
-          />
-          <div style="margin-top: 12px;">
-            <el-button type="primary" size="large" @click="handleOpenProject">
-              📂 打开项目
-            </el-button>
-          </div>
-        </div>
-
-        <div v-if="store.recentProjects.length" class="recent">
-          <span>最近打开：</span>
-          <el-link
-            v-for="p in store.recentProjects"
-            :key="p.path"
-            @click="handleOpenRecent(p.path)"
-            style="margin:0 8px;"
-          >
-            {{ p.name }}
-          </el-link>
-        </div>
-      </div>
     </div>
-  </div>
 </template>
 
-<script>
-import { ref, onMounted, computed } from 'vue'
-import { useMainStore } from '@/stores'
-import { ElMessage } from 'element-plus'
-import { InfoFilled } from '@element-plus/icons-vue'
-import AppHeader from './components/AppHeader.vue'
-import AppFooter from './components/AppFooter.vue'
-import PanelContainer from './components/PanelContainer.vue'
+<script setup>
+    import { ref, onMounted, computed } from 'vue'
+    import { useMainStore } from '@/stores'
+    import { ElMessage } from 'element-plus'
+    import { InfoFilled } from '@element-plus/icons-vue'
+    import IdeLayout from '@/layouts/IdeLayout.vue'
 
-export default {
-  components: { AppHeader, AppFooter, PanelContainer, InfoFilled },
-  setup() {
     const store = useMainStore()
     const projectPathInput = ref('')
     const projectLoaded = ref(false)
 
     const cachedPath = computed(() => store.currentProjectPath || '')
 
+    // 统一的项目加载入口函数
     const loadProject = async (path) => {
-      if (!path) return false
-      try {
-        await store.loadProjectByPath(path)
-        projectLoaded.value = true
-        return true
-      } catch (err) {
-        ElMessage.error('打开项目失败: ' + err.message)
-        projectLoaded.value = false
-        return false
-      }
-    }
-
-    const handleOpenProject = async () => {
-      const path = projectPathInput.value.trim()
-      if (!path) {
-        ElMessage.warning('请输入项目路径')
-        return
-      }
-      const ok = await loadProject(path)
-      if (ok) {
-        projectPathInput.value = ''
-        ElMessage.success(`已打开项目: ${store.currentProjectName}`)
-      }
-    }
-
-    const handleOpenRecent = async (path) => {
-      const ok = await loadProject(path)
-      if (ok) {
-        ElMessage.success(`已打开项目: ${store.currentProjectName}`)
-      } else {
-        // 从最近列表中移除无效路径
-        store.recentProjects = store.recentProjects.filter(p => p.path !== path)
-        localStorage.setItem('recentProjects', JSON.stringify(store.recentProjects))
-      }
-    }
-
-    onMounted(async () => {
-      await store.loadParams()
-
-      // 如果有缓存的路径，填入输入框
-      if (store.currentProjectPath) {
-        projectPathInput.value = store.currentProjectPath
-        // 尝试自动加载
+        if (!path) return false
         try {
-          await store.loadProjectData()
-          await store.loadContext()
-          projectLoaded.value = true
-          ElMessage.success(`已自动加载项目: ${store.currentProjectName}`)
+            await store.loadProjectByPath(path)
+            projectLoaded.value = true
+            return true
         } catch (err) {
-          // 自动加载失败，回到欢迎界面，但保留路径在输入框中
-          ElMessage.warning('自动加载项目失败，请检查路径后重新打开')
-          store.currentProjectPath = null
-          projectLoaded.value = false
-          // 不删除 localStorage，路径还保留着，用户可以看到
+            ElMessage.error('打开项目失败: ' + (err.message || '路径无效或文件缺失'))
+            projectLoaded.value = false
+            return false
         }
-      }
-    })
-
-    return {
-      store,
-      projectPathInput,
-      cachedPath,
-      projectLoaded,
-      handleOpenProject,
-      handleOpenRecent
     }
-  }
-}
+
+    // 手动输入路径并打开
+    const handleOpenProject = async () => {
+        const path = projectPathInput.value.trim()
+        if (!path) {
+            return ElMessage.warning('请输入项目路径')
+        }
+        const ok = await loadProject(path)
+        if (ok) {
+            projectPathInput.value = ''
+            ElMessage.success(`已打开项目: ${store.currentProjectName}`)
+        }
+    }
+
+    // 点击“最近打开”历史列表
+    const handleOpenRecent = async (path) => {
+        const ok = await loadProject(path)
+        if (ok) {
+            ElMessage.success(`已打开项目: ${store.currentProjectName}`)
+        } else {
+            // 若打开失败，从最近打开列表中剔除失效项目
+            store.recentProjects = store.recentProjects.filter(p => p.path !== path)
+            localStorage.setItem('recentProjects', JSON.stringify(store.recentProjects))
+        }
+    }
+
+    // 页面挂载初始化
+    onMounted(async () => {
+        await store.loadParams()
+        if (store.currentProjectPath) {
+            projectPathInput.value = store.currentProjectPath
+            const ok = await loadProject(store.currentProjectPath)
+            if (ok) {
+                ElMessage.success(`已自动加载项目: ${store.currentProjectName}`)
+            } else {
+                ElMessage.warning('自动加载项目失败，请检查路径')
+                store.currentProjectPath = null
+                projectLoaded.value = false
+            }
+        }
+    })
 </script>
 
 <style>
@@ -159,12 +131,6 @@ export default {
         display: flex;
         flex-direction: column;
         background: var(--el-bg-color-page);
-    }
-
-    .main-content {
-        flex: 1;
-        overflow: hidden;
-        position: relative;
     }
 
     .welcome {
@@ -219,14 +185,4 @@ export default {
         .recent .el-link {
             color: var(--el-color-primary);
         }
-
-    /* 全局弹窗层级梯队管控 */
-    .high-zindex-messagebox,
-    .el-message-box__wrapper {
-        z-index: 1100 !important;
-    }
-
-    .v-modal {
-        z-index: 1099 !important;
-    }
 </style>

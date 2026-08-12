@@ -1,89 +1,87 @@
 # core/node_executors/base/logic_check.py
-import os
-import pyautogui
+import time
+import copy
 from core.registry import NodeExecutorRegistry
 from core.node_executors.base_class import BaseNodeExecutor
-from core.utils import load_image, match_template_cv
-
-
-def evaluate_condition(cond, context):
-    """通用条件计算引擎：支持图片匹配、变量比较等扩展"""
-    cond_type = cond.get("condition_type")
-    params = cond.get("params", {})
-
-    if cond_type == "image_exists":
-        template_name = params.get("image_source", "")
-        if not template_name:
-            return False
-        templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
-        template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
-        if not os.path.exists(template_path):
-            return False
-        try:
-            template = load_image(template_path)
-            screenshot = pyautogui.screenshot(region=context.get_window_rect())
-            threshold = params.get("threshold", 85) / 100.0
-            max_val, _ = match_template_cv(screenshot, template, gray_scale=params.get("gray_scale", True))
-            return max_val >= threshold
-        except Exception:
-            return False
-
-    elif cond_type == "var_compare":
-        var_name = params.get("var_name", "")
-        operator = params.get("operator", "eq")
-        target_val = params.get("target_value")
-
-        current_val = context.variables.get(var_name)
-        if current_val is None:
-            return False
-
-        try:
-            # 尝试做数值转化比较
-            c_num, t_num = float(current_val), float(target_val)
-            if operator == "eq": return c_num == t_num
-            elif operator == "ne": return c_num != t_num
-            elif operator == "gt": return c_num > t_num
-            elif operator == "gte": return c_num >= t_num
-            elif operator == "lt": return c_num < t_num
-            elif operator == "lte": return c_num <= t_num
-        except (ValueError, TypeError):
-            # 字符串比较
-            c_str, t_str = str(current_val), str(target_val)
-            if operator == "eq": return c_str == t_str
-            elif operator == "ne": return c_str != t_str
-
-    return False
+from core.conditions.evaluator import evaluate_condition
 
 
 @NodeExecutorRegistry.register("logic_check")
 class LogicCheckNodeExecutor(BaseNodeExecutor):
+    def _get_cond_desc(self, cond):
+        """格式化 5 大类判定条件的日志描述"""
+        cond_type = cond.get("condition_type") or cond.get("type", "variable_check")
+        cond_params = cond.get("params", cond)
+
+        if cond_type == "image_exists":
+            mode_str = "不存在" if cond_params.get("exist_mode") == "not_exists" else "存在"
+            return f"图片{mode_str} [{cond_params.get('image_source', '未选图片')}]"
+        elif cond_type == "text_contains":
+            mode_str = cond_params.get("exist_mode", "contains")
+            return f"文本({mode_str}) [{cond_params.get('target_text', '')}]"
+        elif cond_type == "variable_check":
+            var_name = cond_params.get('variable_name') or cond_params.get('var_name', '')
+            val = cond_params.get('compare_value') if cond_params.get('compare_value') is not None else cond_params.get('target_value', '')
+            return f"变量 [{var_name}] {cond_params.get('operator', 'eq')} [{val}]"
+        elif cond_type == "window_state":
+            return f"窗口 [{cond_params.get('window_title', '')}] ({cond_params.get('state_check', 'exists')})"
+        elif cond_type == "file_exists":
+            return f"文件检查 [{cond_params.get('file_path', '')}]"
+        return f"条件 [{cond_type}]"
+
     def execute(self, node, context):
         params = node.params
-        logic_mode = params.get("logic_mode", "or")  # "or" | "and"
         conditions = params.get("conditions", [])
+        mode = str(params.get("logic_mode") or params.get("mode", "and")).lower()
+        timeout_ms = float(params.get("timeout", 3000))
+        timeout_sec = timeout_ms / 1000.0
 
         if not conditions:
-            context.log("⚠️ logic_check 节点未配置任何条件，默认判定失败", "warning")
-            return self.build_jump_result(False, params.get("on_failure", {}))
-
-        results = []
-        for idx, cond in enumerate(conditions):
-            res = evaluate_condition(cond, context)
-            results.append(res)
-            context.log(f"🔍 [LogicCheck] 条件 {idx + 1} ({cond.get('condition_type')}) 判定结果: {res}")
-
-            # 剪枝优化
-            if logic_mode == "or" and res:
-                context.log("✅ OR 逻辑满足，触发成功跳转")
-                return self.build_jump_result(True, params.get("on_success", {}))
-            elif logic_mode == "and" and not res:
-                context.log("❌ AND 逻辑中断，触发失败跳转")
-                return self.build_jump_result(False, params.get("on_failure", {}))
-
-        final_res = all(results) if logic_mode == "and" else any(results)
-        if final_res:
-            context.log("✅ 条件组合全部满足，触发成功跳转")
+            context.log("⚠️ [逻辑判断] 未配置任何判定条件，默认通过", "warning")
             return self.build_jump_result(True, params.get("on_success", {}))
-        else:
-            context.log("❌ 条件组合判定失败，触发失败跳转")
-            return self.build_jump_result(False, params.get("on_failure", {}))
+
+        context.log(f"🔍 [逻辑判断] 开始评估条件组 (模式: {mode.upper()}, 条件数: {len(conditions)}, 超时: {int(timeout_ms)}ms)")
+
+        start_time = time.time()
+        attempt = 0
+
+        # ⚡ 循环轮询，直到条件组判定通过或超时
+        while True:
+            attempt += 1
+            passed_count = 0
+
+            for idx, cond in enumerate(conditions):
+                # ⚡ 强制深拷贝条件并写入 timeout=0 (单帧瞬间检测)
+                eval_cond = copy.deepcopy(cond)
+                if "params" in eval_cond and isinstance(eval_cond["params"], dict):
+                    eval_cond["params"]["timeout"] = 0
+                else:
+                    eval_cond["timeout"] = 0
+
+                is_passed = evaluate_condition(eval_cond, context)
+
+                if is_passed:
+                    passed_count += 1
+                    # OR 模式短路：只要命中一个即可跳出内部条件循环
+                    if mode == "or":
+                        break
+                else:
+                    # AND 模式短路：只要有一个不满足即可跳出内部条件循环
+                    if mode == "and":
+                        break
+
+            # 判断整体条件组是否成立
+            final_success = (passed_count > 0) if mode == "or" else (passed_count == len(conditions))
+
+            if final_success:
+                context.log(f"🎯 [逻辑判断] 条件组判定整体通过 ✅ (第 {attempt} 次轮询) ──> 走向成功跳转")
+                return self.build_jump_result(True, params.get("on_success", {}))
+
+            elapsed = time.time() - start_time
+            if elapsed >= timeout_sec:
+                break
+
+            time.sleep(0.1)  # 100ms 快速轮询间隔
+
+        context.log(f"⏰ [逻辑判断] 轮询 {int(timeout_ms)}ms 后条件组仍未满足 ──> 走向失败跳转")
+        return self.build_jump_result(False, params.get("on_failure", {}))

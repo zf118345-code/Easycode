@@ -1,6 +1,7 @@
+<!-- frontend/src/components/PanelSettingsDialog.vue -->
 <template>
-    <el-dialog title="工作面板设置"
-               v-model="dialogVisible"
+    <el-dialog v-model="dialogVisible"
+               title="工作面板设置"
                width="520px"
                append-to-body
                :close-on-click-modal="false"
@@ -17,7 +18,6 @@
             <!-- 2. 指定窗口模式下的参数 -->
             <template v-if="localContext.workMode === 'window'">
                 <el-form-item label="窗口标题">
-                    <!-- filterable + allow-create 实现既能选又能手动打字填写 -->
                     <el-select v-model="localContext.windowTitle"
                                filterable
                                allow-create
@@ -30,7 +30,7 @@
                                    :label="w.title"
                                    :value="w.title" />
                     </el-select>
-                    <div style="font-size: 11px; color: #8a8fa8; margin-top: 4px; line-height: 1.2;">
+                    <div class="setting-tip">
                         💡 提示：已被最小化的窗口不会列出，请先还原窗口。
                     </div>
                 </el-form-item>
@@ -42,19 +42,23 @@
 
             <!-- 3. 通用裁剪参数 -->
             <el-form-item label="裁剪 (T,B,L,R)">
-                <el-input-number v-model="localContext.offsetTop" :min="0" controls-position="right" style="width:80px;" />
-                <el-input-number v-model="localContext.offsetBottom" :min="0" controls-position="right" style="width:80px;" />
-                <el-input-number v-model="localContext.offsetLeft" :min="0" controls-position="right" style="width:80px;" />
-                <el-input-number v-model="localContext.offsetRight" :min="0" controls-position="right" style="width:80px;" />
+                <div style="display: flex; gap: 6px;">
+                    <el-input-number v-model="localContext.offsetTop" :min="0" controls-position="right" style="width:80px;" />
+                    <el-input-number v-model="localContext.offsetBottom" :min="0" controls-position="right" style="width:80px;" />
+                    <el-input-number v-model="localContext.offsetLeft" :min="0" controls-position="right" style="width:80px;" />
+                    <el-input-number v-model="localContext.offsetRight" :min="0" controls-position="right" style="width:80px;" />
+                </div>
             </el-form-item>
 
-            <!-- 4. 指定窗口模式下的尺寸设置 -->
+            <!-- 4. 目标尺寸设置 -->
             <template v-if="localContext.workMode === 'window'">
                 <el-form-item label="目标尺寸(宽×高)">
-                    <el-input-number v-model="localContext.targetContentWidth" :min="0" placeholder="0为不修改" style="width:110px;" />
-                    <span style="margin:0 4px;">×</span>
-                    <el-input-number v-model="localContext.targetContentHeight" :min="0" placeholder="0为不修改" style="width:110px;" />
-                    <div style="font-size: 11px; color: #8a8fa8; margin-top: 2px;">(设为0代表不强制调整窗口大小)</div>
+                    <div class="dimension-box">
+                        <el-input-number v-model="localContext.targetContentWidth" :min="0" placeholder="0为不修改" style="width:110px;" />
+                        <span class="dimension-cross">×</span>
+                        <el-input-number v-model="localContext.targetContentHeight" :min="0" placeholder="0为不修改" style="width:110px;" />
+                    </div>
+                    <div class="setting-tip">(设为0代表不强制调整窗口大小)</div>
                 </el-form-item>
             </template>
         </el-form>
@@ -66,77 +70,76 @@
     </el-dialog>
 </template>
 
-<script>
-    import { useMainStore } from '@/stores'
+<script setup>
     import { ref, watch, computed } from 'vue'
-    import axios from 'axios'
+    import { useMainStore } from '@/stores'
+    import { workspaceApi } from '@/api/workspaceApi'
 
-    export default {
-        name: 'PanelSettingsDialog',
-        props: { visible: { type: Boolean, default: false } },
-        emits: ['update:visible', 'apply'],
-        setup(props, { emit }) {
-            const store = useMainStore()
+    const props = defineProps({
+        visible: { type: Boolean, default: false }
+    })
 
-            const localContext = ref({
-                workMode: store.currentContext.workMode || 'window',
-                windowTitle: store.currentContext.windowTitle || '',
-                isEmulator: store.currentContext.isEmulator || false,
-                offsetTop: store.currentContext.offsetTop || 0,
-                offsetBottom: store.currentContext.offsetBottom || 0,
-                offsetLeft: store.currentContext.offsetLeft || 0,
-                offsetRight: store.currentContext.offsetRight || 0,
-                targetContentWidth: store.currentContext.targetContentWidth || 0,
-                targetContentHeight: store.currentContext.targetContentHeight || 0
-            })
+    const emit = defineEmits(['update:visible', 'apply'])
 
-            const windowList = ref([])
+    const store = useMainStore()
 
-            const dialogVisible = computed({
-                get: () => props.visible,
-                set: (val) => emit('update:visible', val)
-            })
+    const localContext = ref({
+        workMode: 'window',
+        windowTitle: '',
+        isEmulator: false,
+        offsetTop: 0,
+        offsetBottom: 0,
+        offsetLeft: 0,
+        offsetRight: 0,
+        targetContentWidth: 0,
+        targetContentHeight: 0
+    })
 
-            watch(() => props.visible, (val) => {
-                if (val) {
-                    localContext.value = {
-                        workMode: store.currentContext.workMode || (store.currentContext.windowTitle ? 'window' : 'desktop'),
-                        windowTitle: store.currentContext.windowTitle || '',
-                        isEmulator: store.currentContext.isEmulator || false,
-                        offsetTop: store.currentContext.offsetTop || 0,
-                        offsetBottom: store.currentContext.offsetBottom || 0,
-                        offsetLeft: store.currentContext.offsetLeft || 0,
-                        offsetRight: store.currentContext.offsetRight || 0,
-                        targetContentWidth: store.currentContext.targetContentWidth || 0,
-                        targetContentHeight: store.currentContext.targetContentHeight || 0
-                    }
-                    fetchWindows()
-                }
-            })
+    const windowList = ref([])
 
-            const fetchWindows = async () => {
-                try {
-                    const res = await axios.get('/api/windows')
-                    windowList.value = res.data.windows || []
-                } catch (err) {
-                    console.error('获取窗口列表失败', err)
-                }
+    const dialogVisible = computed({
+        get: () => props.visible,
+        set: (val) => emit('update:visible', val)
+    })
+
+    watch(() => props.visible, (val) => {
+        if (val) {
+            const ctx = store.currentContext
+            localContext.value = {
+                workMode: ctx.workMode || (ctx.windowTitle ? 'window' : 'desktop'),
+                windowTitle: ctx.windowTitle || '',
+                isEmulator: ctx.isEmulator || false,
+                offsetTop: ctx.offsetTop || 0,
+                offsetBottom: ctx.offsetBottom || 0,
+                offsetLeft: ctx.offsetLeft || 0,
+                offsetRight: ctx.offsetRight || 0,
+                targetContentWidth: ctx.targetContentWidth || 0,
+                targetContentHeight: ctx.targetContentHeight || 0
             }
-
-            const applyContext = () => {
-                // 若选择全桌面模式，重置 windowTitle 为空
-                if (localContext.value.workMode === 'desktop') {
-                    localContext.value.windowTitle = ''
-                    localContext.value.isEmulator = false
-                }
-                emit('apply', localContext.value)
-                dialogVisible.value = false
-            }
-
-            const onClose = () => { dialogVisible.value = false }
-
-            return { localContext, dialogVisible, windowList, applyContext, onClose, fetchWindows }
+            fetchWindows()
         }
+    })
+
+    const fetchWindows = async () => {
+        try {
+            const res = await workspaceApi.getWindows()
+            windowList.value = res.windows || []
+        } catch (err) {
+            console.error('获取窗口列表失败', err)
+        }
+    }
+
+    const applyContext = () => {
+        if (localContext.value.workMode === 'desktop') {
+            localContext.value.windowTitle = ''
+            localContext.value.isEmulator = false
+        }
+        emit('apply', localContext.value)
+        dialogVisible.value = false
+    }
+
+    const onClose = () => {
+        dialogVisible.value = false
     }
 </script>
 

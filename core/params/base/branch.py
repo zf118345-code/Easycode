@@ -4,52 +4,43 @@ PARAM_DEFINITIONS = {
     "branch": {
         "label": "分支选择",
         "params": {
-            "best_match_mode": {
-                "type": "bool",
-                "default": True,
-                "label": "最高置信度竞态 (比对所有图片取最高分分支)"
+            "match_strategy": {
+                "type": "select",
+                "label": "分流策略",
+                "options": [
+                    {"value": "first", "label": "顺序优先 (命中即跳)"},
+                    {"value": "best", "label": "分数优先 (全项最高分)"}
+                ],
+                "default": "first"
             },
             "candidates": {
                 "type": "branch_candidate_editor",
                 "default": [],
                 "label": "多分支判定列表"
             },
+            "timeout": {
+                "type": "int",
+                "default": 3000,
+                "label": "匹配超时时长",
+                "suffix": "ms",
+                "min": 0,
+                "step": 500
+            },
             "on_failure": {
                 "type": "dict",
-                "label": "兜底失败跳转 (全不满足时)",
+                "label": "Else 兜底跳转 (所有分支均未满足时)",
                 "sub": {
-                    "jump_type": {
-                        "type": "select",
-                        "options": [
-                            {"value": "next", "label": "下一个节点"},
-                            {"value": "node", "label": "跳转节点"},
-                            {"value": "task", "label": "跳转任务"},
-                            {"value": "end", "label": "结束流程"}
-                        ],
-                        "default": "next",
-                        "label": "跳转类型"
-                    },
                     "target_task": {
                         "type": "select",
                         "options": [],
                         "label": "目标任务",
-                        "default": "",
-                        "visible_if": {
-                            "field": "jump_type",
-                            "operator": "eq",
-                            "value": "task"
-                        }
+                        "default": ""
                     },
                     "target_node": {
                         "type": "select",
                         "options": [],
                         "label": "目标节点",
-                        "default": "",
-                        "visible_if": {
-                            "field": "jump_type",
-                            "operator": "in",
-                            "value": ["node", "task"]
-                        }
+                        "default": ""
                     }
                 }
             }

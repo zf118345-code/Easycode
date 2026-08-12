@@ -14,7 +14,7 @@ PARAM_DEFINITIONS = {
                 "label": "工作模式"
             },
             "title": {
-                "type": "window_select",  # 升级为可自动拉取+手写的窗口选择器
+                "type": "window_select",
                 "default": "",
                 "label": "窗口标题",
                 "visible_if": {
@@ -34,29 +34,14 @@ PARAM_DEFINITIONS = {
                 }
             },
             "content_offset": {
-                "type": "dict",
-                "label": "内容裁剪(T,B,L,R)",
-                "sub": {
-                    "top": {"type": "int", "default": 0, "label": "上"},
-                    "bottom": {"type": "int", "default": 0, "label": "下"},
-                    "left": {"type": "int", "default": 0, "label": "左"},
-                    "right": {"type": "int", "default": 0, "label": "右"}
-                }
+                "type": "margin4",  # ⚡ 改为专属类型 margin4
+                "default": [0, 0, 0, 0],
+                "label": "内容裁剪 (T, B, L, R)"
             },
-            "target_content_width": {
-                "type": "int",
-                "default": 0,
-                "label": "目标内容宽度(0不修改)",
-                "visible_if": {
-                    "field": "work_mode",
-                    "operator": "eq",
-                    "value": "window"
-                }
-            },
-            "target_content_height": {
-                "type": "int",
-                "default": 0,
-                "label": "目标内容高度(0不修改)",
+            "target_content_size": {
+                "type": "size2",  # ⚡ 改为专属类型 size2
+                "default": [0, 0],
+                "label": "目标尺寸 (W, H)",
                 "visible_if": {
                     "field": "work_mode",
                     "operator": "eq",

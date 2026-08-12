@@ -24,15 +24,17 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
             context.log("🖥️ 切换为 [全桌面模式]，清除窗口句柄限制")
             screen_w, screen_h = pyautogui.size()
 
-            # 读取裁剪偏移
-            content_offset = params.get("content_offset", {})
-            for k in ["top", "bottom", "left", "right"]:
-                content_offset.setdefault(k, 0)
-
-            off_left = content_offset.get("left", 0)
-            off_top = content_offset.get("top", 0)
-            off_right = content_offset.get("right", 0)
-            off_bottom = content_offset.get("bottom", 0)
+            # 解析裁剪偏移 (支持新版 [T, B, L, R] 列表和旧版字典)
+            raw_offset = params.get("content_offset", [0, 0, 0, 0])
+            if isinstance(raw_offset, list) and len(raw_offset) >= 4:
+                off_top, off_bottom, off_left, off_right = raw_offset[0], raw_offset[1], raw_offset[2], raw_offset[3]
+            elif isinstance(raw_offset, dict):
+                off_top = raw_offset.get("top", 0)
+                off_bottom = raw_offset.get("bottom", 0)
+                off_left = raw_offset.get("left", 0)
+                off_right = raw_offset.get("right", 0)
+            else:
+                off_top = off_bottom = off_left = off_right = 0
 
             # 计算桌面裁剪后的工作坐标区
             crop_w = screen_w - off_left - off_right
@@ -46,7 +48,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
             context.android_height = None
 
             context.variables.pop("window_original_rect", None)
-            context.variables["window_content_offset"] = content_offset
+            context.variables["window_content_offset"] = {"top": off_top, "bottom": off_bottom, "left": off_left, "right": off_right}
             context.variables["window_rect"] = context.window_rect
 
             context.log(f"✅ 全桌面工作区设置成功 | 区域: {context.window_rect}")
@@ -73,26 +75,33 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         except Exception as e:
             context.log(f"⚠️ [set_window] 激活窗口失败: {e}", "warning")
 
-        # 读取裁剪偏移配置
-        content_offset = params.get("content_offset", {})
-        if not content_offset or all(v == 0 for v in content_offset.values()):
-            if params.get("is_emulator", False):
-                content_offset = get_emulator_offset(title)
-                context.log(f"📱 自动匹配模拟器预设裁剪偏移: {content_offset}")
-            else:
-                content_offset = {"top": 0, "bottom": 0, "left": 0, "right": 0}
+        # 读取裁剪偏移配置 (兼容列表 [T,B,L,R] 和字典)
+        raw_offset = params.get("content_offset", [0, 0, 0, 0])
+        if isinstance(raw_offset, list) and len(raw_offset) >= 4:
+            offset_top, offset_bottom, offset_left, offset_right = raw_offset[0], raw_offset[1], raw_offset[2], raw_offset[3]
+        elif isinstance(raw_offset, dict) and any(v != 0 for v in raw_offset.values()):
+            offset_top = raw_offset.get("top", 0)
+            offset_bottom = raw_offset.get("bottom", 0)
+            offset_left = raw_offset.get("left", 0)
+            offset_right = raw_offset.get("right", 0)
         else:
-            for k in ["top", "bottom", "left", "right"]:
-                content_offset.setdefault(k, 0)
+            if params.get("is_emulator", False):
+                auto_off = get_emulator_offset(title)
+                offset_top = auto_off.get("top", 0)
+                offset_bottom = auto_off.get("bottom", 0)
+                offset_left = auto_off.get("left", 0)
+                offset_right = auto_off.get("right", 0)
+                context.log(f"📱 自动匹配模拟器预设裁剪偏移: {auto_off}")
+            else:
+                offset_top = offset_bottom = offset_left = offset_right = 0
 
-        offset_left = content_offset.get("left", 0)
-        offset_right = content_offset.get("right", 0)
-        offset_top = content_offset.get("top", 0)
-        offset_bottom = content_offset.get("bottom", 0)
-
-        # 检查并 Resize 目标内容尺寸
-        target_w = params.get("target_content_width", 0)
-        target_h = params.get("target_content_height", 0)
+        # 解析目标尺寸 (兼容新版 list [W, H] 与旧版单独 width/height 字段)
+        raw_size = params.get("target_content_size", [0, 0])
+        if isinstance(raw_size, list) and len(raw_size) >= 2:
+            target_w, target_h = raw_size[0], raw_size[1]
+        else:
+            target_w = params.get("target_content_width", 0)
+            target_h = params.get("target_content_height", 0)
 
         if target_w > 0 and target_h > 0:
             context.log(f"📏 检测到目标内容尺寸: {target_w}x{target_h}，准备调整窗口大小...")
@@ -134,7 +143,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
         context.variables["window_hwnd"] = hwnd
         context.variables["window_rect"] = content_rect
         context.variables["window_original_rect"] = original_rect
-        context.variables["window_content_offset"] = content_offset
+        context.variables["window_content_offset"] = {"top": offset_top, "bottom": offset_bottom, "left": offset_left, "right": offset_right}
 
         # 模拟器 ADB 检测
         is_emulator = params.get("is_emulator", False)

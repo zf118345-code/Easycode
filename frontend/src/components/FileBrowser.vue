@@ -1,3 +1,4 @@
+<!-- frontend/src/components/FileBrowser.vue -->
 <template>
     <div class="file-browser dark-theme">
         <!-- 左侧目录树区域 -->
@@ -20,7 +21,6 @@
                          @node-click="handleFolderClick">
                     <template #default="{ node, data }">
                         <div class="custom-tree-node">
-                            <!-- 如果是正在创建的内联输入节点 -->
                             <template v-if="data.isCreating">
                                 <span class="node-icon">📁</span>
                                 <input ref="inlineInputRef"
@@ -30,8 +30,6 @@
                                        @keyup.esc="cancelInlineFolder(data)"
                                        @blur="submitInlineFolder(data)" />
                             </template>
-
-                            <!-- 普通文件夹节点 -->
                             <template v-else>
                                 <span class="node-label">📁 {{ node.label }}</span>
                                 <el-button class="node-mkdir-btn"
@@ -103,248 +101,221 @@
     </div>
 </template>
 
-<script>
+<script setup>
     import { ref, watch, nextTick } from 'vue'
     import { ElMessage, ElMessageBox } from 'element-plus'
-    import axios from 'axios'
+    import { visionApi } from '@/api/visionApi'
 
-    export default {
-        name: 'FileBrowser',
-        props: {
-            projectPath: { type: String, required: true },
-            mode: { type: String, default: 'select' } // 'select' | 'save'
-        },
-        emits: ['select', 'save', 'close'],
-        setup(props, { emit }) {
-            const treeRef = ref(null)
-            const inlineInputRef = ref(null)
+    const props = defineProps({
+        projectPath: { type: String, required: true },
+        mode: { type: String, default: 'select' },
+        initialPath: { type: String, default: '' }
+    })
 
-            const treeData = ref([])
-            const imageList = ref([])
-            const currentRelPath = ref('')
-            const selectedImage = ref('')
-            const saveFileName = ref('')
-            const saving = ref(false)
+    const emit = defineEmits(['select', 'save', 'close'])
 
-            const defaultProps = { children: 'children', label: 'name' }
+    const treeRef = ref(null)
+    const inlineInputRef = ref(null)
 
-            // 拉取目录树
-            const fetchTree = async () => {
+    const treeData = ref([])
+    const imageList = ref([])
+    const currentRelPath = ref('')
+    const selectedImage = ref('')
+    const saveFileName = ref('')
+    const saving = ref(false)
+
+    const defaultProps = { children: 'children', label: 'name' }
+
+    const fetchTree = async () => {
+        try {
+            if (props.initialPath) {
                 try {
-                    const res = await axios.get('/api/templates/tree', {
-                        params: { project_path: props.projectPath }
-                    })
-                    treeData.value = [
-                        { name: '根目录 (templates)', id: '', children: res.data.tree || [] }
-                    ]
-                } catch (err) {
-                    console.error('获取目录树失败', err)
+                    await visionApi.createTemplateFolder(props.projectPath, '', props.initialPath)
+                } catch {
+                    /* 已存在则安全忽略 */
                 }
             }
 
-            // 拉取图片预览
-            const fetchImages = async (relPath) => {
-                try {
-                    const res = await axios.get('/api/templates/preview', {
-                        params: { project_path: props.projectPath, relative_path: relPath }
-                    })
-                    imageList.value = res.data.images || []
-                } catch (err) {
-                    console.error('获取图片预览失败', err)
-                }
-            }
+            const res = await visionApi.getTemplatesTree(props.projectPath)
+            treeData.value = [
+                { name: '根目录 (templates)', id: '', children: res.tree || [] }
+            ]
 
-            // 选中文件夹
-            const handleFolderClick = (data) => {
-                if (data.isCreating) return
-                currentRelPath.value = data.id || ''
-                selectedImage.value = ''
-                fetchImages(currentRelPath.value)
-            }
-
-            // ⭐ 单击图片：自动清洗并去除 .png 后缀填充给输入框
-            const handleImageClick = (fileName) => {
-                const cleanName = fileName.replace(/\.png$/i, '')
-                selectedImage.value = fileName
-                if (props.mode === 'save') {
-                    saveFileName.value = cleanName
-                }
-            }
-
-            // ⭐ 双击图片：自动清洗并直接提交或选择
-            const handleImageDblClick = (fileName) => {
-                const cleanName = fileName.replace(/\.png$/i, '')
-                selectedImage.value = fileName
-                if (props.mode === 'save') {
-                    saveFileName.value = cleanName
-                    handleSaveCheck()
-                } else {
-                    confirmSelect()
-                }
-            }
-
-            // 内联插入新文件夹
-            const inlineCreateFolder = (parentPath) => {
-                const findParentNode = (nodes, path) => {
-                    for (const n of nodes) {
-                        if (n.id === path) return n
-                        if (n.children) {
-                            const found = findParentNode(n.children, path)
-                            if (found) return found
-                        }
-                    }
-                    return null
-                }
-
-                const parentNode = findParentNode(treeData.value, parentPath)
-                const targetChildren = parentNode ? (parentNode.children = parentNode.children || []) : treeData.value[0].children
-
-                let baseName = 'New_Folder'
-                let defaultName = baseName
-                let count = 1
-                while (targetChildren.some(child => child.name === defaultName)) {
-                    defaultName = `${baseName}_${count}`
-                    count++
-                }
-
-                const newNode = {
-                    name: defaultName,
-                    id: `temp_${Date.now()}`,
-                    parentPath: parentPath,
-                    isCreating: true,
-                    creatingName: defaultName
-                }
-
-                targetChildren.push(newNode)
-
-                nextTick(() => {
-                    if (inlineInputRef.value) {
-                        inlineInputRef.value.focus()
-                        inlineInputRef.value.select()
-                    }
-                })
-            }
-
-            // 提交创建内联文件夹
-            const submitInlineFolder = async (nodeData) => {
-                if (!nodeData.isCreating) return
-                const folderName = nodeData.creatingName ? nodeData.creatingName.trim() : ''
-
-                if (!folderName) {
-                    cancelInlineFolder(nodeData)
-                    return
-                }
-
-                nodeData.isCreating = false
-
-                try {
-                    await axios.post('/api/templates/mkdir', {
-                        project_path: props.projectPath,
-                        parent_path: nodeData.parentPath,
-                        folder_name: folderName
-                    })
-                    ElMessage.success(`文件夹 [${folderName}] 创建成功`)
-                    await fetchTree()
-                } catch (err) {
-                    ElMessage.error(err.response?.data?.detail || '创建文件夹失败')
-                    cancelInlineFolder(nodeData)
-                }
-            }
-
-            // 取消内联新建
-            const cancelInlineFolder = (nodeData) => {
-                if (!nodeData.isCreating) return
-                const removeNode = (nodes) => {
-                    const idx = nodes.findIndex(n => n.id === nodeData.id)
-                    if (idx > -1) {
-                        nodes.splice(idx, 1)
-                        return true
-                    }
-                    for (const n of nodes) {
-                        if (n.children && removeNode(n.children)) return true
-                    }
-                    return false
-                }
-                removeNode(treeData.value)
-            }
-
-            // ⭐ 保存校验与重名弹窗（包含强制 z-index 提升）
-            const handleSaveCheck = async () => {
-                // 深度清洗后缀
-                const rawName = saveFileName.value.trim().replace(/\.png$/i, '')
-                if (!rawName) return ElMessage.warning('请输入图片名称')
-
-                const fullName = `${rawName.toLowerCase()}.png`
-                const isExist = imageList.value.some(img => img.name.toLowerCase() === fullName)
-
-                if (isExist) {
-                    try {
-                        await ElMessageBox.confirm(
-                            `当前目录下已存在同名图片 [${rawName}.png]，继续保存将覆盖原图片。是否继续？`,
-                            '文件覆盖警告',
-                            {
-                                confirmButtonText: '确定覆盖',
-                                cancelButtonText: '取消',
-                                type: 'warning',
-                                customClass: 'high-zindex-messagebox', // ⭐ 对应最高层级提示
-                                appendTo: 'body'
-                            }
-                        )
-                    } catch {
-                        return
-                    }
-                }
-
-                saving.value = true
-                emit('save', {
-                    relativePath: currentRelPath.value,
-                    fileName: rawName // ⭐ 回传彻底纯净的不含 .png 的名称
-                })
-                setTimeout(() => { saving.value = false }, 500)
-            }
-
-            const confirmSelect = () => {
-                if (!selectedImage.value) return ElMessage.warning('请选择一张图片')
-                // 选择已存在的图片时，自动剥离 .png 确保填回输入框的是干净路径
-                const cleanImgName = selectedImage.value.replace(/\.png$/i, '')
-                const fullPath = currentRelPath.value
-                    ? `${currentRelPath.value}/${cleanImgName}`
-                    : cleanImgName
-                emit('select', fullPath)
-            }
-
-            watch(
-                () => props.projectPath,
-                () => {
-                    if (props.projectPath) {
-                        fetchTree()
-                        fetchImages('')
-                    }
-                },
-                { immediate: true }
-            )
-
-            return {
-                treeRef,
-                inlineInputRef,
-                treeData,
-                imageList,
-                currentRelPath,
-                selectedImage,
-                saveFileName,
-                saving,
-                defaultProps,
-                handleFolderClick,
-                handleImageClick,
-                handleImageDblClick,
-                inlineCreateFolder,
-                submitInlineFolder,
-                cancelInlineFolder,
-                handleSaveCheck,
-                confirmSelect
-            }
+            currentRelPath.value = props.initialPath || ''
+            fetchImages(currentRelPath.value)
+        } catch (err) {
+            console.error('获取目录树失败', err)
         }
     }
+
+    const fetchImages = async (relPath) => {
+        try {
+            const res = await visionApi.getTemplatePreview(props.projectPath, relPath)
+            imageList.value = res.images || []
+        } catch (err) {
+            console.error('获取图片预览失败', err)
+        }
+    }
+
+    const handleFolderClick = (data) => {
+        if (data.isCreating) return
+        currentRelPath.value = data.id || ''
+        selectedImage.value = ''
+        fetchImages(currentRelPath.value)
+    }
+
+    const handleImageClick = (fileName) => {
+        const cleanName = fileName.replace(/\.png$/i, '')
+        selectedImage.value = fileName
+        if (props.mode === 'save') {
+            saveFileName.value = cleanName
+        }
+    }
+
+    const handleImageDblClick = (fileName) => {
+        const cleanName = fileName.replace(/\.png$/i, '')
+        selectedImage.value = fileName
+        if (props.mode === 'save') {
+            saveFileName.value = cleanName
+            handleSaveCheck()
+        } else {
+            confirmSelect()
+        }
+    }
+
+    const inlineCreateFolder = (parentPath) => {
+        const findParentNode = (nodes, path) => {
+            for (const n of nodes) {
+                if (n.id === path) return n
+                if (n.children) {
+                    const found = findParentNode(n.children, path)
+                    if (found) return found
+                }
+            }
+            return null
+        }
+
+        const parentNode = findParentNode(treeData.value, parentPath)
+        const targetChildren = parentNode ? (parentNode.children = parentNode.children || []) : treeData.value[0].children
+
+        const baseName = 'New_Folder'
+        let defaultName = baseName
+        let count = 1
+        while (targetChildren.some(child => child.name === defaultName)) {
+            defaultName = `${baseName}_${count}`
+            count++
+        }
+
+        const newNode = {
+            name: defaultName,
+            id: `temp_${Date.now()}`,
+            parentPath,
+            isCreating: true,
+            creatingName: defaultName
+        }
+
+        targetChildren.push(newNode)
+
+        nextTick(() => {
+            if (inlineInputRef.value) {
+                inlineInputRef.value.focus()
+                inlineInputRef.value.select()
+            }
+        })
+    }
+
+    const submitInlineFolder = async (nodeData) => {
+        if (!nodeData.isCreating) return
+        const folderName = nodeData.creatingName ? nodeData.creatingName.trim() : ''
+
+        if (!folderName) {
+            cancelInlineFolder(nodeData)
+            return
+        }
+
+        nodeData.isCreating = false
+
+        try {
+            await visionApi.createTemplateFolder(props.projectPath, nodeData.parentPath, folderName)
+            ElMessage.success(`文件夹 [${folderName}] 创建成功`)
+            await fetchTree()
+        } catch (err) {
+            ElMessage.error(err.message || '创建文件夹失败')
+            cancelInlineFolder(nodeData)
+        }
+    }
+
+    const cancelInlineFolder = (nodeData) => {
+        if (!nodeData.isCreating) return
+        const removeNode = (nodes) => {
+            const idx = nodes.findIndex(n => n.id === nodeData.id)
+            if (idx > -1) {
+                nodes.splice(idx, 1)
+                return true
+            }
+            for (const n of nodes) {
+                if (n.children && removeNode(n.children)) return true
+            }
+            return false
+        }
+        removeNode(treeData.value)
+    }
+
+    const handleSaveCheck = async () => {
+        const rawName = saveFileName.value.trim().replace(/\.png$/i, '')
+        if (!rawName) return ElMessage.warning('请输入图片名称')
+
+        const fullName = `${rawName.toLowerCase()}.png`
+        const isExist = imageList.value.some(img => img.name.toLowerCase() === fullName)
+
+        if (isExist) {
+            try {
+                await ElMessageBox.confirm(
+                    `当前目录下已存在同名图片 [${rawName}.png]，继续保存将覆盖原图片。是否继续？`,
+                    '文件覆盖警告',
+                    {
+                        confirmButtonText: '确定覆盖',
+                        cancelButtonText: '取消',
+                        type: 'warning',
+                        customClass: 'high-zindex-messagebox',
+                        appendTo: 'body'
+                    }
+                )
+            } catch {
+                return
+            }
+        }
+
+        saving.value = true
+        emit('save', {
+            relativePath: currentRelPath.value,
+            fileName: rawName
+        })
+        setTimeout(() => { saving.value = false }, 500)
+    }
+
+    const confirmSelect = () => {
+        if (!selectedImage.value) return ElMessage.warning('请选择一张图片')
+        const cleanImgName = selectedImage.value.replace(/\.png$/i, '')
+        const fullPath = currentRelPath.value
+            ? `${currentRelPath.value}/${cleanImgName}`
+            : cleanImgName
+        emit('select', fullPath)
+    }
+
+    // ⚡ 增加对 initialPath 和 mode 的全量监听
+    watch(
+        () => [props.projectPath, props.initialPath, props.mode],
+        ([newPath, newInitPath]) => {
+            if (newPath) {
+                selectedImage.value = ''
+                saveFileName.value = ''
+                currentRelPath.value = newInitPath || ''
+                fetchTree()
+            }
+        },
+        { immediate: true }
+    )
 </script>
 
 <style scoped>
@@ -353,7 +324,7 @@
         height: 480px;
         background: var(--el-bg-color-page);
         color: var(--el-text-color-regular);
-        border-radius: 8px;
+        border-radius: var(--app-radius-md, 8px);
         overflow: hidden;
         border: 1px solid var(--el-border-color-light);
     }
@@ -441,7 +412,7 @@
 
     .image-card {
         border: 1px solid var(--el-border-color-light);
-        border-radius: 6px;
+        border-radius: var(--app-radius-sm, 6px);
         padding: 6px;
         background: var(--el-bg-color);
         cursor: pointer;

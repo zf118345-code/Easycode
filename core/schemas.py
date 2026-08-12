@@ -31,6 +31,7 @@ class BlueprintSchema(BaseModel):
     project_name: str = Field(default="default", description="项目名称")
     tasks: List[TaskSchema] = Field(default_factory=list, description="任务组列表")
     variables: Dict[str, Any] = Field(default_factory=dict, description="全局变量")
+    ui_state: Optional[Dict[str, Any]] = Field(default_factory=dict,description="UI布局")
 
 # ===== 请求 Payload 模型 =====
 
@@ -66,6 +67,7 @@ class OcrTestRequestSchema(BaseModel):
     region_value: List[int] = Field(default=[0, 0, 0, 0], min_items=4, max_items=4)
     gray_scale: bool = True
     gray_threshold: int = Field(default=127, ge=0, le=255)
+    image_source: Optional[str] = Field(default="", description="OCR 模板静态测试图片路径") # ⚡ 补全此字段
 
 class ImageTestRequestSchema(BaseModel):
     project_path: str

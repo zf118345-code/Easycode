@@ -1,10 +1,10 @@
-﻿<template>
+﻿<!-- frontend/src/components/WorkflowCanvas.vue -->
+<template>
     <div ref="containerRef"
          class="custom-canvas-container"
          @mousedown="onCanvasMouseDown"
          @wheel="onCanvasWheel"
          @contextmenu="onContextMenu">
-
         <!-- 视口变换层 -->
         <div class="canvas-viewport" :style="viewportStyle">
 
@@ -68,11 +68,11 @@
                  :data-group-id="group.groupId"
                  :class="['canvas-group-box', { 'is-focused': activeFocusedGroupId === group.groupId }]"
                  :style="{
-                     left: group.box.x + 'px',
-                     top: group.box.y + 'px',
-                     width: group.box.w + 'px',
-                     height: group.box.h + 'px'
-                 }">
+             left: group.box.x + 'px',
+             top: group.box.y + 'px',
+             width: group.box.w + 'px',
+             height: group.box.h + 'px'
+           }">
                 <div class="group-title-badge" :data-group-id="group.groupId" @mousedown.stop="startGroupDrag($event, group.groupId)" @dblclick.stop="openGroupInspector($event, group)">
                     <div class="group-name-text">📁 {{ group.groupName }}</div>
                     <div class="group-sub-info">
@@ -87,11 +87,11 @@
                  class="node-drag-preview-box"
                  :class="{ 'is-danger': dragPreviewBox.hasCollision }"
                  :style="{
-                     left: dragPreviewBox.x + 'px',
-                     top: dragPreviewBox.y + 'px',
-                     width: dragPreviewBox.w + 'px',
-                     height: dragPreviewBox.h + 'px'
-                 }">
+             left: dragPreviewBox.x + 'px',
+             top: dragPreviewBox.y + 'px',
+             width: dragPreviewBox.w + 'px',
+             height: dragPreviewBox.h + 'px'
+           }">
                 <div class="preview-inner-tag">
                     {{ dragPreviewBox.hasCollision ? '⚠️ 将自动推挤周围节点' : '✔️ 空间充足' }}
                 </div>
@@ -106,7 +106,6 @@
                  @mousedown.stop="onNodeMouseDown($event, node)"
                  @mouseup="onNodeMouseUpCard($event, node)"
                  @dblclick.stop="onNodeDoubleClick($event, node)">
-
                 <!-- 1. 卡片头部：左侧图标 + 名称 -->
                 <div class="node-header" :data-node-id="node.node_id">
                     <div class="node-header-left" :data-node-id="node.node_id">
@@ -115,8 +114,9 @@
                     </div>
                 </div>
 
-                <!-- 2. 卡片中间主体区：最高限制 1:1，超高图自动应用高斯模糊背景和 contain -->
+                <!-- 2. 卡片中间主体区 -->
                 <div class="node-body" :data-node-id="node.node_id">
+                    <!-- 图像识别节点预览 -->
                     <div v-if="node.node_type === 'image_recognition'"
                          class="node-image-embedded"
                          :style="node.params?.image_source ? { '--bg-image-url': `url(${getImageThumbnailUrl(node.params.image_source)})` } : {}">
@@ -131,50 +131,51 @@
                             <span>未选模板</span>
                         </div>
                     </div>
+
+                    <!-- ⚡ 分支选择 Branch 节点: 行级条件与专属出口锚点 -->
+                    <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
+                        <div v-for="(cand, cIdx) in (node.params?.candidates || [])"
+                             :key="cIdx"
+                             class="branch-candidate-item">
+                            <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
+                                {{ formatCondDesc(cand.condition || cand) }}
+                            </span>
+                            <div class="node-handle source-handle branch-handle"
+                                 :title="`分支 ${cIdx + 1} 成立时流向出口`"
+                                 @mousedown.stop="startConnection($event, node.node_id, `branch_${cIdx}`)" />
+                        </div>
+                        <div v-if="!node.params?.candidates?.length" class="empty-cand-placeholder">
+                            <span>未配置分流条件</span>
+                        </div>
+                    </div>
                 </div>
 
-                <!-- 3. 卡片底部固定边栏（Footer）：居左对齐展示延时与循环 -->
+                <!-- 3. 卡片底部固定边栏 -->
                 <div class="node-footer-bar" :data-node-id="node.node_id">
                     <span class="footer-tag">延时: {{ node.delay_before ?? 200 }}ms</span>
                     <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
                 </div>
 
-                <div class="node-handle target-handle top-handle" title="入口位置"></div>
-                <div class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="startConnection($event, node.node_id, 'succ')"></div>
-                <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" title="失败分支出口" @mousedown.stop="startConnection($event, node.node_id, 'fail')"></div>
+                <!-- 通用入口与失败/兜底锚点 -->
+                <div class="node-handle target-handle top-handle" title="入口位置" />
+                <div v-if="node.node_type !== 'branch'" class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="startConnection($event, node.node_id, 'succ')" />
+                <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" :title="node.node_type === 'branch' ? 'Else 兜底分支出口' : '失败分支出口'" @mousedown.stop="startConnection($event, node.node_id, 'fail')" />
             </div>
 
         </div>
 
-        <!-- 1. 绑定 store.logExpanded 的运行控制台日志面板 -->
-        <div class="canvas-log-panel" v-show="store.logExpanded">
-            <div class="log-panel-header" @click="store.toggleLogPanel">
-                <span>📝 运行控制台日志</span>
-                <span class="collapse-icon">▼ 收起</span>
-            </div>
-            <div class="log-panel-body">
-                <div class="log-placeholder-text">暂无最新运行日志输出...</div>
-            </div>
-        </div>
-
-        <!-- 2. 绑定 store.minimapExpanded 的全景缩略图导航面板 -->
+        <!-- 全景缩略图导航面板 -->
         <div class="minimap-container" v-show="store.minimapExpanded">
-            <div class="minimap-header" @click="store.toggleMinimap">
-                <span>🗺️ 全景导航</span>
-                <span class="collapse-icon">▼</span>
-            </div>
-            <div class="minimap-body">
-                <canvas ref="minimapCanvasRef" width="200" height="150" @click="onMinimapClick"></canvas>
-            </div>
+            <canvas ref="minimapCanvasRef" width="150" height="110" @click="onMinimapClick" />
         </div>
 
-        <!-- 框选UI -->
-        <div v-if="selectionBox.visible" class="selection-box" :style="selectionBoxStyle"></div>
+        <!-- 框选 UI -->
+        <div v-if="selectionBox.visible" class="selection-box" :style="selectionBoxStyle" />
 
         <!-- 节点类型选择菜单 -->
         <div v-if="spawnMenu.visible"
              class="spawn-menu"
-             :style="{ left: spawnMenu.x + 'px', top: spawnMenu.y + 'px' }"
+             :style="{ left: spawnMenu.x + 'px', top: spawnMenu.y + 'px', zIndex: menuZIndex }"
              @mousedown.stop
              @click.stop>
             <div class="spawn-menu-header">
@@ -187,13 +188,12 @@
             </div>
         </div>
 
-        <!-- 画布空白处右键菜单（已精简：去除头部，纯净Windows风格） -->
+        <!-- 画布空白处右键菜单 -->
         <div v-if="customContextMenu.visible"
              class="custom-context-menu"
-             :style="{ left: customContextMenu.x + 'px', top: customContextMenu.y + 'px' }"
+             :style="{ left: customContextMenu.x + 'px', top: customContextMenu.y + 'px', zIndex: menuZIndex }"
              @mousedown.stop
              @click.stop>
-
             <template v-if="customContextMenu.targetType === 'node'">
                 <div class="menu-item" @click="handleRunFromNode">
                     <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
@@ -239,613 +239,623 @@
                 </div>
             </template>
         </div>
-
-        <WorkflowInspector v-if="inspector.visible"
-                           :visible="inspector.visible"
-                           :target-type="inspector.targetType"
-                           :target-data="inspector.targetData"
-                           :targets="inspector.targets"
-                           :position="inspector.position"
-                           @update="onInspectorUpdate"
-                           @close="closeInspector" />
     </div>
 </template>
 
-<script>
+<script setup>
     import { ref, computed, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
-    import axios from 'axios'
-    import WorkflowInspector from './WorkflowInspector.vue'
+    import { blueprintApi } from '@/api/blueprintApi'
     import { router } from '@/utils/gridRouter'
     import { getRoundedPathString } from '@/utils/pathSmooth'
+    import { getNextZIndex } from '@/utils/zIndexManager'
 
     import {
-        MousePointerClick,
-        Clock,
-        Target,
-        FileSearch,
-        GitBranch,
-        SearchCheck,
-        Binary,
-        ListOrdered,
-        FileCode,
-        Image,
-        CirclePlay,
-        Trash2
+        MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
+        Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2
     } from 'lucide-vue-next'
 
-    export default {
-        name: 'WorkflowCanvas',
-        components: {
-            WorkflowInspector,
-            MousePointerClick,
-            Clock,
-            Target,
-            FileSearch,
-            GitBranch,
-            SearchCheck,
-            Binary,
-            ListOrdered,
-            FileCode,
-            Image,
-            CirclePlay,
-            Trash2
-        },
-        setup() {
-            const store = useMainStore()
-            const containerRef = ref(null)
-            const minimapCanvasRef = ref(null)
+    const store = useMainStore()
+    const containerRef = ref(null)
+    const minimapCanvasRef = ref(null)
+    const menuZIndex = ref(3000)
+    const isCtrlHeldRef = ref(false)
+    const draggedSourceGroupSnapshot = ref(null)
+    const ghostPlaceholder = ref(null)
 
-            const isCtrlHeldRef = ref(false)
-            const draggedSourceGroupSnapshot = ref(null)
-            const ghostPlaceholder = ref(null)
+    const viewport = ref({ x: 0, y: 0, zoom: 1 })
+    const isPanning = ref(false)
+    const panStart = ref({ x: 0, y: 0 })
 
-            const viewport = ref({ x: 0, y: 0, zoom: 1 })
-            const isPanning = ref(false)
-            const panStart = ref({ x: 0, y: 0 })
+    const localDraftPositions = reactive({})
+    const draggingNodeId = ref(null)
+    const dragStartMouse = ref({ x: 0, y: 0 })
+    const nodeInitialPos = ref({ x: 0, y: 0 })
+    const hasMoved = ref(false)
 
-            const localDraftPositions = reactive({})
-            const draggingNodeId = ref(null)
-            const dragStartMouse = ref({ x: 0, y: 0 })
-            const nodeInitialPos = ref({ x: 0, y: 0 })
-            const hasMoved = ref(false)
+    const dynamicImageHeights = reactive({})
+    const tallImageFlags = reactive({})
 
-            const dynamicImageHeights = reactive({})
-            const tallImageFlags = reactive({})
+    const dragPreviewBox = ref({ visible: false, x: 0, y: 0, w: 0, h: 0, hasCollision: false })
+    const selectionBox = ref({ visible: false, startX: 0, startY: 0, endX: 0, endY: 0 })
+    const drawingConnection = ref({ active: false, sourceNodeId: null, portType: 'succ', currentX: 0, currentY: 0, previewMarkerUrl: 'url(#arrow-preview)' })
 
-            const dragPreviewBox = ref({ visible: false, x: 0, y: 0, w: 0, h: 0, hasCollision: false })
+    const spawnMenu = ref({ visible: false, x: 0, y: 0, sourceNodeId: null, portType: 'succ', clientX: 0, clientY: 0 })
 
-            const selectionBox = ref({ visible: false, startX: 0, startY: 0, endX: 0, endY: 0 })
-            const drawingConnection = ref({ active: false, sourceNodeId: null, portType: 'succ', currentX: 0, currentY: 0, previewMarkerUrl: 'url(#arrow-preview)' })
+    const customContextMenu = reactive({
+        visible: false,
+        x: 0,
+        y: 0,
+        targetType: 'canvas',
+        targetId: null,
+        targetName: '',
+        clientX: 0,
+        clientY: 0
+    })
 
-            const spawnMenu = ref({ visible: false, x: 0, y: 0, sourceNodeId: null, portType: 'succ', clientX: 0, clientY: 0 })
+    const selectedEdgeId = ref(null)
+    const localSelectedNodeIds = ref([])
 
-            const customContextMenu = reactive({
-                visible: false,
-                x: 0,
-                y: 0,
-                targetType: 'canvas',
-                targetId: null,
-                targetName: '',
-                clientX: 0,
-                clientY: 0
-            })
+    const GRID_SIZE = 20
+    const NODE_GRID_W = 8
 
-            const inspector = ref({ visible: false, targetType: 'node', targetData: null, targets: [], position: { x: 100, y: 100 } })
+    const availableNodeTypes = {
+        click: '🖱️ 鼠标点击',
+        wait: '⏳ 等待',
+        image_recognition: '🎯 图像识别',
+        ocr_recognition: '👁️ 文字识别 (OCR)',
+        branch: '🔀 分支选择',
+        logic_check: '🔍 逻辑判断',
+        variable_op: '🔢 变量操作',
+        log: '📝 日志输出',
+        script_call: '📜 调用脚本'
+    }
 
-            const selectedEdgeId = ref(null)
-            const localSelectedNodeIds = ref([])
+    const nodeIconComponentMap = {
+        click: MousePointerClick,
+        wait: Clock,
+        set_window: Target,
+        image_recognition: Image,
+        ocr_recognition: FileSearch,
+        branch: GitBranch,
+        logic_check: SearchCheck,
+        variable_op: Binary,
+        log: ListOrdered,
+        script_call: FileCode
+    }
 
-            const GRID_SIZE = 20
-            const NODE_GRID_W = 8
+    const getNodeIcon = (nodeType) => nodeIconComponentMap[nodeType] || FileCode
 
-            const availableNodeTypes = {
-                click: '🖱️ 鼠标点击',
-                wait: '⏳ 等待',
-                image_recognition: '🎯 图像识别',
-                ocr_recognition: '👁️ 文字识别 (OCR)',
-                branch: '🔀 分支选择',
-                logic_check: '🔍 逻辑判断',
-                variable_op: '🔢 变量操作',
-                log: '📝 日志输出',
-                script_call: '📜 调用脚本'
-            }
+    const getNodeShortLabel = (nodeType) => {
+        const label = availableNodeTypes[nodeType] || nodeType
+        return label.replace(/^[^\u4e00-\u9fa5]+/, '').trim()
+    }
 
-            const nodeIconComponentMap = {
-                click: 'MousePointerClick',
-                wait: 'Clock',
-                image_recognition: 'Target',
-                ocr_recognition: 'FileSearch',
-                branch: 'GitBranch',
-                logic_check: 'SearchCheck',
-                variable_op: 'Binary',
-                log: 'ListOrdered',
-                script_call: 'FileCode'
-            }
+    // ⚡ 格式化 Branch 条件的纯简描述
+    const formatCondDesc = (item) => {
+        if (!item) return '未配置条件'
+        const condType = item.condition_type || item.type || 'variable_check'
+        const params = item.params || item
 
-            const getNodeIcon = (nodeType) => {
-                return nodeIconComponentMap[nodeType] || 'FileCode'
-            }
+        if (condType === 'image_exists') {
+            const opText = params.exist_mode === 'not_exists' ? '不存在' : '存在'
+            return `🖼️ ${opText}: ${params.image_source || '未选图片'}`
+        }
+        if (condType === 'text_contains') {
+            return `🔤 文本: ${params.target_text || '未设文本'}`
+        }
+        if (condType === 'variable_check') {
+            return `🔢 变量: ${params.variable_name || params.var_name || '未选'} (${params.operator || 'eq'}) ${params.compare_value ?? params.target_value ?? ''}`
+        }
+        if (condType === 'window_state') {
+            return `🪟 窗口: ${params.window_title || '默认'} (${params.state_check || '存在'})`
+        }
+        if (condType === 'file_exists') {
+            return `📂 文件: ${params.file_path || '未设路径'}`
+        }
+        return `判定: ${condType}`
+    }
 
-            const getNodeShortLabel = (nodeType) => {
-                const label = availableNodeTypes[nodeType] || nodeType
-                return label.replace(/^[^\u4e00-\u9fa5]+/, '').trim()
-            }
+    const getImageThumbnailUrl = (imageSource) => {
+        if (!imageSource) return ''
+        let cleanName = imageSource.replace(/\\/g, '/')
+        if (!/\.(png|jpg|jpeg)$/i.test(cleanName)) cleanName += '.png'
+        const version = store.blueprint?.version || 0
+        return `/api/image/thumb?project_path=${encodeURIComponent(store.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&v=${version}`
+    }
 
-            const getImageThumbnailUrl = (imageSource) => {
-                if (!imageSource) return ''
-                let cleanName = imageSource.replace(/\\/g, '/')
-                if (!/\.(png|jpg|jpeg)$/i.test(cleanName)) {
-                    cleanName += '.png'
-                }
-                const version = store.taskNodesVersion || 0
-                return `/api/image/thumb?project_path=${encodeURIComponent(store.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&v=${version}`
-            }
+    const hasFailurePort = (nodeType) => ['image_recognition', 'ocr_recognition', 'branch', 'logic_check'].includes(nodeType)
 
-            const hasFailurePort = (nodeType) => {
-                return ['image_recognition', 'ocr_recognition', 'branch', 'logic_check'].includes(nodeType)
-            }
+    const viewportStyle = computed(() => ({
+        transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
+        transformOrigin: '0 0'
+    }))
 
-            const viewportStyle = computed(() => ({
-                transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
-                transformOrigin: '0 0'
-            }))
+    const selectionBoxStyle = computed(() => {
+        if (!containerRef.value) return {}
+        const rect = containerRef.value.getBoundingClientRect()
+        const startX = selectionBox.value.startX - rect.left
+        const startY = selectionBox.value.startY - rect.top
+        const endX = selectionBox.value.endX - rect.left
+        const endY = selectionBox.value.endY - rect.top
+        return {
+            left: Math.min(startX, endX) + 'px',
+            top: Math.min(startY, endY) + 'px',
+            width: Math.abs(endX - startX) + 'px',
+            height: Math.abs(endY - startY) + 'px'
+        }
+    })
 
-            const selectionBoxStyle = computed(() => {
-                if (!containerRef.value) return {}
-                const rect = containerRef.value.getBoundingClientRect()
-                const startX = selectionBox.value.startX - rect.left
-                const startY = selectionBox.value.startY - rect.top
-                const endX = selectionBox.value.endX - rect.left
-                const endY = selectionBox.value.endY - rect.top
-                return {
-                    left: Math.min(startX, endX) + 'px',
-                    top: Math.min(startY, endY) + 'px',
-                    width: Math.abs(endX - startX) + 'px',
-                    height: Math.abs(endY - startY) + 'px'
-                }
-            })
-
-            const activeFocusedGroupId = computed(() => {
-                if (draggingNodeId.value) {
-                    const tasks = store.currentTaskData?.tasks || []
-                    for (let i = 0; i < tasks.length; i++) {
-                        if ((tasks[i].nodes || []).some(n => n.node_id === draggingNodeId.value)) {
-                            return `group_${tasks[i].task_id || i}`
-                        }
-                    }
-                }
-                if (localSelectedNodeIds.value.length > 0) {
-                    const firstSelId = localSelectedNodeIds.value[0]
-                    const tasks = store.currentTaskData?.tasks || []
-                    for (let i = 0; i < tasks.length; i++) {
-                        if ((tasks[i].nodes || []).some(n => n.node_id === firstSelId)) {
-                            return `group_${tasks[i].task_id || i}`
-                        }
-                    }
-                }
-                return null
-            })
-
-            const isNodeFocused = (nodeId) => {
-                if (!activeFocusedGroupId.value) return false
-                const tasks = store.currentTaskData?.tasks || []
-                for (let i = 0; i < tasks.length; i++) {
-                    const gId = `group_${tasks[i].task_id || i}`
-                    if (gId === activeFocusedGroupId.value) {
-                        return (tasks[i].nodes || []).some(n => n.node_id === nodeId)
-                    }
-                }
-                return false
-            }
-
-            const renderNodes = computed(() => {
-                const tasks = store.currentTaskData?.tasks || []
-                let allNodesList = []
-
-                tasks.forEach((task) => {
-                    const rawNodes = task.nodes || []
-                    rawNodes.forEach((node, nIndex) => {
-                        const rawPos = localDraftPositions[node.node_id] || node.position || { x: 60 + (nIndex % 3) * 200, y: 60 + Math.floor(nIndex / 3) * 120 }
-                        const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
-                        const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
-                        const isSel = localSelectedNodeIds.value.includes(node.node_id)
-
-                        let contentHeightPx = 52
-                        if (node.node_type === 'image_recognition') {
-                            if (dynamicImageHeights[node.node_id]) {
-                                contentHeightPx += dynamicImageHeights[node.node_id]
-                            } else {
-                                contentHeightPx += 120
-                            }
-                        }
-
-                        const exactGrids = contentHeightPx / GRID_SIZE
-                        const gridCount = Math.ceil(exactGrids)
-                        const finalHeight = gridCount * GRID_SIZE
-
-                        allNodesList.push({
-                            ...node,
-                            position: { x: gridX, y: gridY },
-                            w: NODE_GRID_W * GRID_SIZE,
-                            h: finalHeight,
-                            showFailPort: hasFailurePort(node.node_type),
-                            selected: isSel
-                        })
-                    })
-                })
-                return allNodesList
-            })
-
-            const onImageLoaded = (e, nodeId) => {
-                const img = e.target
-                const naturalW = img.naturalWidth || 100
-                const naturalH = img.naturalHeight || 100
-                const cardInnerWidth = (NODE_GRID_W * GRID_SIZE) - 24
-
-                const ratio = naturalH / naturalW
-                if (ratio > 1) {
-                    tallImageFlags[nodeId] = true
-                    dynamicImageHeights[nodeId] = cardInnerWidth
-                } else {
-                    tallImageFlags[nodeId] = false
-                    dynamicImageHeights[nodeId] = Math.round(cardInnerWidth * ratio)
+    const activeFocusedGroupId = computed(() => {
+        if (draggingNodeId.value) {
+            const tasks = store.blueprint?.tasks || []
+            for (let i = 0; i < tasks.length; i++) {
+                if ((tasks[i].nodes || []).some(n => n.node_id === draggingNodeId.value)) {
+                    return `group_${tasks[i].task_id || i}`
                 }
             }
-
-            const isSpecialTallImage = (nodeId) => {
-                return !!tallImageFlags[nodeId]
+        }
+        if (localSelectedNodeIds.value.length > 0) {
+            const firstSelId = localSelectedNodeIds.value[0]
+            const tasks = store.blueprint?.tasks || []
+            for (let i = 0; i < tasks.length; i++) {
+                if ((tasks[i].nodes || []).some(n => n.node_id === firstSelId)) {
+                    return `group_${tasks[i].task_id || i}`
+                }
             }
+        }
+        return null
+    })
 
-            const fitViewToNodes = () => {
-                nextTick(() => {
-                    const tasks = store.currentTaskData?.tasks || []
-                    let allNodes = []
-                    tasks.forEach(t => { if (t.nodes) allNodes.push(...t.nodes) })
-                    if (allNodes.length === 0 || !containerRef.value) return
+    // ⚡ 计算 Branch 行级出口相对 Y 轴中心位置
+    const getBranchPortCenterY = (node, cIdx) => {
+        // 卡片顶边距 8 + 头部 16 + 容器边距 4 + 列表边距 2 + 单项中心 12 = 42px，单项高度加间距步长为 28px
+        return 42 + cIdx * 28
+    }
 
-                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-                    allNodes.forEach(n => {
-                        const pos = n.position || { x: 0, y: 0 }
-                        const w = NODE_GRID_W * GRID_SIZE
-                        const h = n.h || 120
-                        minX = Math.min(minX, pos.x)
-                        minY = Math.min(minY, pos.y)
-                        maxX = Math.max(maxX, pos.x + w)
-                        maxY = Math.max(maxY, pos.y + h)
-                    })
+    const renderNodes = computed(() => {
+        const tasks = store.blueprint?.tasks || []
+        let allNodesList = []
 
-                    const centerX = (minX + maxX) / 2
-                    const centerY = (minY + maxY) / 2
+        tasks.forEach((task) => {
+            const rawNodes = task.nodes || []
+            rawNodes.forEach((node, nIndex) => {
+                const rawPos = localDraftPositions[node.node_id] || node.position || { x: 60 + (nIndex % 3) * 200, y: 60 + Math.floor(nIndex / 3) * 120 }
+                const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
+                const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
+                const isSel = localSelectedNodeIds.value.includes(node.node_id)
 
-                    const containerW = containerRef.value.clientWidth
-                    const containerH = containerRef.value.clientHeight
-
-                    viewport.value.x = containerW / 2 - centerX * viewport.value.zoom
-                    viewport.value.y = containerH / 2 - centerY * viewport.value.zoom
-
-                    if (typeof drawMinimap === 'function') {
-                        drawMinimap()
-                    }
-                })
-            }
-
-            const dynamicGroups = computed(() => {
-                const tasks = store.currentTaskData?.tasks || []
-                let groups = []
-                const PADDING_GRIDS = 3
-                const PADDING_PX = PADDING_GRIDS * GRID_SIZE
-
-                const allRenderedNodes = renderNodes.value
-
-                tasks.forEach((task, tIndex) => {
-                    const groupId = `group_${task.task_id || tIndex}`
-                    const groupName = task.task_name || `任务组 ${tIndex + 1}`
-
-                    const taskNodeIds = (task.nodes || []).map(n => n.node_id)
-                    const groupNodes = allRenderedNodes.filter(n => {
-                        if (!taskNodeIds.includes(n.node_id)) return false
-                        if (n.node_id === draggingNodeId.value && isCtrlHeldRef.value) {
-                            return false
-                        }
-                        return true
-                    })
-
-                    let effectiveNodes = [...groupNodes]
-                    if (ghostPlaceholder.value && draggingNodeId.value && isCtrlHeldRef.value) {
-                        const isNodeInThisGroup = taskNodeIds.includes(draggingNodeId.value)
-                        if (isNodeInThisGroup) {
-                            effectiveNodes.push(ghostPlaceholder.value)
-                        }
-                    }
-
-                    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-
-                    if (effectiveNodes.length > 0) {
-                        effectiveNodes.forEach((node) => {
-                            minX = Math.min(minX, node.position.x)
-                            minY = Math.min(minY, node.position.y)
-                            maxX = Math.max(maxX, node.position.x + node.w)
-                            maxY = Math.max(maxY, node.position.y + node.h)
-                        })
-
-                        const rawBoxX = minX - PADDING_PX
-                        const rawBoxY = minY - PADDING_PX - 24
-                        const rawBoxW = (maxX - minX) + PADDING_PX * 2
-                        const rawBoxH = (maxY - minY) + PADDING_PX * 2 + 24
-
-                        const boxX = Math.round(rawBoxX / GRID_SIZE) * GRID_SIZE
-                        const boxY = Math.round(rawBoxY / GRID_SIZE) * GRID_SIZE
-                        const boxW = Math.max(Math.round(rawBoxW / GRID_SIZE) * GRID_SIZE, 220)
-                        const boxH = Math.max(Math.round(rawBoxH / GRID_SIZE) * GRID_SIZE, 120)
-
-                        groups.push({
-                            groupId,
-                            groupName,
-                            taskId: task.task_id,
-                            loopCount: task.loop_count || 1,
-                            loopInterval: task.loop_interval || 0,
-                            box: { x: boxX, y: boxY, w: boxW, h: boxH }
-                        })
+                let contentHeightPx = 52
+                if (node.node_type === 'image_recognition') {
+                    if (dynamicImageHeights[node.node_id]) {
+                        contentHeightPx += dynamicImageHeights[node.node_id]
                     } else {
-                        groups.push({
-                            groupId,
-                            groupName,
-                            taskId: task.task_id,
-                            loopCount: task.loop_count || 1,
-                            loopInterval: task.loop_interval || 0,
-                            box: { x: 60, y: 60, w: 240, h: 140 }
-                        })
+                        contentHeightPx += 120
                     }
+                } else if (node.node_type === 'branch') {
+                    const candCount = node.params?.candidates?.length || 0
+                    contentHeightPx += Math.max(candCount * 28, 30)
+                }
+
+                const exactGrids = contentHeightPx / GRID_SIZE
+                const gridCount = Math.ceil(exactGrids)
+                const finalHeight = gridCount * GRID_SIZE
+
+                allNodesList.push({
+                    ...node,
+                    position: { x: gridX, y: gridY },
+                    w: NODE_GRID_W * GRID_SIZE,
+                    h: finalHeight,
+                    showFailPort: hasFailurePort(node.node_type),
+                    selected: isSel
                 })
-                return groups
+            })
+        })
+        return allNodesList
+    })
+
+    const onImageLoaded = (e, nodeId) => {
+        const img = e.target
+        const naturalW = img.naturalWidth || 100
+        const naturalH = img.naturalHeight || 100
+        const cardInnerWidth = (NODE_GRID_W * GRID_SIZE) - 24
+
+        const ratio = naturalH / naturalW
+        if (ratio > 1) {
+            tallImageFlags[nodeId] = true
+            dynamicImageHeights[nodeId] = cardInnerWidth
+        } else {
+            tallImageFlags[nodeId] = false
+            dynamicImageHeights[nodeId] = Math.round(cardInnerWidth * ratio)
+        }
+    }
+
+    const isSpecialTallImage = (nodeId) => !!tallImageFlags[nodeId]
+
+    const fitViewToNodes = () => {
+        nextTick(() => {
+            const tasks = store.blueprint?.tasks || []
+            let allNodes = []
+            tasks.forEach(t => { if (t.nodes) allNodes.push(...t.nodes) })
+            if (allNodes.length === 0 || !containerRef.value) return
+
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+            allNodes.forEach(n => {
+                const pos = n.position || { x: 0, y: 0 }
+                const w = NODE_GRID_W * GRID_SIZE
+                const h = n.h || 120
+                minX = Math.min(minX, pos.x)
+                minY = Math.min(minY, pos.y)
+                maxX = Math.max(maxX, pos.x + w)
+                maxY = Math.max(maxY, pos.y + h)
             })
 
-            const onContextMenu = (e) => {
-                e.preventDefault()
-                customContextMenu.visible = false
+            const centerX = (minX + maxX) / 2
+            const centerY = (minY + maxY) / 2
 
-                const nodeCard = e.target.closest('.canvas-node-card')
-                if (nodeCard) {
-                    const nodeId = nodeCard.getAttribute('data-node-id')
-                    const nodeObj = renderNodes.value.find(n => n.node_id === nodeId)
-                    if (nodeObj) {
-                        customContextMenu.visible = true
-                        customContextMenu.x = e.clientX
-                        customContextMenu.y = e.clientY
-                        customContextMenu.targetType = 'node'
-                        customContextMenu.targetId = nodeObj.node_id
-                        customContextMenu.targetName = nodeObj.node_name
-                        customContextMenu.clientX = e.clientX
-                        customContextMenu.clientY = e.clientY
-                        return
-                    }
+            const containerW = containerRef.value.clientWidth
+            const containerH = containerRef.value.clientHeight
+
+            viewport.value.x = containerW / 2 - centerX * viewport.value.zoom
+            viewport.value.y = containerH / 2 - centerY * viewport.value.zoom
+
+            drawMinimap()
+        })
+    }
+
+    const dynamicGroups = computed(() => {
+        const tasks = store.blueprint?.tasks || []
+        let groups = []
+        const PADDING_GRIDS = 3
+        const PADDING_PX = PADDING_GRIDS * GRID_SIZE
+
+        const allRenderedNodes = renderNodes.value
+
+        tasks.forEach((task, tIndex) => {
+            const groupId = `group_${task.task_id || tIndex}`
+            const groupName = task.task_name || `任务组 ${tIndex + 1}`
+
+            const taskNodeIds = (task.nodes || []).map(n => n.node_id)
+            const groupNodes = allRenderedNodes.filter(n => {
+                if (!taskNodeIds.includes(n.node_id)) return false
+                if (n.node_id === draggingNodeId.value && isCtrlHeldRef.value) {
+                    return false
                 }
+                return true
+            })
 
-                const groupBox = e.target.closest('.canvas-group-box') || e.target.closest('.group-title-badge')
-                if (groupBox) {
-                    const groupId = groupBox.getAttribute('data-group-id')
-                    const groupObj = dynamicGroups.value.find(g => g.groupId === groupId)
-                    if (groupObj) {
-                        customContextMenu.visible = true
-                        customContextMenu.x = e.clientX
-                        customContextMenu.y = e.clientY
-                        customContextMenu.targetType = 'group'
-                        customContextMenu.targetId = groupObj.taskId
-                        customContextMenu.targetName = groupObj.groupName
-                        customContextMenu.clientX = e.clientX
-                        customContextMenu.clientY = e.clientY
-                        return
-                    }
+            let effectiveNodes = [...groupNodes]
+            if (ghostPlaceholder.value && draggingNodeId.value && isCtrlHeldRef.value) {
+                const isNodeInThisGroup = taskNodeIds.includes(draggingNodeId.value)
+                if (isNodeInThisGroup) {
+                    effectiveNodes.push(ghostPlaceholder.value)
                 }
+            }
 
-                if (!containerRef.value) return
-                const rect = containerRef.value.getBoundingClientRect()
-                const clientX = e.clientX - rect.left
-                const clientY = e.clientY - rect.top
-                const worldX = (clientX - viewport.value.x) / viewport.value.zoom
-                const worldY = (clientY - viewport.value.y) / viewport.value.zoom
+            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
 
-                let hitGroup = null
-                for (const g of dynamicGroups.value) {
-                    const box = g.box
-                    if (worldX >= box.x && worldX <= box.x + box.w && worldY >= box.y && worldY <= box.y + box.h) {
-                        hitGroup = g
-                        break
-                    }
-                }
+            if (effectiveNodes.length > 0) {
+                effectiveNodes.forEach((node) => {
+                    minX = Math.min(minX, node.position.x)
+                    minY = Math.min(minY, node.position.y)
+                    maxX = Math.max(maxX, node.position.x + node.w)
+                    maxY = Math.max(maxY, node.position.y + node.h)
+                })
 
+                const rawBoxX = minX - PADDING_PX
+                const rawBoxY = minY - PADDING_PX - 24
+                const rawBoxW = (maxX - minX) + PADDING_PX * 2
+                const rawBoxH = (maxY - minY) + PADDING_PX * 2 + 24
+
+                const boxX = Math.round(rawBoxX / GRID_SIZE) * GRID_SIZE
+                const boxY = Math.round(rawBoxY / GRID_SIZE) * GRID_SIZE
+                const boxW = Math.max(Math.round(rawBoxW / GRID_SIZE) * GRID_SIZE, 220)
+                const boxH = Math.max(Math.round(rawBoxH / GRID_SIZE) * GRID_SIZE, 120)
+
+                groups.push({
+                    groupId,
+                    groupName,
+                    taskId: task.task_id,
+                    loopCount: task.loop_count || 1,
+                    loopInterval: task.loop_interval || 0,
+                    box: { x: boxX, y: boxY, w: boxW, h: boxH }
+                })
+            } else {
+                groups.push({
+                    groupId,
+                    groupName,
+                    taskId: task.task_id,
+                    loopCount: task.loop_count || 1,
+                    loopInterval: task.loop_interval || 0,
+                    box: { x: 60, y: 60, w: 240, h: 140 }
+                })
+            }
+        })
+        return groups
+    })
+
+    const onContextMenu = (e) => {
+        e.preventDefault()
+        menuZIndex.value = getNextZIndex(e)
+        customContextMenu.visible = false
+
+        const nodeCard = e.target.closest('.canvas-node-card')
+        if (nodeCard) {
+            const nodeId = nodeCard.getAttribute('data-node-id')
+            const nodeObj = renderNodes.value.find(n => n.node_id === nodeId)
+            if (nodeObj) {
                 customContextMenu.visible = true
                 customContextMenu.x = e.clientX
                 customContextMenu.y = e.clientY
+                customContextMenu.targetType = 'node'
+                customContextMenu.targetId = nodeObj.node_id
+                customContextMenu.targetName = nodeObj.node_name
                 customContextMenu.clientX = e.clientX
                 customContextMenu.clientY = e.clientY
+                return
+            }
+        }
 
-                if (hitGroup) {
-                    customContextMenu.targetType = 'canvas_in_group'
-                    customContextMenu.targetId = hitGroup.taskId
-                    customContextMenu.targetName = hitGroup.groupName
-                } else {
-                    customContextMenu.targetType = 'canvas_public'
-                    customContextMenu.targetId = null
-                    customContextMenu.targetName = ''
+        const groupBox = e.target.closest('.canvas-group-box') || e.target.closest('.group-title-badge')
+        if (groupBox) {
+            const groupId = groupBox.getAttribute('data-group-id')
+            const groupObj = dynamicGroups.value.find(g => g.groupId === groupId)
+            if (groupObj) {
+                customContextMenu.visible = true
+                customContextMenu.x = e.clientX
+                customContextMenu.y = e.clientY
+                customContextMenu.targetType = 'group'
+                customContextMenu.targetId = groupObj.taskId
+                customContextMenu.targetName = groupObj.groupName
+                customContextMenu.clientX = e.clientX
+                customContextMenu.clientY = e.clientY
+                return
+            }
+        }
+
+        if (!containerRef.value) return
+        const rect = containerRef.value.getBoundingClientRect()
+        const clientX = e.clientX - rect.left
+        const clientY = e.clientY - rect.top
+        const worldX = (clientX - viewport.value.x) / viewport.value.zoom
+        const worldY = (clientY - viewport.value.y) / viewport.value.zoom
+
+        let hitGroup = null
+        for (const g of dynamicGroups.value) {
+            const box = g.box
+            if (worldX >= box.x && worldX <= box.x + box.w && worldY >= box.y && worldY <= box.y + box.h) {
+                hitGroup = g
+                break
+            }
+        }
+
+        customContextMenu.visible = true
+        customContextMenu.x = e.clientX
+        customContextMenu.y = e.clientY
+        customContextMenu.clientX = e.clientX
+        customContextMenu.clientY = e.clientY
+
+        if (hitGroup) {
+            customContextMenu.targetType = 'canvas_in_group'
+            customContextMenu.targetId = hitGroup.taskId
+            customContextMenu.targetName = hitGroup.groupName
+        } else {
+            customContextMenu.targetType = 'canvas_public'
+            customContextMenu.targetId = null
+            customContextMenu.targetName = ''
+        }
+    }
+
+    const handleRunFromNode = async () => {
+        const nodeId = customContextMenu.targetId
+        customContextMenu.visible = false
+        if (!nodeId) return
+
+        let targetTaskId = null
+        const tasks = store.blueprint?.tasks || []
+        for (const task of tasks) {
+            if ((task.nodes || []).some(n => n.node_id === nodeId)) {
+                targetTaskId = task.task_id
+                break
+            }
+        }
+
+        if (!targetTaskId) {
+            ElMessage.error('未找到该节点所属的任务组')
+            return
+        }
+
+        try {
+            ElMessage.info('正在从当前节点启动任务...')
+            const result = await store.runTask(targetTaskId, nodeId)
+            if (result && result.status === 'started') {
+                ElMessage.success('任务已成功从当前节点启动！')
+            } else {
+                ElMessage.error('执行失败')
+            }
+        } catch (err) {
+            ElMessage.error('执行请求失败: ' + err.message)
+        }
+    }
+
+    const handleDeleteNode = async () => {
+        const nodeId = customContextMenu.targetId
+        customContextMenu.visible = false
+        if (!nodeId) return
+
+        try {
+            const tasks = store.blueprint?.tasks || []
+            for (const task of tasks) {
+                if (task.nodes) {
+                    task.nodes = task.nodes.filter(n => n.node_id !== nodeId)
                 }
             }
+            store.blueprint.tasks = tasks.filter(t => (t.nodes || []).length > 0)
+            await store.saveBlueprintImmediately()
+            ElMessage.success('节点已成功删除')
+        } catch (err) {
+            ElMessage.error('删除节点失败: ' + err.message)
+        }
+    }
 
-            // ⭐ 从当前节点开始运行
-            const handleRunFromNode = async () => {
-                const nodeId = customContextMenu.targetId
-                customContextMenu.visible = false
-                if (!nodeId) return
+    const handleDeleteGroup = async () => {
+        const taskId = customContextMenu.targetId
+        customContextMenu.visible = false
+        if (!taskId) return
 
-                let targetTaskId = null
-                const tasks = store.currentTaskData?.tasks || []
-                for (const task of tasks) {
-                    if ((task.nodes || []).some(n => n.node_id === nodeId)) {
-                        targetTaskId = task.task_id
-                        break
-                    }
-                }
+        try {
+            await blueprintApi.deleteTask(taskId, store.currentProjectPath)
+            await store.loadProjectData()
+            ElMessage.success('任务组已成功删除')
+        } catch (err) {
+            ElMessage.error('删除任务组失败: ' + err.message)
+        }
+    }
 
-                if (!targetTaskId) {
-                    ElMessage.error('未找到该节点所属的任务组')
-                    return
-                }
+    const handleCanvasNewNode = () => {
+        customContextMenu.visible = false
+        spawnMenu.value = {
+            visible: true,
+            x: customContextMenu.x,
+            y: customContextMenu.y,
+            sourceNodeId: null,
+            portType: 'succ',
+            clientX: customContextMenu.clientX,
+            clientY: customContextMenu.clientY
+        }
+    }
 
-                try {
-                    ElMessage.info('正在从当前节点启动任务...')
-                    const result = await store.runTask(targetTaskId, nodeId)
-                    if (result.status === 'started') {
-                        ElMessage.success('任务已成功从当前节点启动！')
+    const handleCanvasNewGroup = async () => {
+        customContextMenu.visible = false
+        try {
+            const { value: groupName } = await ElMessageBox.prompt('请输入新任务组名称', '新建任务组', {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                inputPattern: /\S+/,
+                inputErrorMessage: '任务组名称不能为空'
+            })
+
+            if (groupName) {
+                await blueprintApi.createTask(store.currentProjectPath, { task_name: groupName.trim(), nodes: [] })
+                await store.loadProjectData()
+                ElMessage.success(`任务组 [${groupName}] 创建成功`)
+            }
+        } catch (err) {
+            if (err !== 'cancel') {
+                ElMessage.error(err.message || '创建任务组失败')
+            }
+        }
+    }
+
+    const getArrowDirection = (points) => {
+        if (!points || points.length < 2) return 'down'
+        let p1 = points[points.length - 2]
+        let p2 = points[points.length - 1]
+
+        for (let i = points.length - 1; i > 0; i--) {
+            if (points[i].x !== points[i - 1].x || points[i].y !== points[i - 1].y) {
+                p2 = points[i]
+                p1 = points[i - 1]
+                break
+            }
+        }
+
+        const dx = p2.x - p1.x
+        const dy = p2.y - p1.y
+
+        let dir = 'down'
+        if (Math.abs(dx) >= Math.abs(dy)) {
+            dir = dx > 0 ? 'right' : 'left'
+        } else {
+            dir = dy > 0 ? 'down' : 'up'
+        }
+        return dir
+    }
+
+    // ⚡ 核心连线计算：支持常规成功、行级分支（branch_i）与 Else/失败兜底出口
+    const computedEdges = computed(() => {
+        let edges = []
+        const allNodes = renderNodes.value
+        const activeDraggingId = draggingNodeId.value
+        const isActuallyMoving = hasMoved.value
+
+        allNodes.forEach(node => {
+            // 1. 普通节点常规成功出口
+            if (node.node_type !== 'branch' && node.params?.on_success?.target_node) {
+                const target = allNodes.find(n => n.node_id === node.params.on_success.target_node)
+                if (target) {
+                    let smoothPathStr = ''
+                    let arrowDir = 'down'
+                    let routeResult = null
+
+                    const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
+
+                    if (isThisEdgeDragging) {
+                        const startPt = { x: node.position.x + node.w / 2, y: node.position.y + node.h }
+                        const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
+                        const simplePoints = [startPt, { x: startPt.x, y: (startPt.y + endPt.y) / 2 }, { x: endPt.x, y: (startPt.y + endPt.y) / 2 }, endPt]
+                        smoothPathStr = getRoundedPathString(simplePoints, 10)
+                        arrowDir = getArrowDirection(simplePoints)
+                        routeResult = { startPt, endPt }
                     } else {
-                        ElMessage.error('执行失败: ' + (result.message || '未知错误'))
+                        const rr = router.route(node, target, allNodes, 'succ', true)
+                        routeResult = rr
+                        smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
+                        arrowDir = getArrowDirection(rr.rawPixelPoints)
                     }
-                } catch (err) {
-                    ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message))
-                }
-            }
 
-            const handleDeleteNode = async () => {
-                const nodeId = customContextMenu.targetId
-                customContextMenu.visible = false
-                if (!nodeId) return
-
-                try {
-                    const tasks = store.currentTaskData?.tasks || []
-                    for (const task of tasks) {
-                        if (task.nodes) {
-                            task.nodes = task.nodes.filter(n => n.node_id !== nodeId)
-                        }
-                    }
-                    store.currentTaskData.tasks = tasks.filter(t => (t.nodes || []).length > 0)
-
-                    await axios.post('/api/blueprint/save', {
-                        project_path: store.currentProjectPath,
-                        blueprint_data: store.currentTaskData
+                    const edgeId = `e_${node.node_id}_succ_${target.node_id}`
+                    edges.push({
+                        id: edgeId,
+                        sourceNodeId: node.node_id,
+                        targetNodeId: target.node_id,
+                        typeFlag: 'succ',
+                        path: smoothPathStr,
+                        isFail: false,
+                        markerUrl: `url(#arrow-succ-${arrowDir})`,
+                        selected: selectedEdgeId.value === edgeId,
+                        labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
+                        labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
+                        rawPixelPoints: routeResult.rawPixelPoints || []
                     })
-                    await store.loadTasks()
-                    store.taskNodesVersion++
-                    ElMessage.success('节点已成功删除')
-                } catch (err) {
-                    ElMessage.error('删除节点失败')
                 }
             }
 
-            const handleDeleteGroup = async () => {
-                const taskId = customContextMenu.targetId
-                customContextMenu.visible = false
-                if (!taskId) return
-
-                try {
-                    await axios.delete(`/api/tasks/${taskId}`, {
-                        params: { project_path: store.currentProjectPath }
-                    })
-                    await store.loadTasks()
-                    store.taskNodesVersion++
-                    ElMessage.success('任务组已成功删除')
-                } catch (err) {
-                    ElMessage.error('删除任务组失败: ' + (err.response?.data?.detail || err.message))
-                }
-            }
-
-            const handleCanvasNewNode = () => {
-                customContextMenu.visible = false
-                spawnMenu.value = {
-                    visible: true,
-                    x: customContextMenu.x,
-                    y: customContextMenu.y,
-                    sourceNodeId: null,
-                    portType: 'succ',
-                    clientX: customContextMenu.clientX,
-                    clientY: customContextMenu.clientY
-                }
-            }
-
-            const handleCanvasNewGroup = async () => {
-                customContextMenu.visible = false
-                try {
-                    const { value: groupName } = await ElMessageBox.prompt('请输入新任务组名称', '新建任务组', {
-                        confirmButtonText: '确定',
-                        cancelButtonText: '取消',
-                        inputPattern: /\S+/,
-                        inputErrorMessage: '任务组名称不能为空'
-                    })
-
-                    if (groupName) {
-                        await store.createNewTask(groupName.trim())
-                        await store.loadTasks()
-                        store.taskNodesVersion++
-                        ElMessage.success(`任务组 [${groupName}] 创建成功`)
-                    }
-                } catch (err) {
-                    if (err !== 'cancel') {
-                        ElMessage.error(err.message || '创建任务组失败')
-                    }
-                }
-            }
-
-            const getArrowDirection = (points) => {
-                if (!points || points.length < 2) return 'down'
-                let p1 = points[points.length - 2]
-                let p2 = points[points.length - 1]
-
-                for (let i = points.length - 1; i > 0; i--) {
-                    if (points[i].x !== points[i - 1].x || points[i].y !== points[i - 1].y) {
-                        p2 = points[i]
-                        p1 = points[i - 1]
-                        break
-                    }
-                }
-
-                const dx = p2.x - p1.x
-                const dy = p2.y - p1.y
-
-                let dir = 'down'
-                if (Math.abs(dx) >= Math.abs(dy)) {
-                    dir = dx > 0 ? 'right' : 'left'
-                } else {
-                    dir = dy > 0 ? 'down' : 'up'
-                }
-                return dir
-            }
-
-            const computedEdges = computed(() => {
-                let edges = []
-                const allNodes = renderNodes.value
-                const activeDraggingId = draggingNodeId.value
-                const isActuallyMoving = hasMoved.value
-
-                allNodes.forEach(node => {
-                    if (node.params?.on_success?.target_node) {
-                        const target = allNodes.find(n => n.node_id === node.params.on_success.target_node)
+            // 2. Branch 节点：多路行级分支出口 (branch_0, branch_1...)
+            if (node.node_type === 'branch' && Array.isArray(node.params?.candidates)) {
+                node.params.candidates.forEach((cand, cIdx) => {
+                    if (cand?.on_success?.target_node) {
+                        const target = allNodes.find(n => n.node_id === cand.on_success.target_node)
                         if (target) {
                             let smoothPathStr = ''
-                            let arrowDir = 'down'
+                            let arrowDir = 'right'
                             let routeResult = null
+                            const portType = `branch_${cIdx}`
 
                             const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
 
                             if (isThisEdgeDragging) {
-                                const startPt = { x: node.position.x + node.w / 2, y: node.position.y + node.h }
+                                const startPt = { x: node.position.x + node.w, y: node.position.y + getBranchPortCenterY(node, cIdx) }
                                 const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
-                                const simplePoints = [startPt, { x: startPt.x, y: (startPt.y + endPt.y) / 2 }, { x: endPt.x, y: (startPt.y + endPt.y) / 2 }, endPt]
+                                const simplePoints = [startPt, { x: startPt.x + 20, y: startPt.y }, { x: endPt.x, y: (startPt.y + endPt.y) / 2 }, endPt]
                                 smoothPathStr = getRoundedPathString(simplePoints, 10)
                                 arrowDir = getArrowDirection(simplePoints)
                                 routeResult = { startPt, endPt }
                             } else {
-                                const rr = router.route(node, target, allNodes, 'succ', true)
+                                const rr = router.route(node, target, allNodes, portType, true)
                                 routeResult = rr
                                 smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
                                 arrowDir = getArrowDirection(rr.rawPixelPoints)
                             }
 
-                            const edgeId = `e_${node.node_id}_succ_${target.node_id}`
+                            const edgeId = `e_${node.node_id}_branch_${cIdx}_${target.node_id}`
                             edges.push({
                                 id: edgeId,
                                 sourceNodeId: node.node_id,
                                 targetNodeId: target.node_id,
-                                typeFlag: 'succ',
+                                typeFlag: 'branch',
+                                candIndex: cIdx,
                                 path: smoothPathStr,
                                 isFail: false,
                                 markerUrl: `url(#arrow-succ-${arrowDir})`,
@@ -856,1324 +866,1212 @@
                             })
                         }
                     }
-
-                    if (node.params?.on_failure?.target_node) {
-                        const target = allNodes.find(n => n.node_id === node.params.on_failure.target_node)
-                        if (target) {
-                            let smoothPathStr = ''
-                            let arrowDir = 'down'
-                            let routeResult = null
-
-                            const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
-
-                            if (isThisEdgeDragging) {
-                                const startPt = { x: node.position.x + node.w, y: node.position.y + node.h / 2 }
-                                const endPt = { x: target.position.x, y: target.position.y + target.h / 2 }
-                                const simplePoints = [startPt, { x: (startPt.x + endPt.x) / 2, y: startPt.y }, { x: (startPt.x + endPt.x) / 2, y: endPt.y }, endPt]
-                                smoothPathStr = getRoundedPathString(simplePoints, 10)
-                                arrowDir = getArrowDirection(simplePoints)
-                                routeResult = { startPt, endPt }
-                            } else {
-                                const rr = router.route(node, target, allNodes, 'fail')
-                                routeResult = rr
-                                smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
-                                arrowDir = getArrowDirection(rr.rawPixelPoints)
-                            }
-
-                            const edgeId = `e_${node.node_id}_fail_${target.node_id}`
-                            edges.push({
-                                id: edgeId,
-                                sourceNodeId: node.node_id,
-                                targetNodeId: target.node_id,
-                                typeFlag: 'fail',
-                                path: smoothPathStr,
-                                isFail: true,
-                                markerUrl: `url(#arrow-fail-${arrowDir})`,
-                                selected: selectedEdgeId.value === edgeId,
-                                labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
-                                labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
-                                rawPixelPoints: routeResult.rawPixelPoints || []
-                            })
-                        }
-                    }
                 })
-
-                if (drawingConnection.value.active) {
-                    const sourceNode = allNodes.find(n => n.node_id === drawingConnection.value.sourceNodeId)
-                    if (sourceNode) {
-                        const startPt = drawingConnection.value.portType === 'succ'
-                            ? { x: sourceNode.position.x + sourceNode.w / 2, y: sourceNode.position.y + sourceNode.h }
-                            : { x: sourceNode.position.x + sourceNode.w, y: sourceNode.position.y + sourceNode.h / 2 }
-
-                        const mousePt = { x: drawingConnection.value.currentX, y: drawingConnection.value.currentY }
-
-                        let safeStartY = startPt.y
-                        if (drawingConnection.value.portType === 'succ') {
-                            safeStartY = Math.max(startPt.y + 20, mousePt.y)
-                        }
-
-                        const rawPoints = [
-                            startPt,
-                            { x: startPt.x, y: safeStartY },
-                            { x: mousePt.x, y: safeStartY },
-                            mousePt
-                        ]
-
-                        const pathStr = getRoundedPathString(rawPoints, 10)
-                        const arrowDir = getArrowDirection(rawPoints)
-                        drawingConnection.value.previewMarkerUrl = `url(#arrow-${drawingConnection.value.portType === 'fail' ? 'fail' : 'succ'}-${arrowDir})`
-
-                        edges.push({
-                            id: 'temp_drawing',
-                            path: pathStr,
-                            label: '',
-                            isFail: drawingConnection.value.portType === 'fail',
-                            markerUrl: drawingConnection.value.previewMarkerUrl,
-                            selected: false,
-                            labelX: 0,
-                            labelY: 0,
-                            gridPoints: [],
-                            rawPixelPoints: rawPoints
-                        })
-                    }
-                }
-
-                return edges
-            })
-
-            const drawMinimap = () => {
-                const canvas = minimapCanvasRef.value
-                if (!canvas || !containerRef.value) return
-                const ctx = canvas.getContext('2d')
-                const mapW = canvas.width
-                const mapH = canvas.height
-
-                ctx.clearRect(0, 0, mapW, mapH)
-                ctx.fillStyle = '#1e1f29'
-                ctx.fillRect(0, 0, mapW, mapH)
-
-                const nodes = renderNodes.value
-                const groups = dynamicGroups.value
-                if (!nodes.length && !groups.length) return
-
-                let minX = -1000, minY = -1000, maxX = 3000, maxY = 3000
-                nodes.forEach(n => {
-                    minX = Math.min(minX, n.position.x - 200)
-                    minY = Math.min(minY, n.position.y - 200)
-                    maxX = Math.max(maxX, n.position.x + n.w + 200)
-                    maxY = Math.max(maxY, n.position.y + n.h + 200)
-                })
-
-                const worldW = maxX - minX
-                const worldH = maxY - minY
-                const scaleX = mapW / worldW
-                const scaleY = mapH / worldH
-                const mapScale = Math.min(scaleX, scaleY)
-
-                const toMapCoord = (wx, wy) => ({
-                    x: (wx - minX) * mapScale + (mapW - worldW * mapScale) / 2,
-                    y: (wy - minY) * mapScale + (mapH - worldH * mapScale) / 2
-                })
-
-                ctx.strokeStyle = '#4ed19c33'
-                ctx.lineWidth = 1
-                groups.forEach(g => {
-                    const p = toMapCoord(g.box.x, g.box.y)
-                    ctx.strokeRect(p.x, p.y, g.box.w * mapScale, g.box.h * mapScale)
-                })
-
-                nodes.forEach(n => {
-                    const p = toMapCoord(n.position.x, n.position.y)
-                    ctx.fillStyle = n.selected ? '#409EFF' : '#4ed19c'
-                    ctx.fillRect(p.x, p.y, Math.max(4, n.w * mapScale), Math.max(3, n.h * mapScale))
-                })
-
-                const containerW = containerRef.value.clientWidth
-                const containerH = containerRef.value.clientHeight
-                const viewLeft = -viewport.value.x / viewport.value.zoom
-                const viewTop = -viewport.value.y / viewport.value.zoom
-                const viewW = containerW / viewport.value.zoom
-                const viewH = containerH / viewport.value.zoom
-
-                const vpCoord = toMapCoord(viewLeft, viewTop)
-                ctx.strokeStyle = '#409EFF'
-                ctx.lineWidth = 1.5
-                ctx.strokeRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
-                ctx.fillStyle = 'rgba(64, 158, 255, 0.1)'
-                ctx.fillRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
             }
 
-            const onMinimapClick = (e) => {
-                const canvas = minimapCanvasRef.value
-                if (!canvas || !containerRef.value) return
-                const rect = canvas.getBoundingClientRect()
-                const clickX = e.clientX - rect.left
-                const clickY = e.clientY - rect.top
+            // 3. 失败 / Else 兜底出口
+            if (node.params?.on_failure?.target_node) {
+                const target = allNodes.find(n => n.node_id === node.params.on_failure.target_node)
+                if (target) {
+                    let smoothPathStr = ''
+                    let arrowDir = 'down'
+                    let routeResult = null
 
-                const nodes = renderNodes.value
-                let minX = -1000, minY = -1000, maxX = 3000, maxY = 3000
-                nodes.forEach(n => {
-                    minX = Math.min(minX, n.position.x - 200)
-                    minY = Math.min(minY, n.position.y - 200)
-                    maxX = Math.max(maxX, n.position.x + n.w + 200)
-                    maxY = Math.max(maxY, n.position.y + n.h + 200)
-                })
+                    const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
 
-                const worldW = maxX - minX
-                const worldH = maxY - minY
-                const mapScale = Math.min(canvas.width / worldW, canvas.height / worldH)
-
-                const targetWorldX = (clickX - (canvas.width - worldW * mapScale) / 2) / mapScale + minX
-                const targetWorldY = (clickY - (canvas.height - worldH * mapScale) / 2) / mapScale + minY
-
-                const containerW = containerRef.value.clientWidth
-                const containerH = containerRef.value.clientHeight
-
-                viewport.value.x = -(targetWorldX - containerW / (2 * viewport.value.zoom)) * viewport.value.zoom
-                viewport.value.y = -(targetWorldY - containerH / (2 * viewport.value.zoom)) * viewport.value.zoom
-                drawMinimap()
-            }
-
-            watch([renderNodes, dynamicGroups, viewport], () => {
-                nextTick(drawMinimap)
-            }, { deep: true })
-
-            watch(() => store.minimapExpanded, (val) => {
-                if (val) {
-                    nextTick(drawMinimap)
-                }
-            })
-
-            const onCanvasMouseDown = (e) => {
-                customContextMenu.visible = false
-
-                const isBlankArea = e.target === containerRef.value ||
-                    e.target.classList.contains('canvas-viewport') ||
-                    e.target.tagName === 'svg' ||
-                    e.target.classList.contains('canvas-edges-layer')
-
-                if (isBlankArea) {
-                    if (e.shiftKey && e.button === 0) {
-                        spawnMenu.value = {
-                            visible: true,
-                            x: e.clientX,
-                            y: e.clientY,
-                            sourceNodeId: null,
-                            portType: 'succ',
-                            clientX: e.clientX,
-                            clientY: e.clientY
-                        }
-                        e.stopPropagation()
-                        return
-                    }
-
-                    localSelectedNodeIds.value = []
-                    selectedEdgeId.value = null
-                    inspector.value.visible = false
-                }
-
-                if (e.altKey) {
-                    selectionBox.value = { visible: true, startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY }
-                } else {
-                    isPanning.value = true
-                    panStart.value = { x: e.clientX - viewport.value.x, y: e.clientY - viewport.value.y }
-                }
-                spawnMenu.value.visible = false
-            }
-
-            const onNodeMouseDown = (e, node) => {
-                isCtrlHeldRef.value = e.ctrlKey
-
-                draggedSourceGroupSnapshot.value = null
-                ghostPlaceholder.value = null
-
-                ghostPlaceholder.value = {
-                    node_id: `ghost_${node.node_id}`,
-                    position: { ...node.position },
-                    w: NODE_GRID_W * GRID_SIZE,
-                    h: node.h || 120
-                }
-
-                const tasks = store.currentTaskData?.tasks || []
-                tasks.forEach((t, tIdx) => {
-                    const found = (t.nodes || []).find(n => n.node_id === node.node_id)
-                    if (found) {
-                        const groupInfo = dynamicGroups.value[tIdx]
-                        if (groupInfo && groupInfo.box) {
-                            draggedSourceGroupSnapshot.value = { ...groupInfo.box }
-                        }
-                    }
-                })
-
-                if (e.ctrlKey) {
-                    if (localSelectedNodeIds.value.includes(node.node_id)) {
-                        localSelectedNodeIds.value = localSelectedNodeIds.value.filter(id => id !== node.node_id)
+                    if (isThisEdgeDragging) {
+                        // ⚡ Branch 节点 Else 兜底红点在右下方
+                        const startOffsetY = node.node_type === 'branch' ? (node.h - 18) : (node.h / 2)
+                        const startPt = { x: node.position.x + node.w, y: node.position.y + startOffsetY }
+                        const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
+                        const simplePoints = [startPt, { x: (startPt.x + endPt.x) / 2, y: startPt.y }, { x: (startPt.x + endPt.x) / 2, y: endPt.y }, endPt]
+                        smoothPathStr = getRoundedPathString(simplePoints, 10)
+                        arrowDir = getArrowDirection(simplePoints)
+                        routeResult = { startPt, endPt }
                     } else {
-                        localSelectedNodeIds.value.push(node.node_id)
-                    }
-                } else {
-                    if (!localSelectedNodeIds.value.includes(node.node_id)) {
-                        localSelectedNodeIds.value = [node.node_id]
-                    }
-                }
-
-                draggingNodeId.value = node.node_id
-                dragStartMouse.value = { x: e.clientX, y: e.clientY }
-                nodeInitialPos.value = node.position ? { ...node.position } : { x: 0, y: 0 }
-                hasMoved.value = false
-                e.stopPropagation()
-            }
-
-            const onGlobalMouseMove = (e) => {
-                isCtrlHeldRef.value = e.ctrlKey
-
-                if (isPanning.value) {
-                    viewport.value.x = e.clientX - panStart.value.x
-                    viewport.value.y = e.clientY - panStart.value.y
-                } else if (selectionBox.value.visible) {
-                    selectionBox.value.endX = e.clientX
-                    selectionBox.value.endY = e.clientY
-                } else if (draggingNodeId.value) {
-                    const dist = Math.hypot(e.clientX - dragStartMouse.value.x, e.clientY - dragStartMouse.value.y)
-                    if (dist > 6) {
-                        hasMoved.value = true
+                        const rr = router.route(node, target, allNodes, 'fail')
+                        routeResult = rr
+                        smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
+                        arrowDir = getArrowDirection(rr.rawPixelPoints)
                     }
 
-                    if (hasMoved.value) {
-                        const dx = (e.clientX - dragStartMouse.value.x) / viewport.value.zoom
-                        const dy = (e.clientY - dragStartMouse.value.y) / viewport.value.zoom
-
-                        const rawX = nodeInitialPos.value.x + dx
-                        const rawY = nodeInitialPos.value.y + dy
-
-                        localDraftPositions[draggingNodeId.value] = { x: rawX, y: rawY }
-
-                        const MIN_GAP = 2 * GRID_SIZE
-
-                        const currentDraggingNode = renderNodes.value.find(n => n.node_id === draggingNodeId.value)
-                        const nodeW = currentDraggingNode?.w || (NODE_GRID_W * GRID_SIZE)
-                        const nodeH = currentDraggingNode?.h || 120
-
-                        const previewX = rawX - MIN_GAP
-                        const previewY = rawY - MIN_GAP
-                        const previewW = nodeW + MIN_GAP * 2
-                        const previewH = nodeH + MIN_GAP * 2
-
-                        let isColliding = false
-                        const currentBox = {
-                            minX: rawX,
-                            maxX: rawX + nodeW,
-                            minY: rawY,
-                            maxY: rawY + nodeH
-                        }
-
-                        for (const otherNode of renderNodes.value) {
-                            if (otherNode.node_id === draggingNodeId.value) continue
-                            const otherPos = localDraftPositions[otherNode.node_id] || otherNode.position || { x: 0, y: 0 }
-                            const otherSize = { w: otherNode.w || nodeW, h: otherNode.h || 120 }
-
-                            const expandedOtherBox = {
-                                minX: otherPos.x - MIN_GAP,
-                                maxX: otherPos.x + otherSize.w + MIN_GAP,
-                                minY: otherPos.y - MIN_GAP,
-                                maxY: otherPos.y + otherSize.h + MIN_GAP
-                            }
-
-                            const isIntersect = !(
-                                currentBox.maxX <= expandedOtherBox.minX ||
-                                currentBox.minX >= expandedOtherBox.maxX ||
-                                currentBox.maxY <= expandedOtherBox.minY ||
-                                currentBox.minY >= expandedOtherBox.maxY
-                            )
-
-                            if (isIntersect) {
-                                isColliding = true
-                                break
-                            }
-                        }
-
-                        dragPreviewBox.value = {
-                            visible: true,
-                            x: previewX,
-                            y: previewY,
-                            w: previewW,
-                            h: previewH,
-                            hasCollision: isColliding
-                        }
-                    }
-                } else if (drawingConnection.value.active && containerRef.value) {
-                    const rect = containerRef.value.getBoundingClientRect()
-                    const clientX = e.clientX - rect.left
-                    const clientY = e.clientY - rect.top
-                    const rawX = (clientX - viewport.value.x) / viewport.value.zoom
-                    const rawY = (clientY - viewport.value.y) / viewport.value.zoom
-                    drawingConnection.value.currentX = Math.round(rawX / GRID_SIZE) * GRID_SIZE
-                    drawingConnection.value.currentY = Math.round(rawY / GRID_SIZE) * GRID_SIZE
+                    const edgeId = `e_${node.node_id}_fail_${target.node_id}`
+                    edges.push({
+                        id: edgeId,
+                        sourceNodeId: node.node_id,
+                        targetNodeId: target.node_id,
+                        typeFlag: 'fail',
+                        path: smoothPathStr,
+                        isFail: true,
+                        markerUrl: `url(#arrow-fail-${arrowDir})`,
+                        selected: selectedEdgeId.value === edgeId,
+                        labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
+                        labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
+                        rawPixelPoints: routeResult.rawPixelPoints || []
+                    })
                 }
             }
+        })
 
-            const resolveCollisionsAndPushOthers = (targetNodeId, dropPos, allNodes, nodeSize) => {
-                const GAP_GRIDS = 2
-
-                let movingNodes = [{ id: targetNodeId, pos: { ...dropPos }, h: nodeSize.h, w: nodeSize.w }]
-                localDraftPositions[targetNodeId] = { ...dropPos }
-
-                let maxIterations = 15
-                let iteration = 0
-
-                while (iteration < maxIterations) {
-                    iteration++
-                    let hasNewCollision = false
-
-                    for (let i = 0; i < movingNodes.length; i++) {
-                        const current = movingNodes[i]
-                        const currPos = current.pos
-                        const currSize = { w: current.w || nodeSize.w, h: current.h || nodeSize.h }
-
-                        for (const other of allNodes) {
-                            if (other.node_id === current.id) continue
-                            if (movingNodes.some(m => m.id === other.node_id)) continue
-                            if (ghostPlaceholder.value && other.node_id === ghostPlaceholder.value.node_id) continue
-
-                            const alreadyMoved = movingNodes.find(m => m.id === other.node_id)
-                            const otherPos = alreadyMoved ? alreadyMoved.pos : (localDraftPositions[other.node_id] || other.position)
-                            const otherSize = {
-                                w: other.w || nodeSize.w,
-                                h: alreadyMoved ? alreadyMoved.h : (other.h || 120)
-                            }
-
-                            const isIntersect = !(
-                                currPos.x + currSize.w + 40 <= otherPos.x ||
-                                currPos.x >= otherPos.x + otherSize.w + 40 ||
-                                currPos.y + currSize.h + 40 <= otherPos.y ||
-                                currPos.y >= otherPos.y + otherSize.h + 40
-                            )
-
-                            if (isIntersect) {
-                                hasNewCollision = true
-
-                                const currCenterX = currPos.x + currSize.w / 2
-                                const otherCenterX = otherPos.x + otherSize.w / 2
-                                const currCenterY = currPos.y + currSize.h / 2
-                                const otherCenterY = otherPos.y + otherSize.h / 2
-
-                                const dx = currCenterX - otherCenterX
-                                const dy = currCenterY - otherCenterY
-
-                                let nextPos = { ...otherPos }
-
-                                if (Math.abs(dx) > Math.abs(dy)) {
-                                    if (dx < 0) {
-                                        const overlapPx = (currPos.x + currSize.w) - otherPos.x
-                                        const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                        nextPos.x = otherPos.x + (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                                    } else {
-                                        const overlapPx = (otherPos.x + otherSize.w) - currPos.x
-                                        const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                        nextPos.x = otherPos.x - (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                                    }
-                                } else {
-                                    if (dy < 0) {
-                                        const overlapPx = (currPos.y + currSize.h) - otherPos.y
-                                        const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                        nextPos.y = otherPos.y + (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                                    } else {
-                                        const overlapPx = (otherPos.y + otherSize.h) - currPos.y
-                                        const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                        nextPos.y = otherPos.y - (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                                    }
-                                }
-
-                                nextPos.x = Math.round(nextPos.x / GRID_SIZE) * GRID_SIZE
-                                nextPos.y = Math.round(nextPos.y / GRID_SIZE) * GRID_SIZE
-
-                                localDraftPositions[other.node_id] = nextPos
-                                other.position = nextPos
-
-                                movingNodes.push({
-                                    id: other.node_id,
-                                    pos: nextPos,
-                                    h: otherSize.h,
-                                    w: otherSize.w
-                                })
-                            }
-                        }
-                    }
-                    if (!hasNewCollision) break
-                }
-                return localDraftPositions[targetNodeId] || dropPos
-            }
-
-            const calculateOverlapRatio = (rectA, rectB) => {
-                if (!rectA || !rectB) return 0
-                const xOverlap = Math.max(0, Math.min(rectA.x + rectA.w, rectB.x + rectB.w) - Math.max(rectA.x, rectB.x))
-                const yOverlap = Math.max(0, Math.min(rectA.y + rectA.h, rectB.y + rectB.h) - Math.max(rectA.y, rectB.y))
-                const intersectionArea = xOverlap * yOverlap
-                const areaA = rectA.w * rectA.h
-                if (areaA <= 0) return 0
-                return intersectionArea / areaA
-            }
-
-            const resolveGroupCollisionsAndPushOthers = (draggingTaskId, newBox, allGroups) => {
-                const MIN_GROUP_GAP = GRID_SIZE
-                let movingGroups = [{ id: draggingTaskId, box: { ...newBox } }]
-                let adjustedBoxes = { [draggingTaskId]: { ...newBox } }
-
-                let maxIterations = 10
-                let iteration = 0
-
-                while (iteration < maxIterations) {
-                    iteration++
-                    let hasNewCollision = false
-
-                    for (let i = 0; i < movingGroups.length; i++) {
-                        const current = movingGroups[i]
-                        const currBox = current.box
-
-                        for (const other of allGroups) {
-                            if (other.taskId === current.id) continue
-                            if (movingGroups.some(m => m.id === other.taskId)) continue
-
-                            const otherBox = adjustedBoxes[other.taskId] || other.box
-
-                            const isIntersect = !(
-                                currBox.x + currBox.w + MIN_GROUP_GAP <= otherBox.x ||
-                                currBox.x >= otherBox.x + otherBox.w + MIN_GROUP_GAP ||
-                                currBox.y + currBox.h + MIN_GROUP_GAP <= otherBox.y ||
-                                currBox.y >= otherBox.y + otherBox.h + MIN_GROUP_GAP
-                            )
-
-                            if (isIntersect) {
-                                hasNewCollision = true
-
-                                const currCenterX = currBox.x + currBox.w / 2
-                                const otherCenterX = otherBox.x + otherBox.w / 2
-                                const currCenterY = currBox.y + currBox.h / 2
-                                const otherCenterY = otherBox.y + otherBox.h / 2
-
-                                const dx = otherCenterX - currCenterX
-                                const dy = otherCenterY - currCenterY
-
-                                const overlapX = Math.min(currBox.x + currBox.w + MIN_GROUP_GAP - otherBox.x, otherBox.x + otherBox.w + MIN_GROUP_GAP - currBox.x)
-                                const overlapY = Math.min(currBox.y + currBox.h + MIN_GROUP_GAP - otherBox.y, otherBox.y + otherBox.h + MIN_GROUP_GAP - currBox.y)
-
-                                let nextBox = { ...otherBox }
-
-                                if (overlapX < overlapY) {
-                                    if (dx > 0) {
-                                        nextBox.x = currBox.x + currBox.w + MIN_GROUP_GAP
-                                    } else {
-                                        nextBox.x = currBox.x - otherBox.w - MIN_GROUP_GAP
-                                    }
-                                } else {
-                                    if (dy > 0) {
-                                        nextBox.y = currBox.y + currBox.h + MIN_GROUP_GAP
-                                    } else {
-                                        nextBox.y = currBox.y - otherBox.h - MIN_GROUP_GAP
-                                    }
-                                }
-
-                                nextBox.x = Math.round(nextBox.x / GRID_SIZE) * GRID_SIZE
-                                nextBox.y = Math.round(nextBox.y / GRID_SIZE) * GRID_SIZE
-
-                                adjustedBoxes[other.taskId] = nextBox
-                                movingGroups.push({ id: other.taskId, box: nextBox })
-                            }
-                        }
-                    }
-                    if (!hasNewCollision) break
-                }
-                return adjustedBoxes
-            }
-
-            const onGlobalMouseUp = async (e) => {
-                isPanning.value = false
-
-                if (selectionBox.value.visible) {
-                    selectionBox.value.visible = false
-                }
-
-                dragPreviewBox.value.visible = false
-
-                const wasDrawing = drawingConnection.value.active
-                const sourceId = drawingConnection.value.sourceNodeId
+        // 4. 用户实时拉线预览
+        if (drawingConnection.value.active) {
+            const sourceNode = allNodes.find(n => n.node_id === drawingConnection.value.sourceNodeId)
+            if (sourceNode) {
+                let startPt = { x: 0, y: 0 }
                 const portType = drawingConnection.value.portType
-                drawingConnection.value.active = false
 
-                // 1. 如果是节点拖拽释放逻辑
-                if (draggingNodeId.value) {
-                    const nodeId = draggingNodeId.value
-                    const isCtrlHeld = isCtrlHeldRef.value || e.ctrlKey
-                    draggingNodeId.value = false
-                    isCtrlHeldRef.value = false
+                if (portType === 'succ') {
+                    startPt = { x: sourceNode.position.x + sourceNode.w / 2, y: sourceNode.position.y + sourceNode.h }
+                } else if (portType.startsWith('branch_')) {
+                    const cIdx = parseInt(portType.split('_')[1]) || 0
+                    startPt = { x: sourceNode.position.x + sourceNode.w, y: sourceNode.position.y + getBranchPortCenterY(sourceNode, cIdx) }
+                } else {
+                    const startOffsetY = sourceNode.node_type === 'branch' ? (sourceNode.h - 18) : (sourceNode.h / 2)
+                    startPt = { x: sourceNode.position.x + sourceNode.w, y: sourceNode.position.y + startOffsetY }
+                }
 
-                    if (hasMoved.value) {
-                        const rawPos = localDraftPositions[nodeId] || nodeInitialPos.value
-                        const finalPos = {
-                            x: Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE,
-                            y: Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
-                        }
+                const mousePt = { x: drawingConnection.value.currentX, y: drawingConnection.value.currentY }
 
-                        const tasks = store.currentTaskData?.tasks || []
-                        const targetNodeObj = renderNodes.value.find(n => n.node_id === nodeId)
-                        const currentNodeSize = { w: targetNodeObj?.w || (NODE_GRID_W * GRID_SIZE), h: targetNodeObj?.h || 120 }
+                let safeStartY = startPt.y
+                if (portType === 'succ') {
+                    safeStartY = Math.max(startPt.y + 20, mousePt.y)
+                }
 
-                        let targetTaskIndex = -1
-                        let isCreatingNewGroup = false
+                const rawPoints = [
+                    startPt,
+                    { x: startPt.x, y: safeStartY },
+                    { x: mousePt.x, y: safeStartY },
+                    mousePt
+                ]
 
-                        if (isCtrlHeld && draggedSourceGroupSnapshot.value) {
-                            const nodeRectBeforePush = { x: finalPos.x, y: finalPos.y, w: currentNodeSize.w, h: currentNodeSize.h }
-                            const overlapWithSnapshot = calculateOverlapRatio(nodeRectBeforePush, draggedSourceGroupSnapshot.value)
+                const pathStr = getRoundedPathString(rawPoints, 10)
+                const arrowDir = getArrowDirection(rawPoints)
+                drawingConnection.value.previewMarkerUrl = `url(#arrow-${portType === 'fail' ? 'fail' : 'succ'}-${arrowDir})`
 
-                            if (overlapWithSnapshot === 0) {
-                                dynamicGroups.value.forEach((g, gIdx) => {
-                                    let currentSourceTIdx = -1
-                                    tasks.forEach((t, tI) => {
-                                        if ((t.nodes || []).some(n => n.node_id === nodeId)) currentSourceTIdx = tI
-                                    })
-                                    if (gIdx === currentSourceTIdx) return
+                edges.push({
+                    id: 'temp_drawing',
+                    path: pathStr,
+                    label: '',
+                    isFail: portType === 'fail',
+                    markerUrl: drawingConnection.value.previewMarkerUrl,
+                    selected: false,
+                    labelX: 0,
+                    labelY: 0,
+                    gridPoints: [],
+                    rawPixelPoints: rawPoints
+                })
+            }
+        }
 
-                                    const ratio = calculateOverlapRatio(nodeRectBeforePush, g.box)
-                                    if (ratio >= 1.0) {
-                                        targetTaskIndex = gIdx
-                                    }
-                                })
+        return edges
+    })
 
-                                if (targetTaskIndex === -1) {
-                                    isCreatingNewGroup = true
-                                }
-                            }
-                        }
+    const drawMinimap = () => {
+        const canvas = minimapCanvasRef.value
+        if (!canvas || !containerRef.value) return
+        const ctx = canvas.getContext('2d')
+        const mapW = canvas.width
+        const mapH = canvas.height
 
-                        const safePos = resolveCollisionsAndPushOthers(nodeId, finalPos, renderNodes.value, currentNodeSize)
+        ctx.clearRect(0, 0, mapW, mapH)
+        ctx.fillStyle = '#1e1f29'
+        ctx.fillRect(0, 0, mapW, mapH)
 
-                        let sourceTaskIndex = -1
-                        let sourceNodeObj = null
-                        tasks.forEach((t, tIdx) => {
-                            const found = (t.nodes || []).find(n => n.node_id === nodeId)
-                            if (found) {
-                                sourceTaskIndex = tIdx
-                                sourceNodeObj = found
-                            }
-                        })
+        const nodes = renderNodes.value
+        const groups = dynamicGroups.value
+        if (!nodes.length && !groups.length) return
 
-                        if (sourceTaskIndex !== -1 && isCtrlHeld && draggedSourceGroupSnapshot.value) {
-                            const originalTask = tasks[sourceTaskIndex]
-                            const nodeRectAfterPush = { x: safePos.x, y: safePos.y, w: currentNodeSize.w, h: currentNodeSize.h }
-                            const overlapWithSnapshot = calculateOverlapRatio(nodeRectAfterPush, draggedSourceGroupSnapshot.value)
+        let minX = -1000, minY = -1000, maxX = 3000, maxY = 3000
+        nodes.forEach(n => {
+            minX = Math.min(minX, n.position.x - 200)
+            minY = Math.min(minY, n.position.y - 200)
+            maxX = Math.max(maxX, n.position.x + n.w + 200)
+            maxY = Math.max(maxY, n.position.y + n.h + 200)
+        })
 
-                            if (overlapWithSnapshot === 0) {
-                                originalTask.nodes = (originalTask.nodes || []).filter(n => n.node_id !== nodeId)
-                                sourceNodeObj.position = safePos
+        const worldW = maxX - minX
+        const worldH = maxY - minY
+        const scaleX = mapW / worldW
+        const scaleY = mapH / worldH
+        const mapScale = Math.min(scaleX, scaleY)
 
-                                if (targetTaskIndex !== -1) {
-                                    const targetTask = tasks[targetTaskIndex]
-                                    if (!targetTask.nodes) targetTask.nodes = []
-                                    targetTask.nodes.push(sourceNodeObj)
-                                    ElMessage.success(`节点已被纳入组 [${targetTask.task_name}]`)
-                                } else if (isCreatingNewGroup) {
-                                    const newTaskId = `task_${Date.now()}`
-                                    const newTask = {
-                                        task_id: newTaskId,
-                                        task_name: '新建组',
-                                        loop_count: 1,
-                                        loop_interval: 0,
-                                        nodes: [sourceNodeObj]
-                                    }
-                                    tasks.push(newTask)
-                                    ElMessage.success('节点已成功脱离，并自动创建放入【新建组】')
-                                }
+        const toMapCoord = (wx, wy) => ({
+            x: (wx - minX) * mapScale + (mapW - worldW * mapScale) / 2,
+            y: (wy - minY) * mapScale + (mapH - worldH * mapScale) / 2
+        })
+
+        ctx.strokeStyle = '#4ed19c33'
+        ctx.lineWidth = 1
+        groups.forEach(g => {
+            const p = toMapCoord(g.box.x, g.box.y)
+            ctx.strokeRect(p.x, p.y, g.box.w * mapScale, g.box.h * mapScale)
+        })
+
+        nodes.forEach(n => {
+            const p = toMapCoord(n.position.x, n.position.y)
+            ctx.fillStyle = n.selected ? '#409EFF' : '#4ed19c'
+            ctx.fillRect(p.x, p.y, Math.max(4, n.w * mapScale), Math.max(3, n.h * mapScale))
+        })
+
+        const containerW = containerRef.value.clientWidth
+        const containerH = containerRef.value.clientHeight
+        const viewLeft = -viewport.value.x / viewport.value.zoom
+        const viewTop = -viewport.value.y / viewport.value.zoom
+        const viewW = containerW / viewport.value.zoom
+        const viewH = containerH / viewport.value.zoom
+
+        const vpCoord = toMapCoord(viewLeft, viewTop)
+        ctx.strokeStyle = '#409EFF'
+        ctx.lineWidth = 1.5
+        ctx.strokeRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
+        ctx.fillStyle = 'rgba(64, 158, 255, 0.1)'
+        ctx.fillRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
+    }
+
+    const onMinimapClick = (e) => {
+        const canvas = minimapCanvasRef.value
+        if (!canvas || !containerRef.value) return
+        const rect = canvas.getBoundingClientRect()
+        const clickX = e.clientX - rect.left
+        const clickY = e.clientY - rect.top
+
+        const nodes = renderNodes.value
+        let minX = -1000, minY = -1000, maxX = 3000, maxY = 3000
+        nodes.forEach(n => {
+            minX = Math.min(minX, n.position.x - 200)
+            minY = Math.min(minY, n.position.y - 200)
+            maxX = Math.max(maxX, n.position.x + n.w + 200)
+            maxY = Math.max(maxY, n.position.y + n.h + 200)
+        })
+
+        const worldW = maxX - minX
+        const worldH = maxY - minY
+        const mapScale = Math.min(canvas.width / worldW, canvas.height / worldH)
+
+        const targetWorldX = (clickX - (canvas.width - worldW * mapScale) / 2) / mapScale + minX
+        const targetWorldY = (clickY - (canvas.height - worldH * mapScale) / 2) / mapScale + minY
+
+        const containerW = containerRef.value.clientWidth
+        const containerH = containerRef.value.clientHeight
+
+        viewport.value.x = -(targetWorldX - containerW / (2 * viewport.value.zoom)) * viewport.value.zoom
+        viewport.value.y = -(targetWorldY - containerH / (2 * viewport.value.zoom)) * viewport.value.zoom
+        drawMinimap()
+    }
+
+    watch([renderNodes, dynamicGroups, viewport], () => {
+        nextTick(drawMinimap)
+    }, { deep: true })
+
+    watch(() => store.minimapExpanded, (val) => {
+        if (val) {
+            nextTick(drawMinimap)
+        }
+    })
+
+    const onCanvasMouseDown = (e) => {
+        customContextMenu.visible = false
+
+        const isBlankArea = e.target === containerRef.value ||
+            e.target.classList.contains('canvas-viewport') ||
+            e.target.tagName === 'svg' ||
+            e.target.classList.contains('canvas-edges-layer')
+
+        if (isBlankArea) {
+            if (e.shiftKey && e.button === 0) {
+                spawnMenu.value = {
+                    visible: true,
+                    x: e.clientX,
+                    y: e.clientY,
+                    sourceNodeId: null,
+                    portType: 'succ',
+                    clientX: e.clientX,
+                    clientY: e.clientY
+                }
+                e.stopPropagation()
+                return
+            }
+
+            localSelectedNodeIds.value = []
+            store.selectedNodeIds = []
+            store.selectedGroupId = null
+            selectedEdgeId.value = null
+        }
+
+        if (e.altKey) {
+            selectionBox.value = { visible: true, startX: e.clientX, startY: e.clientY, endX: e.clientX, endY: e.clientY }
+        } else {
+            isPanning.value = true
+            panStart.value = { x: e.clientX - viewport.value.x, y: e.clientY - viewport.value.y }
+        }
+        spawnMenu.value.visible = false
+    }
+
+    const onNodeMouseDown = (e, node) => {
+        isCtrlHeldRef.value = e.ctrlKey
+
+        draggedSourceGroupSnapshot.value = null
+        ghostPlaceholder.value = null
+
+        ghostPlaceholder.value = {
+            node_id: `ghost_${node.node_id}`,
+            position: { ...node.position },
+            w: NODE_GRID_W * GRID_SIZE,
+            h: node.h || 120
+        }
+
+        const tasks = store.blueprint?.tasks || []
+        tasks.forEach((t, tIdx) => {
+            const found = (t.nodes || []).find(n => n.node_id === node.node_id)
+            if (found) {
+                const groupInfo = dynamicGroups.value[tIdx]
+                if (groupInfo && groupInfo.box) {
+                    draggedSourceGroupSnapshot.value = { ...groupInfo.box }
+                }
+            }
+        })
+
+        if (e.ctrlKey) {
+            if (localSelectedNodeIds.value.includes(node.node_id)) {
+                localSelectedNodeIds.value = localSelectedNodeIds.value.filter(id => id !== node.node_id)
+            } else {
+                localSelectedNodeIds.value.push(node.node_id)
+            }
+        } else {
+            if (!localSelectedNodeIds.value.includes(node.node_id)) {
+                localSelectedNodeIds.value = [node.node_id]
+            }
+        }
+
+        store.selectedNodeIds = [...localSelectedNodeIds.value]
+        store.selectedGroupId = null
+
+        draggingNodeId.value = node.node_id
+        dragStartMouse.value = { x: e.clientX, y: e.clientY }
+        nodeInitialPos.value = node.position ? { ...node.position } : { x: 0, y: 0 }
+        hasMoved.value = false
+        e.stopPropagation()
+    }
+
+    const onGlobalMouseMove = (e) => {
+        isCtrlHeldRef.value = e.ctrlKey
+
+        if (isPanning.value) {
+            viewport.value.x = e.clientX - panStart.value.x
+            viewport.value.y = e.clientY - panStart.value.y
+        } else if (selectionBox.value.visible) {
+            selectionBox.value.endX = e.clientX
+            selectionBox.value.endY = e.clientY
+        } else if (draggingNodeId.value) {
+            const dist = Math.hypot(e.clientX - dragStartMouse.value.x, e.clientY - dragStartMouse.value.y)
+            if (dist > 6) {
+                hasMoved.value = true
+            }
+
+            if (hasMoved.value) {
+                const dx = (e.clientX - dragStartMouse.value.x) / viewport.value.zoom
+                const dy = (e.clientY - dragStartMouse.value.y) / viewport.value.zoom
+
+                const rawX = nodeInitialPos.value.x + dx
+                const rawY = nodeInitialPos.value.y + dy
+
+                localDraftPositions[draggingNodeId.value] = { x: rawX, y: rawY }
+
+                const MIN_GAP = 2 * GRID_SIZE
+
+                const currentDraggingNode = renderNodes.value.find(n => n.node_id === draggingNodeId.value)
+                const nodeW = currentDraggingNode?.w || (NODE_GRID_W * GRID_SIZE)
+                const nodeH = currentDraggingNode?.h || 120
+
+                const previewX = rawX - MIN_GAP
+                const previewY = rawY - MIN_GAP
+                const previewW = nodeW + MIN_GAP * 2
+                const previewH = nodeH + MIN_GAP * 2
+
+                let isColliding = false
+                const currentBox = {
+                    minX: rawX,
+                    maxX: rawX + nodeW,
+                    minY: rawY,
+                    maxY: rawY + nodeH
+                }
+
+                for (const otherNode of renderNodes.value) {
+                    if (otherNode.node_id === draggingNodeId.value) continue
+                    const otherPos = localDraftPositions[otherNode.node_id] || otherNode.position || { x: 0, y: 0 }
+                    const otherSize = { w: otherNode.w || nodeW, h: otherNode.h || 120 }
+
+                    const expandedOtherBox = {
+                        minX: otherPos.x - MIN_GAP,
+                        maxX: otherPos.x + otherSize.w + MIN_GAP,
+                        minY: otherPos.y - MIN_GAP,
+                        maxY: otherPos.y + otherSize.h + MIN_GAP
+                    }
+
+                    const isIntersect = !(
+                        currentBox.maxX <= expandedOtherBox.minX ||
+                        currentBox.minX >= expandedOtherBox.maxX ||
+                        currentBox.maxY <= expandedOtherBox.minY ||
+                        currentBox.minY >= expandedOtherBox.maxY
+                    )
+
+                    if (isIntersect) {
+                        isColliding = true
+                        break
+                    }
+                }
+
+                dragPreviewBox.value = {
+                    visible: true,
+                    x: previewX,
+                    y: previewY,
+                    w: previewW,
+                    h: previewH,
+                    hasCollision: isColliding
+                }
+            }
+        } else if (drawingConnection.value.active && containerRef.value) {
+            const rect = containerRef.value.getBoundingClientRect()
+            const clientX = e.clientX - rect.left
+            const clientY = e.clientY - rect.top
+            const rawX = (clientX - viewport.value.x) / viewport.value.zoom
+            const rawY = (clientY - viewport.value.y) / viewport.value.zoom
+            drawingConnection.value.currentX = Math.round(rawX / GRID_SIZE) * GRID_SIZE
+            drawingConnection.value.currentY = Math.round(rawY / GRID_SIZE) * GRID_SIZE
+        }
+    }
+
+    const resolveCollisionsAndPushOthers = (targetNodeId, dropPos, allNodes, nodeSize) => {
+        const GAP_GRIDS = 2
+
+        let movingNodes = [{ id: targetNodeId, pos: { ...dropPos }, h: nodeSize.h, w: nodeSize.w }]
+        localDraftPositions[targetNodeId] = { ...dropPos }
+
+        let maxIterations = 15
+        let iteration = 0
+
+        while (iteration < maxIterations) {
+            iteration++
+            let hasNewCollision = false
+
+            for (let i = 0; i < movingNodes.length; i++) {
+                const current = movingNodes[i]
+                const currPos = current.pos
+                const currSize = { w: current.w || nodeSize.w, h: current.h || nodeSize.h }
+
+                for (const other of allNodes) {
+                    if (other.node_id === current.id) continue
+                    if (movingNodes.some(m => m.id === other.node_id)) continue
+                    if (ghostPlaceholder.value && other.node_id === ghostPlaceholder.value.node_id) continue
+
+                    const alreadyMoved = movingNodes.find(m => m.id === other.node_id)
+                    const otherPos = alreadyMoved ? alreadyMoved.pos : (localDraftPositions[other.node_id] || other.position)
+                    const otherSize = {
+                        w: other.w || nodeSize.w,
+                        h: alreadyMoved ? alreadyMoved.h : (other.h || 120)
+                    }
+
+                    const isIntersect = !(
+                        currPos.x + currSize.w + 40 <= otherPos.x ||
+                        currPos.x >= otherPos.x + otherSize.w + 40 ||
+                        currPos.y + currSize.h + 40 <= otherPos.y ||
+                        currPos.y >= otherPos.y + otherSize.h + 40
+                    )
+
+                    if (isIntersect) {
+                        hasNewCollision = true
+
+                        const currCenterX = currPos.x + currSize.w / 2
+                        const otherCenterX = otherPos.x + otherSize.w / 2
+                        const currCenterY = currPos.y + currSize.h / 2
+                        const otherCenterY = otherPos.y + otherSize.h / 2
+
+                        const dx = currCenterX - otherCenterX
+                        const dy = currCenterY - otherCenterY
+
+                        let nextPos = { ...otherPos }
+
+                        if (Math.abs(dx) > Math.abs(dy)) {
+                            if (dx < 0) {
+                                const overlapPx = (currPos.x + currSize.w) - otherPos.x
+                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
+                                nextPos.x = otherPos.x + (overlapGrids + GAP_GRIDS) * GRID_SIZE
                             } else {
-                                sourceNodeObj.position = safePos
+                                const overlapPx = (otherPos.x + otherSize.w) - currPos.x
+                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
+                                nextPos.x = otherPos.x - (overlapGrids + GAP_GRIDS) * GRID_SIZE
                             }
                         } else {
-                            for (const task of tasks) {
-                                const found = (task.nodes || []).find(n => n.node_id === nodeId)
-                                if (found) {
-                                    found.position = safePos
-                                    break
-                                }
-                            }
-                        }
-
-                        tasks.forEach(t => {
-                            (t.nodes || []).forEach(n => {
-                                if (localDraftPositions[n.node_id]) {
-                                    n.position = localDraftPositions[n.node_id]
-                                    delete localDraftPositions[n.node_id]
-                                }
-                            })
-                        })
-
-                        await nextTick()
-                        const currentGroupsForCheck = dynamicGroups.value.map(g => ({
-                            taskId: g.taskId,
-                            box: { x: g.box.x, y: g.box.y, w: g.box.w, h: g.box.h }
-                        }))
-
-                        let globalAdjustedBoxes = {}
-                        let activeTaskObj = tasks[sourceTaskIndex] || tasks[tasks.length - 1]
-                        if (activeTaskObj) {
-                            const activeGroupId = activeTaskObj.task_id
-                            const activeGroupInfo = currentGroupsForCheck.find(x => x.taskId === activeGroupId)
-
-                            if (activeGroupInfo) {
-                                const others = currentGroupsForCheck.filter(x => x.taskId !== activeGroupId)
-                                globalAdjustedBoxes = resolveGroupCollisionsAndPushOthers(activeGroupId, activeGroupInfo.box, others)
-                            }
-                        }
-
-                        tasks.forEach(t => {
-                            const newBox = globalAdjustedBoxes[t.task_id]
-                            const oldGroup = currentGroupsForCheck.find(x => x.taskId === t.task_id)
-                            if (newBox && oldGroup && oldGroup.box) {
-                                const shiftX = (Number(newBox.x) || 0) - (Number(oldGroup.box.x) || 0)
-                                const shiftY = (Number(newBox.y) || 0) - (Number(oldGroup.box.y) || 0)
-
-                                if (shiftX !== 0 || shiftY !== 0) {
-                                    (t.nodes || []).forEach(n => {
-                                        n.position.x = Math.round((n.position.x + shiftX) / GRID_SIZE) * GRID_SIZE
-                                        n.position.y = Math.round((n.position.y + shiftY) / GRID_SIZE) * GRID_SIZE
-                                    })
-                                }
-                            }
-                        })
-
-                        tasks.forEach(t => {
-                            if (t && typeof t === 'object') {
-                                delete t.tasks
-                            }
-                        })
-
-                        const cleanedTasks = tasks.filter(t => (t.nodes || []).length > 0)
-
-                        if (store.currentTaskData) {
-                            store.currentTaskData.tasks = JSON.parse(JSON.stringify(cleanedTasks))
-                        }
-
-                        try {
-                            await axios.post('/api/blueprint/save', {
-                                project_path: store.currentProjectPath,
-                                blueprint_data: store.currentTaskData
-                            })
-                        } catch (saveErr) {
-                            console.error('保存蓝图失败:', saveErr)
-                        }
-
-                        draggedSourceGroupSnapshot.value = null
-                        ghostPlaceholder.value = null
-                        delete localDraftPositions[nodeId]
-
-                        await store.loadTasks()
-                        store.taskNodesVersion++
-                        ElMessage.success('节点排版及组归属更新成功')
-                    }
-                    hasMoved.value = false
-                }
-
-                // 2. 如果是从端口拉线，并且松手在空白处：
-                // 2. 如果是从端口拉线，并且松手在空白处：
-                if (wasDrawing) {
-                    const tasks = store.currentTaskData?.tasks || []
-                    if (tasks.length === 0) return
-
-                    let sourceNodeObj = null
-                    for (const t of tasks) {
-                        const found = (t.nodes || []).find(n => n.node_id === sourceId)
-                        if (found) { sourceNodeObj = found; break }
-                    }
-
-                    if (sourceNodeObj) {
-                        const hasExisting = (
-                            (portType === 'fail' && sourceNodeObj.params?.on_failure?.target_node) ||
-                            (portType === 'succ' && sourceNodeObj.params?.on_success?.target_node)
-                        )
-
-                        // 如果原本有线，拖到空白处 ➔ 彻底断开
-                        if (hasExisting) {
-                            if (portType === 'fail') {
-                                sourceNodeObj.params.on_failure = {}
+                            if (dy < 0) {
+                                const overlapPx = (currPos.y + currSize.h) - otherPos.y
+                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
+                                nextPos.y = otherPos.y + (overlapGrids + GAP_GRIDS) * GRID_SIZE
                             } else {
-                                sourceNodeObj.params.on_success = {}
+                                const overlapPx = (otherPos.y + otherSize.h) - currPos.y
+                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
+                                nextPos.y = otherPos.y - (overlapGrids + GAP_GRIDS) * GRID_SIZE
                             }
-
-                            // ⭐ 核心优化：先强制本地响应式更新，再异步存盘，避免被接口耗时回滚
-                            store.taskNodesVersion++
-
-                            try {
-                                // 直接调用底层保存接口，不走可能引起冲突的封装方法
-                                await axios.post('/api/blueprint/save', {
-                                    project_path: store.currentProjectPath,
-                                    blueprint_data: store.currentTaskData
-                                })
-                                ElMessage.success('已成功断开连线')
-                            } catch (err) {
-                                console.error('断线保存失败:', err)
-                                ElMessage.error('断线保存失败')
-                            }
-                            return
                         }
-                    }
 
-                    // 如果原本没有线，拖到空白处 ➔ 弹出创建菜单
-                    spawnMenu.value = {
-                        visible: true,
-                        x: e.clientX,
-                        y: e.clientY,
-                        sourceNodeId: sourceId,
-                        portType,
-                        clientX: e.clientX,
-                        clientY: e.clientY
+                        nextPos.x = Math.round(nextPos.x / GRID_SIZE) * GRID_SIZE
+                        nextPos.y = Math.round(nextPos.y / GRID_SIZE) * GRID_SIZE
+
+                        localDraftPositions[other.node_id] = nextPos
+                        other.position = nextPos
+
+                        movingNodes.push({
+                            id: other.node_id,
+                            pos: nextPos,
+                            h: otherSize.h,
+                            w: otherSize.w
+                        })
                     }
                 }
             }
+            if (!hasNewCollision) break
+        }
+        return localDraftPositions[targetNodeId] || dropPos
+    }
 
-            const onCanvasWheel = (e) => {
-                if (e.target.closest('.workflow-inspector-wrapper') || e.target.closest('.inspector-backdrop')) {
-                    return
-                }
+    const calculateOverlapRatio = (rectA, rectB) => {
+        if (!rectA || !rectB) return 0
+        const xOverlap = Math.max(0, Math.min(rectA.x + rectA.w, rectB.x + rectB.w) - Math.max(rectA.x, rectB.x))
+        const yOverlap = Math.max(0, Math.min(rectA.y + rectA.h, rectB.y + rectB.h) - Math.max(rectA.y, rectB.y))
+        const intersectionArea = xOverlap * yOverlap
+        const areaA = rectA.w * rectA.h
+        if (areaA <= 0) return 0
+        return intersectionArea / areaA
+    }
 
-                e.preventDefault()
-                if (!containerRef.value) return
+    const resolveGroupCollisionsAndPushOthers = (draggingTaskId, newBox, allGroups) => {
+        const MIN_GROUP_GAP = GRID_SIZE
+        let movingGroups = [{ id: draggingTaskId, box: { ...newBox } }]
+        let adjustedBoxes = { [draggingTaskId]: { ...newBox } }
 
-                const rect = containerRef.value.getBoundingClientRect()
-                const mouseX = e.clientX - rect.left
-                const mouseY = e.clientY - rect.top
+        let maxIterations = 10
+        let iteration = 0
 
-                const oldZoom = viewport.value.zoom
-                const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9
-                const newZoom = Math.min(Math.max(oldZoom * zoomFactor, 0.2), 4)
+        while (iteration < maxIterations) {
+            iteration++
+            let hasNewCollision = false
 
-                if (newZoom === oldZoom) return
+            for (let i = 0; i < movingGroups.length; i++) {
+                const current = movingGroups[i]
+                const currBox = current.box
 
-                const worldX = (mouseX - viewport.value.x) / oldZoom
-                const worldY = (mouseY - viewport.value.y) / oldZoom
+                for (const other of allGroups) {
+                    if (other.taskId === current.id) continue
+                    if (movingGroups.some(m => m.id === other.taskId)) continue
 
-                viewport.value.zoom = newZoom
-                viewport.value.x = mouseX - worldX * newZoom
-                viewport.value.y = mouseY - worldY * newZoom
+                    const otherBox = adjustedBoxes[other.taskId] || other.box
 
-                if (typeof drawMinimap === 'function') {
-                    drawMinimap()
-                }
-            }
+                    const isIntersect = !(
+                        currBox.x + currBox.w + MIN_GROUP_GAP <= otherBox.x ||
+                        currBox.x >= otherBox.x + otherBox.w + MIN_GROUP_GAP ||
+                        currBox.y + currBox.h + MIN_GROUP_GAP <= otherBox.y ||
+                        currBox.y >= otherBox.y + otherBox.h + MIN_GROUP_GAP
+                    )
 
-            const onNodeMouseUpCard = async (e, targetNode) => {
-                if (drawingConnection.value.active) {
-                    const sourceId = drawingConnection.value.sourceNodeId
-                    const portType = drawingConnection.value.portType
+                    if (isIntersect) {
+                        hasNewCollision = true
 
-                    // 锁死当前连线状态
-                    drawingConnection.value.active = false
+                        const currCenterX = currBox.x + currBox.w / 2
+                        const otherCenterX = otherBox.x + otherBox.w / 2
+                        const currCenterY = currBox.y + currBox.h / 2
+                        const otherCenterY = otherBox.y + otherBox.h / 2
 
-                    const tasks = store.currentTaskData?.tasks || []
-                    if (tasks.length === 0) {
-                        ElMessage.warning('数据正在同步中，请稍候再试...');
-                        e.stopPropagation();
-                        return;
-                    }
+                        const dx = otherCenterX - currCenterX
+                        const dy = otherCenterY - currCenterY
 
-                    if (sourceId && sourceId !== targetNode.node_id) {
-                        let sourceNodeObj = null
-                        let targetTaskFound = null
+                        const overlapX = Math.min(currBox.x + currBox.w + MIN_GROUP_GAP - otherBox.x, otherBox.x + otherBox.w + MIN_GROUP_GAP - currBox.x)
+                        const overlapY = Math.min(currBox.y + currBox.h + MIN_GROUP_GAP - otherBox.y, otherBox.y + otherBox.h + MIN_GROUP_GAP - currBox.y)
 
-                        for (const t of tasks) {
-                            const foundSource = (t.nodes || []).find(n => n.node_id === sourceId)
-                            if (foundSource) sourceNodeObj = foundSource
+                        let nextBox = { ...otherBox }
 
-                            const foundTarget = (t.nodes || []).find(n => n.node_id === targetNode.node_id)
-                            if (foundTarget) targetTaskFound = t
-                        }
-
-                        if (sourceNodeObj) {
-                            if (!sourceNodeObj.params) sourceNodeObj.params = {}
-
-                            // 防止历史引用粘连
-                            if (sourceNodeObj.params.on_success === sourceNodeObj.params.on_failure) {
-                                sourceNodeObj.params.on_success = {}
-                                sourceNodeObj.params.on_failure = {}
-                            }
-
-                            const connectionData = {
-                                target_task: targetTaskFound ? targetTaskFound.task_id : '',
-                                target_node: targetNode.node_id
-                            }
-
-                            // 赋值连线
-                            if (portType === 'fail') {
-                                sourceNodeObj.params.on_failure = { ...connectionData }
-                                ElMessage.success(`失败分支连线已成功指向 ➔ [${targetNode.node_name}]`)
+                        if (overlapX < overlapY) {
+                            if (dx > 0) {
+                                nextBox.x = currBox.x + currBox.w + MIN_GROUP_GAP
                             } else {
-                                sourceNodeObj.params.on_success = { ...connectionData }
-                                ElMessage.success(`成功流向连线已成功指向 ➔ [${targetNode.node_name}]`)
+                                nextBox.x = currBox.x - otherBox.w - MIN_GROUP_GAP
                             }
-
-                            // ⭐ 核心优化：直接本地刷新视图版本，线条立刻呈现，不依赖会引起回滚的 reload
-                            store.taskNodesVersion++
-
-                            try {
-                                // 直接调用底层保存接口，绝对保证第一次就写入成功且不被旧数据覆盖
-                                await axios.post('/api/blueprint/save', {
-                                    project_path: store.currentProjectPath,
-                                    blueprint_data: store.currentTaskData
-                                })
-                            } catch (saveErr) {
-                                console.error('连线保存失败:', saveErr)
-                                ElMessage.error('连线保存失败')
+                        } else {
+                            if (dy > 0) {
+                                nextBox.y = currBox.y + currBox.h + MIN_GROUP_GAP
+                            } else {
+                                nextBox.y = currBox.y - otherBox.h - MIN_GROUP_GAP
                             }
                         }
+
+                        nextBox.x = Math.round(nextBox.x / GRID_SIZE) * GRID_SIZE
+                        nextBox.y = Math.round(nextBox.y / GRID_SIZE) * GRID_SIZE
+
+                        adjustedBoxes[other.taskId] = nextBox
+                        movingGroups.push({ id: other.taskId, box: nextBox })
                     }
-                    e.stopPropagation()
                 }
             }
+            if (!hasNewCollision) break
+        }
+        return adjustedBoxes
+    }
 
-            const onNodeDoubleClick = (e, node) => {
-                const targets = localSelectedNodeIds.value.length > 1
-                    ? renderNodes.value.filter(n => localSelectedNodeIds.value.includes(n.node_id))
-                    : []
+    const onGlobalMouseUp = async (e) => {
+        isPanning.value = false
 
-                let centerX = window.innerWidth / 2 - 190
-                let centerY = window.innerHeight / 2 - 250
-                if (containerRef.value) {
-                    const rect = containerRef.value.getBoundingClientRect()
-                    centerX = rect.left + rect.width / 2 - 190
-                    centerY = rect.top + rect.height / 2 - 250
+        if (selectionBox.value.visible) {
+            selectionBox.value.visible = false
+        }
+
+        dragPreviewBox.value.visible = false
+
+        const wasDrawing = drawingConnection.value.active
+        const sourceId = drawingConnection.value.sourceNodeId
+        const portType = drawingConnection.value.portType
+        drawingConnection.value.active = false
+
+        if (draggingNodeId.value) {
+            const nodeId = draggingNodeId.value
+            const isCtrlHeld = isCtrlHeldRef.value || e.ctrlKey
+            draggingNodeId.value = false
+            isCtrlHeldRef.value = false
+
+            if (hasMoved.value) {
+                const rawPos = localDraftPositions[nodeId] || nodeInitialPos.value
+                const finalPos = {
+                    x: Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE,
+                    y: Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
                 }
 
-                inspector.value = {
-                    visible: true,
-                    targetType: targets.length > 1 ? 'batch' : 'node',
-                    targetData: node,
-                    targets: targets,
-                    zIndex: 250,
-                    position: { x: Math.max(20, centerX), y: Math.max(20, centerY) }
+                const tasks = store.blueprint?.tasks || []
+                const targetNodeObj = renderNodes.value.find(n => n.node_id === nodeId)
+                const currentNodeSize = { w: targetNodeObj?.w || (NODE_GRID_W * GRID_SIZE), h: targetNodeObj?.h || 120 }
+
+                let targetTaskIndex = -1
+                let isCreatingNewGroup = false
+
+                if (isCtrlHeld && draggedSourceGroupSnapshot.value) {
+                    const nodeRectBeforePush = { x: finalPos.x, y: finalPos.y, w: currentNodeSize.w, h: currentNodeSize.h }
+                    const overlapWithSnapshot = calculateOverlapRatio(nodeRectBeforePush, draggedSourceGroupSnapshot.value)
+
+                    if (overlapWithSnapshot === 0) {
+                        dynamicGroups.value.forEach((g, gIdx) => {
+                            let currentSourceTIdx = -1
+                            tasks.forEach((t, tI) => {
+                                if ((t.nodes || []).some(n => n.node_id === nodeId)) currentSourceTIdx = tI
+                            })
+                            if (gIdx === currentSourceTIdx) return
+
+                            const ratio = calculateOverlapRatio(nodeRectBeforePush, g.box)
+                            if (ratio >= 1.0) {
+                                targetTaskIndex = gIdx
+                            }
+                        })
+
+                        if (targetTaskIndex === -1) {
+                            isCreatingNewGroup = true
+                        }
+                    }
                 }
-            }
 
-            const openGroupInspector = (e, group) => {
-                let centerX = window.innerWidth / 2 - 190
-                let centerY = window.innerHeight / 2 - 200
-                if (containerRef.value) {
-                    const rect = containerRef.value.getBoundingClientRect()
-                    centerX = rect.left + rect.width / 2 - 190
-                    centerY = rect.top + rect.height / 2 - 200
-                }
+                const safePos = resolveCollisionsAndPushOthers(nodeId, finalPos, renderNodes.value, currentNodeSize)
 
-                inspector.value = {
-                    visible: true,
-                    targetType: 'group',
-                    targetData: group,
-                    targets: [],
-                    zIndex: 250,
-                    position: { x: Math.max(20, centerX), y: Math.max(20, centerY) }
-                }
-            }
-
-            const startGroupDrag = (e, groupId) => {
-                e.stopPropagation()
-                const startX = e.clientX
-                const startY = e.clientY
-                let hasGroupMoved = false
-
-                const tasks = store.currentTaskData?.tasks || []
-                const taskIndex = tasks.findIndex((t, idx) => `group_${t.task_id || idx}` === groupId)
-                if (taskIndex === -1) return
-
-                const activeTask = tasks[taskIndex]
-                const taskNodes = activeTask.nodes || []
-
-                const initialNodePositions = {}
-                tasks.forEach(t => {
-                    (t.nodes || []).forEach(n => {
-                        initialNodePositions[n.node_id] = { x: n.position?.x || 0, y: n.position?.y || 0 }
-                    })
+                let sourceTaskIndex = -1
+                let sourceNodeObj = null
+                tasks.forEach((t, tIdx) => {
+                    const found = (t.nodes || []).find(n => n.node_id === nodeId)
+                    if (found) {
+                        sourceTaskIndex = tIdx
+                        sourceNodeObj = found
+                    }
                 })
 
-                const currentGroupInfo = dynamicGroups.value.find(g => g.groupId === groupId)
-                if (!currentGroupInfo) return
-                const initialBox = { ...currentGroupInfo.box }
+                if (sourceTaskIndex !== -1 && isCtrlHeld && draggedSourceGroupSnapshot.value) {
+                    const originalTask = tasks[sourceTaskIndex]
+                    const nodeRectAfterPush = { x: safePos.x, y: safePos.y, w: currentNodeSize.w, h: currentNodeSize.h }
+                    const overlapWithSnapshot = calculateOverlapRatio(nodeRectAfterPush, draggedSourceGroupSnapshot.value)
 
-                const onMouseMove = (moveEvent) => {
-                    const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY)
-                    if (dist > 6) {
-                        hasGroupMoved = true
-                    }
+                    if (overlapWithSnapshot === 0) {
+                        originalTask.nodes = (originalTask.nodes || []).filter(n => n.node_id !== nodeId)
+                        sourceNodeObj.position = safePos
 
-                    if (hasGroupMoved) {
-                        const dx = (moveEvent.clientX - startX) / viewport.value.zoom
-                        const dy = (moveEvent.clientY - startY) / viewport.value.zoom
-
-                        taskNodes.forEach((n) => {
-                            localDraftPositions[n.node_id] = {
-                                x: initialNodePositions[n.node_id].x + dx,
-                                y: initialNodePositions[n.node_id].y + dy
-                            }
-                        })
-                    }
-                }
-
-                const onMouseUp = async () => {
-                    window.removeEventListener('mousemove', onMouseMove)
-                    window.removeEventListener('mouseup', onMouseUp)
-
-                    if (!hasGroupMoved) {
-                        return
-                    }
-
-                    const finalDraftNode = taskNodes[0] ? (localDraftPositions[taskNodes[0].node_id] || taskNodes[0].position) : { x: 0, y: 0 }
-                    const initDraftNode = taskNodes[0] ? initialNodePositions[taskNodes[0].node_id] : { x: 0, y: 0 }
-                    const groupDx = (finalDraftNode.x - initDraftNode.x)
-                    const groupDy = (finalDraftNode.y - initDraftNode.y)
-
-                    const rawFinalBox = {
-                        x: initialBox.x + groupDx,
-                        y: initialBox.y + groupDy,
-                        w: initialBox.w,
-                        h: initialBox.h
-                    }
-                    const snappedFinalBox = {
-                        x: Math.round(rawFinalBox.x / GRID_SIZE) * GRID_SIZE,
-                        y: Math.round(rawFinalBox.y / GRID_SIZE) * GRID_SIZE,
-                        w: rawFinalBox.w,
-                        h: rawFinalBox.h
-                    }
-
-                    const allOtherGroups = dynamicGroups.value.map(g => ({
-                        taskId: g.taskId,
-                        box: g.box
-                    }))
-
-                    const adjustedBoxes = resolveGroupCollisionsAndPushOthers(activeTask.task_id, snappedFinalBox, allOtherGroups)
-
-                    tasks.forEach(t => {
-                        const targetBox = adjustedBoxes[t.task_id]
-                        if (targetBox) {
-                            const origGroup = dynamicGroups.value.find(g => g.taskId === t.task_id)
-                            if (origGroup) {
-                                let taskDeltaX = 0
-                                let taskDeltaY = 0
-
-                                if (t.task_id === activeTask.task_id) {
-                                    taskDeltaX = targetBox.x - initialBox.x
-                                    taskDeltaY = targetBox.y - initialBox.y
-                                } else {
-                                    const origBox = origGroup.box
-                                    taskDeltaX = targetBox.x - origBox.x
-                                    taskDeltaY = targetBox.y - origBox.y
-                                }
-
-                                (t.nodes || []).forEach(n => {
-                                    const initPos = initialNodePositions[n.node_id]
-                                    if (initPos) {
-                                        const finalX = Math.round((initPos.x + taskDeltaX) / GRID_SIZE) * GRID_SIZE
-                                        const finalY = Math.round((initPos.y + taskDeltaY) / GRID_SIZE) * GRID_SIZE
-                                        n.position = { x: finalX, y: finalY }
-                                    }
-                                })
-                            }
-                        }
-                        if (t && typeof t === 'object') {
-                            delete t.tasks
-                        }
-                        (t.nodes || []).forEach(n => {
-                            delete localDraftPositions[n.node_id]
-                        })
-                    })
-
-                    if (store.currentTaskData) {
-                        store.currentTaskData.tasks = JSON.parse(JSON.stringify(tasks))
-                    }
-
-                    try {
-                        await axios.post('/api/blueprint/save', {
-                            project_path: store.currentProjectPath,
-                            blueprint_data: store.currentTaskData
-                        })
-                        store.taskNodesVersion++
-                        ElMessage.success('任务组移动及互斥排版保存成功')
-                    } catch (err) {
-                        console.error('保存任务组位移失败', err)
-                        ElMessage.error('保存任务组位移失败')
-                    }
-
-                    await store.loadTasks()
-                }
-
-                window.addEventListener('mousemove', onMouseMove)
-                window.addEventListener('mouseup', onMouseUp)
-            }
-
-            const startConnection = (e, nodeId, portType) => {
-                if (!containerRef.value) return
-                const rect = containerRef.value.getBoundingClientRect()
-                const clientX = e.clientX - rect.left
-                const clientY = e.clientY - rect.top
-
-                drawingConnection.value = {
-                    active: true,
-                    sourceNodeId: nodeId,
-                    portType,
-                    currentX: (clientX - viewport.value.x) / viewport.value.zoom,
-                    currentY: (clientY - viewport.value.y) / viewport.value.zoom,
-                    previewMarkerUrl: 'url(#arrow-preview)'
-                }
-                e.stopPropagation()
-            }
-
-            const onEdgeClick = (edge) => {
-                selectedEdgeId.value = edge.id
-                ElMessage.info(`已选中连线 (${edge.label || '流向'})`)
-            }
-
-            const globalKeydownHandler = async (e) => {
-                if (e.key === 'Control') {
-                    isCtrlHeldRef.value = true
-                }
-
-                if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEdgeId.value) {
-                    const edge = computedEdges.value.find(item => item.id === selectedEdgeId.value)
-                    if (edge) {
-                        const tasks = store.currentTaskData?.tasks || []
-                        let modified = false
-                        for (const t of tasks) {
-                            const foundNode = (t.nodes || []).find(n => n.node_id === edge.sourceNodeId)
-                            if (foundNode) {
-                                if (edge.typeFlag === 'fail' && foundNode.params?.on_failure) {
-                                    foundNode.params.on_failure = {}
-                                    modified = true
-                                } else if (edge.typeFlag === 'succ' && foundNode.params?.on_success) {
-                                    foundNode.params.on_success = {}
-                                    modified = true
-                                }
-                            }
-                        }
-                        if (modified) {
-                            await store.saveCurrentTask(true)
-                            store.taskNodesVersion++
-                            selectedEdgeId.value = null
-                            ElMessage.success('已成功删除连线')
-                        }
-                    }
-                }
-            }
-
-            const globalKeyupHandler = (e) => {
-                if (e.key === 'Control') {
-                    isCtrlHeldRef.value = false
-                }
-            }
-
-            const createAndConnectNode = async (nodeType) => {
-                try {
-                    const sourceId = spawnMenu.value.sourceNodeId
-                    const portType = spawnMenu.value.portType
-
-                    const targetClientX = spawnMenu.value.clientX || customContextMenu.clientX || window.innerWidth / 2
-                    const targetClientY = spawnMenu.value.clientY || customContextMenu.clientY || window.innerHeight / 2
-
-                    spawnMenu.value.visible = false
-                    customContextMenu.visible = false
-
-                    const tasks = store.currentTaskData?.tasks || []
-                    let targetTask = null, sourceNodeObj = null
-
-                    if (sourceId) {
-                        for (const t of tasks) {
-                            const found = (t.nodes || []).find(n => n.node_id === sourceId)
-                            if (found) { targetTask = t; sourceNodeObj = found; break }
-                        }
-                    } else {
-                        const contextType = customContextMenu.targetType
-                        const contextTaskId = customContextMenu.targetId
-
-                        if (contextType === 'canvas_in_group' && contextTaskId) {
-                            targetTask = tasks.find(t => t.task_id === contextTaskId)
-                        }
-
-                        if (!targetTask) {
+                        if (targetTaskIndex !== -1) {
+                            const targetTask = tasks[targetTaskIndex]
+                            if (!targetTask.nodes) targetTask.nodes = []
+                            targetTask.nodes.push(sourceNodeObj)
+                            ElMessage.success(`节点已被纳入组 [${targetTask.task_name}]`)
+                        } else if (isCreatingNewGroup) {
                             const newTaskId = `task_${Date.now()}`
-                            targetTask = {
+                            const newTask = {
                                 task_id: newTaskId,
                                 task_name: '新建组',
                                 loop_count: 1,
                                 loop_interval: 0,
-                                nodes: []
+                                nodes: [sourceNodeObj]
                             }
-                            tasks.push(targetTask)
+                            tasks.push(newTask)
+                            ElMessage.success('节点已成功脱离，并自动创建放入【新建组】')
+                        }
+                    } else {
+                        sourceNodeObj.position = safePos
+                    }
+                } else {
+                    for (const task of tasks) {
+                        const found = (task.nodes || []).find(n => n.node_id === nodeId)
+                        if (found) {
+                            found.position = safePos
+                            break
                         }
                     }
+                }
 
-                    if (!targetTask) return
-
-                    const newNodeId = `node_${Date.now()}`
-                    delete targetTask.tasks
-
-                    if (!targetTask.nodes) {
-                        targetTask.nodes = []
-                    }
-                    const targetNodesList = targetTask.nodes
-
-                    if (!containerRef.value) return
-                    const rect = containerRef.value.getBoundingClientRect()
-
-                    const spawnX = targetClientX - rect.left
-                    const spawnY = targetClientY - rect.top
-
-                    const rawSpawnX = (spawnX - viewport.value.x) / viewport.value.zoom - (NODE_GRID_W * GRID_SIZE) / 2
-                    const rawSpawnY = (spawnY - viewport.value.y) / viewport.value.zoom - 40
-
-                    const chineseLabel = getNodeShortLabel(nodeType)
-                    const sameTypeCount = targetNodesList.filter(n => n.node_type === nodeType).length + 1
-                    const friendlyName = `${chineseLabel}_${sameTypeCount}`
-
-                    const newNode = {
-                        node_id: newNodeId,
-                        node_name: friendlyName,
-                        node_type: nodeType,
-                        params: {},
-                        delay_before: 200,
-                        loop_count: 1,
-                        position: {
-                            x: Math.round(rawSpawnX / GRID_SIZE) * GRID_SIZE,
-                            y: Math.round(rawSpawnY / GRID_SIZE) * GRID_SIZE
-                        }
-                    }
-
-                    if (sourceNodeObj) {
-                        if (!sourceNodeObj.params) sourceNodeObj.params = {}
-
-                        const targetTaskId = targetTask ? targetTask.task_id : ''
-                        const connectionData = {
-                            target_task: targetTaskId,
-                            target_node: newNodeId
-                        }
-
-                        if (portType === 'fail') {
-                            sourceNodeObj.params.on_failure = connectionData
-                        } else {
-                            sourceNodeObj.params.on_success = connectionData
-                        }
-                    }
-
-                    targetNodesList.push(newNode)
-
-                    tasks.forEach(t => {
-                        if (t && typeof t === 'object') {
-                            delete t.tasks
+                tasks.forEach(t => {
+                    (t.nodes || []).forEach(n => {
+                        if (localDraftPositions[n.node_id]) {
+                            n.position = localDraftPositions[n.node_id]
+                            delete localDraftPositions[n.node_id]
                         }
                     })
+                })
 
-                    if (store.currentTaskData) {
-                        store.currentTaskData.tasks = tasks
+                await nextTick()
+                const currentGroupsForCheck = dynamicGroups.value.map(g => ({
+                    taskId: g.taskId,
+                    box: { x: g.box.x, y: g.box.y, w: g.box.w, h: g.box.h }
+                }))
+
+                let globalAdjustedBoxes = {}
+                let activeTaskObj = tasks[sourceTaskIndex] || tasks[tasks.length - 1]
+                if (activeTaskObj) {
+                    const activeGroupId = activeTaskObj.task_id
+                    const activeGroupInfo = currentGroupsForCheck.find(x => x.taskId === activeGroupId)
+
+                    if (activeGroupInfo) {
+                        const others = currentGroupsForCheck.filter(x => x.taskId !== activeGroupId)
+                        globalAdjustedBoxes = resolveGroupCollisionsAndPushOthers(activeGroupId, activeGroupInfo.box, others)
                     }
+                }
 
-                    await axios.post('/api/blueprint/save', {
-                        project_path: store.currentProjectPath,
-                        blueprint_data: store.currentTaskData
-                    })
+                tasks.forEach(t => {
+                    const newBox = globalAdjustedBoxes[t.task_id]
+                    const oldGroup = currentGroupsForCheck.find(x => x.taskId === t.task_id)
+                    if (newBox && oldGroup && oldGroup.box) {
+                        const shiftX = (Number(newBox.x) || 0) - (Number(oldGroup.box.x) || 0)
+                        const shiftY = (Number(newBox.y) || 0) - (Number(oldGroup.box.y) || 0)
 
-                    await store.loadTasks()
-                    store.taskNodesVersion++
-
-                    localSelectedNodeIds.value = [newNodeId]
-
-                    await nextTick()
-                    const createdNodeObj = targetNodesList.find(n => n.node_id === newNodeId)
-                    if (createdNodeObj) {
-                        inspector.value = {
-                            visible: true,
-                            targetType: 'node',
-                            targetData: createdNodeObj,
-                            targets: [],
-                            position: {
-                                x: Math.min(targetClientX + 15, window.innerWidth - 300),
-                                y: Math.min(targetClientY + 15, window.innerHeight - 400)
-                            }
+                        if (shiftX !== 0 || shiftY !== 0) {
+                            (t.nodes || []).forEach(n => {
+                                n.position.x = Math.round((n.position.x + shiftX) / GRID_SIZE) * GRID_SIZE
+                                n.position.y = Math.round((n.position.y + shiftY) / GRID_SIZE) * GRID_SIZE
+                            })
                         }
                     }
+                })
 
-                    ElMessage.success(`成功创建节点: [${newNode.node_name}]`)
-                } catch (err) {
-                    console.error('创建节点出错详情:', err)
-                    ElMessage.error('创建节点失败，请检查控制台日志')
+                store.blueprint.tasks = tasks.filter(t => (t.nodes || []).length > 0)
+                await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+
+                draggedSourceGroupSnapshot.value = null
+                ghostPlaceholder.value = null
+                delete localDraftPositions[nodeId]
+
+                ElMessage.success('节点排版及组归属更新成功')
+            }
+            hasMoved.value = false
+        }
+
+        // ⚡ 拖拽空放断开原有连线
+        if (wasDrawing) {
+            const tasks = store.blueprint?.tasks || []
+            if (tasks.length === 0) return
+
+            let sourceNodeObj = null
+            for (const t of tasks) {
+                const found = (t.nodes || []).find(n => n.node_id === sourceId)
+                if (found) { sourceNodeObj = found; break }
+            }
+
+            if (sourceNodeObj) {
+                let hasExisting = false
+
+                if (portType.startsWith('branch_')) {
+                    const cIdx = parseInt(portType.split('_')[1]) || 0
+                    if (sourceNodeObj.params?.candidates?.[cIdx]?.on_success?.target_node) {
+                        hasExisting = true
+                        sourceNodeObj.params.candidates[cIdx].on_success = {}
+                    }
+                } else if (portType === 'fail' && sourceNodeObj.params?.on_failure?.target_node) {
+                    hasExisting = true
+                    sourceNodeObj.params.on_failure = {}
+                } else if (portType === 'succ' && sourceNodeObj.params?.on_success?.target_node) {
+                    hasExisting = true
+                    sourceNodeObj.params.on_success = {}
+                }
+
+                if (hasExisting) {
+                    try {
+                        await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+                        ElMessage.success('已成功断开连线')
+                    } catch (err) {
+                        console.error('断线保存失败:', err)
+                        ElMessage.error('断线保存失败')
+                    }
+                    return
                 }
             }
 
-            const onInspectorUpdate = async () => {
-                await store.saveCurrentTask(true)
-                store.taskNodesVersion++
-            }
-
-            const closeInspector = async () => {
-                inspector.value.visible = false
-                store.taskNodesVersion++
-            }
-
-            onMounted(async () => {
-                window.addEventListener('mousemove', onGlobalMouseMove)
-                window.addEventListener('mouseup', onGlobalMouseUp)
-                window.addEventListener('keydown', globalKeydownHandler)
-                window.addEventListener('keyup', globalKeyupHandler)
-                await store.loadTasks()
-                fitViewToNodes()
-                nextTick(drawMinimap)
-            })
-
-            onUnmounted(() => {
-                window.removeEventListener('mousemove', onGlobalMouseMove)
-                window.removeEventListener('mouseup', onGlobalMouseUp)
-                window.removeEventListener('keydown', globalKeydownHandler)
-                window.removeEventListener('keyup', globalKeyupHandler)
-            })
-
-            return {
-                store,
-                containerRef,
-                minimapCanvasRef,
-                viewportStyle,
-                renderNodes,
-                dynamicGroups,
-                computedEdges,
-                selectionBox,
-                selectionBoxStyle,
-                spawnMenu,
-                inspector,
-                availableNodeTypes,
-                drawingConnection,
-                draggingNodeId,
-                dragPreviewBox,
-                customContextMenu,
-                onContextMenu,
-                handleRunFromNode,
-                handleDeleteNode,
-                handleDeleteGroup,
-                handleCanvasNewNode,
-                handleCanvasNewGroup,
-                onMinimapClick,
-                onCanvasMouseDown,
-                onNodeMouseUpCard,
-                onCanvasWheel,
-                onNodeMouseDown,
-                onNodeDoubleClick,
-                openGroupInspector,
-                startGroupDrag,
-                startConnection,
-                onEdgeClick,
-                createAndConnectNode,
-                onInspectorUpdate,
-                closeInspector,
-                activeFocusedGroupId,
-                isNodeFocused,
-                localSelectedNodeIds,
-                fitViewToNodes,
-                getNodeIcon,
-                getNodeShortLabel,
-                getImageThumbnailUrl,
-                onImageLoaded,
-                isSpecialTallImage
+            spawnMenu.value = {
+                visible: true,
+                x: e.clientX,
+                y: e.clientY,
+                sourceNodeId: sourceId,
+                portType,
+                clientX: e.clientX,
+                clientY: e.clientY
             }
         }
     }
+
+    const onCanvasWheel = (e) => {
+        e.preventDefault()
+        if (!containerRef.value) return
+
+        const rect = containerRef.value.getBoundingClientRect()
+        const mouseX = e.clientX - rect.left
+        const mouseY = e.clientY - rect.top
+
+        const oldZoom = viewport.value.zoom
+        const zoomFactor = e.deltaY < 0 ? 1.1 : 0.9
+        const newZoom = Math.min(Math.max(oldZoom * zoomFactor, 0.2), 4)
+
+        if (newZoom === oldZoom) return
+
+        const worldX = (mouseX - viewport.value.x) / oldZoom
+        const worldY = (mouseY - viewport.value.y) / oldZoom
+
+        viewport.value.zoom = newZoom
+        viewport.value.x = mouseX - worldX * newZoom
+        viewport.value.y = mouseY - worldY * newZoom
+
+        if (typeof drawMinimap === 'function') {
+            drawMinimap()
+        }
+    }
+
+    watch(() => store.focusTarget, (target) => {
+        if (!target || !containerRef.value) return
+        const containerW = containerRef.value.clientWidth
+        const containerH = containerRef.value.clientHeight
+        let targetX = 0
+        let targetY = 0
+
+        if (target.type === 'node') {
+            const node = renderNodes.value.find(n => n.node_id === target.id)
+            if (node) {
+                targetX = node.position.x + node.w / 2
+                targetY = node.position.y + node.h / 2
+            }
+        } else if (target.type === 'group') {
+            const group = dynamicGroups.value.find(g => g.groupId === target.id || g.taskId === target.id)
+            if (group) {
+                targetX = group.box.x + group.box.w / 2
+                targetY = group.box.y + group.box.h / 2
+            }
+        }
+
+        if (targetX !== 0 || targetY !== 0) {
+            viewport.value.x = containerW / 2 - targetX * viewport.value.zoom
+            viewport.value.y = containerH / 2 - targetY * viewport.value.zoom
+            if (typeof drawMinimap === 'function') drawMinimap()
+        }
+    }, { deep: true })
+
+    // ⚡ 释放鼠标确认建立 Branch 行级或通用连线
+    const onNodeMouseUpCard = async (e, targetNode) => {
+        if (drawingConnection.value.active) {
+            const sourceId = drawingConnection.value.sourceNodeId
+            const portType = drawingConnection.value.portType
+
+            drawingConnection.value.active = false
+
+            const tasks = store.blueprint?.tasks || []
+            if (tasks.length === 0) {
+                ElMessage.warning('数据同步中，请稍候再试...')
+                e.stopPropagation()
+                return
+            }
+
+            if (sourceId && sourceId !== targetNode.node_id) {
+                let sourceNodeObj = null
+                let targetTaskFound = null
+
+                for (const t of tasks) {
+                    const foundSource = (t.nodes || []).find(n => n.node_id === sourceId)
+                    if (foundSource) sourceNodeObj = foundSource
+
+                    const foundTarget = (t.nodes || []).find(n => n.node_id === targetNode.node_id)
+                    if (foundTarget) targetTaskFound = t
+                }
+
+                if (sourceNodeObj) {
+                    if (!sourceNodeObj.params) sourceNodeObj.params = {}
+
+                    const connectionData = {
+                        target_task: targetTaskFound ? targetTaskFound.task_id : '',
+                        target_node: targetNode.node_id
+                    }
+
+                    if (portType.startsWith('branch_')) {
+                        const cIdx = parseInt(portType.split('_')[1]) || 0
+                        if (!sourceNodeObj.params.candidates) sourceNodeObj.params.candidates = []
+                        if (sourceNodeObj.params.candidates[cIdx]) {
+                            sourceNodeObj.params.candidates[cIdx].on_success = { ...connectionData }
+                            ElMessage.success(`分支 ${cIdx + 1} 成功指向 ➔ [${targetNode.node_name}]`)
+                        }
+                    } else if (portType === 'fail') {
+                        sourceNodeObj.params.on_failure = { ...connectionData }
+                        ElMessage.success(`Else/失败分支指向 ➔ [${targetNode.node_name}]`)
+                    } else {
+                        sourceNodeObj.params.on_success = { ...connectionData }
+                        ElMessage.success(`成功流向指向 ➔ [${targetNode.node_name}]`)
+                    }
+
+                    try {
+                        await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+                    } catch (saveErr) {
+                        console.error('连线保存失败:', saveErr)
+                        ElMessage.error('连线保存失败')
+                    }
+                }
+            }
+            e.stopPropagation()
+        }
+    }
+
+    const onNodeDoubleClick = (e, node) => {
+        store.selectedNodeIds = [node.node_id]
+        store.selectedGroupId = null
+        localSelectedNodeIds.value = [node.node_id]
+        e.stopPropagation()
+    }
+
+    const openGroupInspector = (e, group) => {
+        store.selectedGroupId = group.groupId
+        store.selectedNodeIds = []
+        localSelectedNodeIds.value = []
+        e.stopPropagation()
+    }
+
+    const startGroupDrag = (e, groupId) => {
+        e.stopPropagation()
+        const startX = e.clientX
+        const startY = e.clientY
+        let hasGroupMoved = false
+
+        const tasks = store.blueprint?.tasks || []
+        const taskIndex = tasks.findIndex((t, idx) => `group_${t.task_id || idx}` === groupId)
+        if (taskIndex === -1) return
+
+        const activeTask = tasks[taskIndex]
+        const taskNodes = activeTask.nodes || []
+
+        const initialNodePositions = {}
+        tasks.forEach(t => {
+            (t.nodes || []).forEach(n => {
+                initialNodePositions[n.node_id] = { x: n.position?.x || 0, y: n.position?.y || 0 }
+            })
+        })
+
+        const currentGroupInfo = dynamicGroups.value.find(g => g.groupId === groupId)
+        if (!currentGroupInfo) return
+        const initialBox = { ...currentGroupInfo.box }
+
+        const onMouseMove = (moveEvent) => {
+            const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY)
+            if (dist > 6) {
+                hasGroupMoved = true
+            }
+
+            if (hasGroupMoved) {
+                const dx = (moveEvent.clientX - startX) / viewport.value.zoom
+                const dy = (moveEvent.clientY - startY) / viewport.value.zoom
+
+                taskNodes.forEach((n) => {
+                    localDraftPositions[n.node_id] = {
+                        x: initialNodePositions[n.node_id].x + dx,
+                        y: initialNodePositions[n.node_id].y + dy
+                    }
+                })
+            }
+        }
+
+        const onMouseUp = async () => {
+            window.removeEventListener('mousemove', onMouseMove)
+            window.removeEventListener('mouseup', onMouseUp)
+
+            if (!hasGroupMoved) return
+
+            const finalDraftNode = taskNodes[0] ? (localDraftPositions[taskNodes[0].node_id] || taskNodes[0].position) : { x: 0, y: 0 }
+            const initDraftNode = taskNodes[0] ? initialNodePositions[taskNodes[0].node_id] : { x: 0, y: 0 }
+            const groupDx = (finalDraftNode.x - initDraftNode.x)
+            const groupDy = (finalDraftNode.y - initDraftNode.y)
+
+            const rawFinalBox = {
+                x: initialBox.x + groupDx,
+                y: initialBox.y + groupDy,
+                w: initialBox.w,
+                h: initialBox.h
+            }
+            const snappedFinalBox = {
+                x: Math.round(rawFinalBox.x / GRID_SIZE) * GRID_SIZE,
+                y: Math.round(rawFinalBox.y / GRID_SIZE) * GRID_SIZE,
+                w: rawFinalBox.w,
+                h: rawFinalBox.h
+            }
+
+            const allOtherGroups = dynamicGroups.value.map(g => ({
+                taskId: g.taskId,
+                box: g.box
+            }))
+
+            const adjustedBoxes = resolveGroupCollisionsAndPushOthers(activeTask.task_id, snappedFinalBox, allOtherGroups)
+
+            tasks.forEach(t => {
+                const targetBox = adjustedBoxes[t.task_id]
+                const origGroup = dynamicGroups.value.find(g => g.taskId === t.task_id)
+                if (targetBox && origGroup && origGroup.box) {
+                    let taskDeltaX = 0
+                    let taskDeltaY = 0
+
+                    if (t.task_id === activeTask.task_id) {
+                        taskDeltaX = targetBox.x - initialBox.x
+                        taskDeltaY = targetBox.y - initialBox.y
+                    } else {
+                        const origBox = origGroup.box
+                        taskDeltaX = targetBox.x - origBox.x
+                        taskDeltaY = targetBox.y - origBox.y
+                    }
+
+                    (t.nodes || []).forEach(n => {
+                        const initPos = initialNodePositions[n.node_id]
+                        if (initPos) {
+                            const finalX = Math.round((initPos.x + taskDeltaX) / GRID_SIZE) * GRID_SIZE
+                            const finalY = Math.round((initPos.y + taskDeltaY) / GRID_SIZE) * GRID_SIZE
+                            n.position = { x: finalX, y: finalY }
+                        }
+                    })
+                }
+                (t.nodes || []).forEach(n => {
+                    delete localDraftPositions[n.node_id]
+                })
+            })
+
+            store.blueprint.tasks = JSON.parse(JSON.stringify(tasks.filter(t => (t.nodes || []).length > 0)))
+
+            try {
+                await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+                ElMessage.success('任务组移动及互斥排版保存成功')
+            } catch (err) {
+                console.error('保存任务组位移失败', err)
+                ElMessage.error('保存任务组位移失败')
+            }
+        }
+
+        window.addEventListener('mousemove', onMouseMove)
+        window.addEventListener('mouseup', onMouseUp)
+    }
+
+    const startConnection = (e, nodeId, portType) => {
+        if (!containerRef.value) return
+        const rect = containerRef.value.getBoundingClientRect()
+        const clientX = e.clientX - rect.left
+        const clientY = e.clientY - rect.top
+
+        drawingConnection.value = {
+            active: true,
+            sourceNodeId: nodeId,
+            portType,
+            currentX: (clientX - viewport.value.x) / viewport.value.zoom,
+            currentY: (clientY - viewport.value.y) / viewport.value.zoom,
+            previewMarkerUrl: 'url(#arrow-preview)'
+        }
+        e.stopPropagation()
+    }
+
+    const onEdgeClick = (edge) => {
+        selectedEdgeId.value = edge.id
+        ElMessage.info(`已选中连线`)
+    }
+
+    // ⚡ 快捷键删除选中连线（兼容 Branch 多分支出口）
+    const globalKeydownHandler = async (e) => {
+        if (e.key === 'Control') {
+            isCtrlHeldRef.value = true
+        }
+
+        if ((e.key === 'Delete' || e.key === 'Backspace') && selectedEdgeId.value) {
+            const edge = computedEdges.value.find(item => item.id === selectedEdgeId.value)
+            if (edge) {
+                const tasks = store.blueprint?.tasks || []
+                let modified = false
+                for (const t of tasks) {
+                    const foundNode = (t.nodes || []).find(n => n.node_id === edge.sourceNodeId)
+                    if (foundNode) {
+                        if (edge.typeFlag === 'branch' && foundNode.params?.candidates?.[edge.candIndex]) {
+                            foundNode.params.candidates[edge.candIndex].on_success = {}
+                            modified = true
+                        } else if (edge.typeFlag === 'fail' && foundNode.params?.on_failure) {
+                            foundNode.params.on_failure = {}
+                            modified = true
+                        } else if (edge.typeFlag === 'succ' && foundNode.params?.on_success) {
+                            foundNode.params.on_success = {}
+                            modified = true
+                        }
+                    }
+                }
+                if (modified) {
+                    await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+                    selectedEdgeId.value = null
+                    ElMessage.success('已成功断开连线')
+                }
+            }
+        }
+    }
+
+    const globalKeyupHandler = (e) => {
+        if (e.key === 'Control') {
+            isCtrlHeldRef.value = false
+        }
+    }
+
+    const createAndConnectNode = async (nodeType) => {
+        try {
+            const sourceId = spawnMenu.value.sourceNodeId
+            const portType = spawnMenu.value.portType
+
+            const targetClientX = spawnMenu.value.clientX || customContextMenu.clientX || window.innerWidth / 2
+            const targetClientY = spawnMenu.value.clientY || customContextMenu.clientY || window.innerHeight / 2
+
+            spawnMenu.value.visible = false
+            customContextMenu.visible = false
+
+            const tasks = store.blueprint?.tasks || []
+            let targetTask = null, sourceNodeObj = null
+
+            if (sourceId) {
+                for (const t of tasks) {
+                    const found = (t.nodes || []).find(n => n.node_id === sourceId)
+                    if (found) { targetTask = t; sourceNodeObj = found; break }
+                }
+            } else {
+                const contextType = customContextMenu.targetType
+                const contextTaskId = customContextMenu.targetId
+
+                if (contextType === 'canvas_in_group' && contextTaskId) {
+                    targetTask = tasks.find(t => t.task_id === contextTaskId)
+                }
+
+                if (!targetTask) {
+                    const newTaskId = `task_${Date.now()}`
+                    targetTask = {
+                        task_id: newTaskId,
+                        task_name: '新建组',
+                        loop_count: 1,
+                        loop_interval: 0,
+                        nodes: []
+                    }
+                    tasks.push(targetTask)
+                }
+            }
+
+            if (!targetTask) return
+
+            const newNodeId = `node_${Date.now()}`
+
+            if (!targetTask.nodes) {
+                targetTask.nodes = []
+            }
+            const targetNodesList = targetTask.nodes
+
+            if (!containerRef.value) return
+            const rect = containerRef.value.getBoundingClientRect()
+
+            const spawnX = targetClientX - rect.left
+            const spawnY = targetClientY - rect.top
+
+            const rawSpawnX = (spawnX - viewport.value.x) / viewport.value.zoom - (NODE_GRID_W * GRID_SIZE) / 2
+            const rawSpawnY = (spawnY - viewport.value.y) / viewport.value.zoom - 40
+
+            const chineseLabel = getNodeShortLabel(nodeType)
+            const sameTypeCount = targetNodesList.filter(n => n.node_type === nodeType).length + 1
+            const friendlyName = `${chineseLabel}_${sameTypeCount}`
+
+            const newNode = {
+                node_id: newNodeId,
+                node_name: friendlyName,
+                node_type: nodeType,
+                params: {},
+                delay_before: 200,
+                loop_count: 1,
+                position: {
+                    x: Math.round(rawSpawnX / GRID_SIZE) * GRID_SIZE,
+                    y: Math.round(rawSpawnY / GRID_SIZE) * GRID_SIZE
+                }
+            }
+
+            if (sourceNodeObj) {
+                if (!sourceNodeObj.params) sourceNodeObj.params = {}
+
+                const targetTaskId = targetTask ? targetTask.task_id : ''
+                const connectionData = {
+                    target_task: targetTaskId,
+                    target_node: newNodeId
+                }
+
+                if (portType.startsWith('branch_')) {
+                    const cIdx = parseInt(portType.split('_')[1]) || 0
+                    if (sourceNodeObj.params.candidates?.[cIdx]) {
+                        sourceNodeObj.params.candidates[cIdx].on_success = connectionData
+                    }
+                } else if (portType === 'fail') {
+                    sourceNodeObj.params.on_failure = connectionData
+                } else {
+                    sourceNodeObj.params.on_success = connectionData
+                }
+            }
+
+            targetNodesList.push(newNode)
+            store.blueprint.tasks = tasks
+
+            await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+
+            localSelectedNodeIds.value = [newNodeId]
+            store.selectedNodeIds = [newNodeId]
+
+            ElMessage.success(`成功创建节点: [${newNode.node_name}]`)
+        } catch (err) {
+            console.error('创建节点出错详情:', err)
+            ElMessage.error('创建节点失败，请检查控制台日志')
+        }
+    }
+
+    onMounted(async () => {
+        window.addEventListener('mousemove', onGlobalMouseMove)
+        window.addEventListener('mouseup', onGlobalMouseUp)
+        window.addEventListener('keydown', globalKeydownHandler)
+        window.addEventListener('keyup', globalKeyupHandler)
+        if (store.currentProjectPath) {
+            await store.loadProjectData()
+        }
+        fitViewToNodes()
+        nextTick(drawMinimap)
+    })
+
+    onUnmounted(() => {
+        window.removeEventListener('mousemove', onGlobalMouseMove)
+        window.removeEventListener('mouseup', onGlobalMouseUp)
+        window.removeEventListener('keydown', globalKeydownHandler)
+        window.removeEventListener('keyup', globalKeyupHandler)
+    })
 </script>
 
 <style scoped>
@@ -2195,97 +2093,6 @@
         will-change: transform;
     }
 
-    .canvas-log-panel {
-        position: absolute;
-        left: 20px;
-        bottom: 20px;
-        width: 300px;
-        background: rgba(38, 40, 61, 0.95);
-        border: 1px solid var(--el-border-color-light);
-        border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-        z-index: 997;
-        overflow: hidden;
-        user-select: none;
-        transition: all 0.2s;
-    }
-
-    .log-panel-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 6px 10px;
-        background: rgba(25, 26, 38, 0.95);
-        font-size: 12px;
-        font-weight: bold;
-        color: var(--el-color-primary);
-        cursor: pointer;
-        border-bottom: 1px solid var(--el-border-color-light);
-    }
-
-        .log-panel-header:hover {
-            background: var(--el-fill-color-light);
-        }
-
-    .log-panel-body {
-        padding: 10px;
-        font-size: 11px;
-        color: var(--el-text-color-regular);
-        max-height: 120px;
-        overflow-y: auto;
-    }
-
-    .minimap-container {
-        position: absolute;
-        right: 20px;
-        bottom: 20px;
-        width: 200px;
-        background: rgba(38, 40, 61, 0.9);
-        border: 1px solid var(--el-border-color-light);
-        border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
-        z-index: 998;
-        overflow: hidden;
-        user-select: none;
-        transition: height 0.2s;
-    }
-
-    .minimap-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 6px 10px;
-        background: rgba(25, 26, 38, 0.95);
-        font-size: 12px;
-        font-weight: bold;
-        color: var(--el-color-primary);
-        cursor: pointer;
-        border-bottom: 1px solid var(--el-border-color-light);
-    }
-
-        .minimap-header:hover {
-            background: var(--el-fill-color-light);
-        }
-
-    .collapse-icon {
-        font-size: 10px;
-        color: var(--el-text-color-secondary);
-    }
-
-    .minimap-body {
-        width: 200px;
-        height: 150px;
-        background: #181926;
-        cursor: crosshair;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-    }
-
-        .minimap-body canvas {
-            display: block;
-        }
-
     .canvas-edges-layer {
         position: absolute;
         top: 0;
@@ -2295,6 +2102,22 @@
         pointer-events: none;
         z-index: 1;
         overflow: visible;
+    }
+
+    .minimap-container {
+        position: absolute;
+        right: 16px;
+        bottom: 16px;
+        width: 150px;
+        height: 110px;
+        background: rgba(20, 22, 34, 0.65);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+        z-index: 998;
+        overflow: hidden;
     }
 
     .canvas-group-box {
@@ -2369,6 +2192,7 @@
         flex-direction: column;
         justify-content: space-between;
         transition: border-color 0.2s, box-shadow 0.2s;
+        overflow: visible !important; /* ⚡ 允许锚点外溢 */
     }
 
         .canvas-node-card:active {
@@ -2417,8 +2241,56 @@
         display: flex;
         flex-direction: column;
         justify-content: center;
-        overflow: hidden;
+        overflow: visible !important; /* ⚡ 核心修正：取消隐藏，拒绝裁切行级绿点 */
         margin: 4px 0;
+    }
+
+    /* ⚡ Branch 行级条件列表与锚点样式 */
+    .branch-candidates-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        width: 100%;
+        padding: 2px 0;
+        overflow: visible !important;
+    }
+
+    .branch-candidate-item {
+        position: relative;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: rgba(255, 255, 255, 0.04);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 4px;
+        padding: 3px 6px;
+        font-size: 10px;
+        height: 24px;
+        overflow: visible !important; /* ⚡ 允许内部锚点半嵌在卡片右侧 */
+        z-index: 2;
+    }
+
+    .branch-cand-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: var(--el-text-color-regular);
+        max-width: 180px;
+    }
+
+    .branch-handle {
+        right: -18px; /* ⚡ 核心修正：考虑到卡片内边距，使锚点精准嵌入右侧边框 */
+        top: 50%;
+        transform: translateY(-50%);
+        background: #4ed19c;
+        z-index: 10;
+    }
+
+    .empty-cand-placeholder {
+        font-size: 10px;
+        color: var(--el-text-color-placeholder);
+        text-align: center;
+        padding: 8px 0;
     }
 
     .node-image-embedded {
@@ -2432,23 +2304,6 @@
         justify-content: center;
         overflow: hidden;
     }
-
-        .node-image-embedded::before {
-            content: '';
-            position: absolute;
-            inset: -15px;
-            background-image: var(--bg-image-url);
-            background-size: cover;
-            background-position: center;
-            filter: blur(12px) brightness(0.45);
-            z-index: 1;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .node-image-embedded:has(.embedded-template-img.is-contain)::before {
-            opacity: 1;
-        }
 
     .embedded-template-img {
         position: relative;
@@ -2504,6 +2359,7 @@
         border: 2px solid #181926;
         transition: transform 0.15s, box-shadow 0.15s;
     }
+
         .node-handle::after {
             content: '';
             position: absolute;
@@ -2511,7 +2367,7 @@
             left: -10px;
             right: -10px;
             bottom: -10px;
-            background: transparent; /* 完全透明，用户肉眼不可见 */
+            background: transparent;
             border-radius: 50%;
         }
 
@@ -2523,10 +2379,10 @@
     .top-handle {
         top: -6px;
         left: 50%;
-        cursor:auto;
+        cursor: auto;
         transform: translateX(-50%);
-        background: #181926; /* 深色球体内部填充（与卡片背景色一致） */
-        border: 2px solid #f2f2f3; /* 白色边框 */
+        background: #181926;
+        border: 2px solid #f2f2f3;
     }
 
     .succ-handle {
@@ -2543,6 +2399,13 @@
         background: #f56c6c;
     }
 
+    /* ⚡ 针对 Branch 节点，将 Else 兜底红点下移至右下方，避免与行级绿点覆盖 */
+    .canvas-node-card:has(.branch-candidates-list) .fail-handle {
+        top: auto !important;
+        bottom: 12px !important;
+        transform: none !important;
+    }
+
     .selection-box {
         position: absolute;
         background: rgba(78, 209, 156, 0.1);
@@ -2551,47 +2414,8 @@
         z-index: 999;
     }
 
-    .spawn-menu {
+    .spawn-menu, .custom-context-menu {
         position: fixed;
-        z-index: 9999;
-        width: 210px;
-        background: var(--el-bg-color-overlay);
-        border: 1px solid var(--el-color-primary);
-        border-radius: 8px;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-        padding: 6px 0;
-    }
-
-    .spawn-menu-header {
-        padding: 6px 12px;
-        font-size: 11px;
-        font-weight: bold;
-        color: var(--el-color-primary);
-        border-bottom: 1px solid var(--el-border-color-light);
-        margin-bottom: 4px;
-    }
-
-    .spawn-menu-list {
-        max-height: 220px;
-        overflow-y: auto;
-    }
-
-    .spawn-menu-item {
-        padding: 8px 14px;
-        font-size: 12px;
-        color: var(--el-text-color-regular);
-        cursor: pointer;
-    }
-
-        .spawn-menu-item:hover {
-            background: var(--el-fill-color-light);
-            color: var(--el-color-primary);
-            padding-left: 18px;
-        }
-
-    .custom-context-menu {
-        position: fixed;
-        z-index: 99999;
         width: 180px;
         background: var(--el-bg-color-overlay, #26283d);
         border: 1px solid var(--el-border-color-light, #313352);
@@ -2655,17 +2479,6 @@
 
         to {
             stroke-dashoffset: 0;
-        }
-    }
-
-    .preview-path {
-        stroke-dasharray: 5 5;
-        animation: dash 1s linear infinite;
-    }
-
-    @keyframes dash {
-        to {
-            stroke-dashoffset: -10;
         }
     }
 

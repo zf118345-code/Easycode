@@ -1,4 +1,4 @@
-﻿// src/utils/gridRouter.js
+﻿// frontend/src/utils/gridRouter.js
 import PF from 'pathfinding'
 
 export class GridWorkflowRouter {
@@ -47,7 +47,7 @@ export class GridWorkflowRouter {
 
         const grid = new PF.Grid(gridCols, gridRows)
 
-        // 1. 建筑物（节点）占用网格设为不可通行
+        // 1. 节点建筑物设为不可通行
         allNodes.forEach(n => {
             const x = n.position?.x || 0
             const y = n.position?.y || 0
@@ -69,10 +69,22 @@ export class GridWorkflowRouter {
             }
         })
 
-        // 2. 定义起终点原始像素桩
-        const startPixelPt = portType === 'succ'
-            ? { x: sourceNode.position.x + sSize.w / 2, y: sourceNode.position.y + sSize.h }
-            : { x: sourceNode.position.x + sSize.w, y: sourceNode.position.y + sSize.h / 2 }
+        // 2. ⚡ 精准计算不同端口类型的起止像素桩
+        let startPixelPt = { x: 0, y: 0 }
+
+        if (portType === 'succ') {
+            startPixelPt = { x: sourceNode.position.x + sSize.w / 2, y: sourceNode.position.y + sSize.h }
+        } else if (portType.startsWith('branch_')) {
+            // ⚡ 核心修正：锁定 CSS 真实卡片高度与边距（卡片顶边距 8 + 头部 16 + 容器边距 4 + 列表边距 2 + 单项中心 12 = 42px，单项步长 28px）
+            const cIdx = parseInt(portType.split('_')[1]) || 0
+            const exactOffsetY = 42 + cIdx * 28
+            startPixelPt = { x: sourceNode.position.x + sSize.w, y: sourceNode.position.y + exactOffsetY }
+        } else {
+            // ⚡ 核心修正：Branch 节点的 Else 兜底红点在右下方（bottom: 12px），中心 Y 轴为 h - 18px
+            const isBranchNode = sourceNode.node_type === 'branch'
+            const exactOffsetY = isBranchNode ? (sSize.h - 18) : (sSize.h / 2)
+            startPixelPt = { x: sourceNode.position.x + sSize.w, y: sourceNode.position.y + exactOffsetY }
+        }
 
         const endPixelPt = {
             x: targetNode.position.x + tSize.w / 2,
@@ -83,6 +95,7 @@ export class GridWorkflowRouter {
         if (portType === 'succ') {
             stubStart.y += this.GRID_SIZE
         } else {
+            // 所有右侧导出的端口，初始向右向外延伸一个网格
             stubStart.x += this.GRID_SIZE
         }
 
@@ -131,7 +144,6 @@ export class GridWorkflowRouter {
                 endPixelPt
             ]
 
-            // ⭐ 绝对纯正交的折角清洗器：强制插入直角中间点，把任何潜在的斜向连线拆解为绝对的横平竖直
             let orthogonalPts = [rawPoints[0]]
             for (let i = 1; i < rawPoints.length; i++) {
                 const prev = orthogonalPts[orthogonalPts.length - 1]
@@ -143,7 +155,6 @@ export class GridWorkflowRouter {
                 orthogonalPts.push(curr)
             }
 
-            // 标准共线点精简（合并同一直线上的点，消除楼梯锯齿）
             simplifiedPts = [orthogonalPts[0]]
             for (let i = 1; i < orthogonalPts.length - 1; i++) {
                 const prev = simplifiedPts[simplifiedPts.length - 1]
@@ -157,7 +168,6 @@ export class GridWorkflowRouter {
             simplifiedPts.push(orthogonalPts[orthogonalPts.length - 1])
 
         } else {
-            // 完美直角折线兜底
             const midY = (startPixelPt.y + endPixelPt.y) / 2
             simplifiedPts = [
                 startPixelPt,
@@ -177,7 +187,6 @@ export class GridWorkflowRouter {
             pathStr += ` L ${simplifiedPts[i].x} ${simplifiedPts[i].y}`
         }
 
-        // ⭐ 智能回溯取点法计算箭头方向，彻底杜绝 p2 is not defined 报错
         let arrowDir = 'down'
         if (rawPixelPoints && rawPixelPoints.length >= 2) {
             let p1 = rawPixelPoints[rawPixelPoints.length - 2]
@@ -207,7 +216,7 @@ export class GridWorkflowRouter {
             pathStr,
             gridPoints,
             rawPixelPoints,
-            arrowDir // 顺利吐给画布
+            arrowDir
         }
     }
 }

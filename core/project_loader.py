@@ -1,14 +1,14 @@
 # core/project_loader.py
 import os
 import json
-from core.models import Project, Task, Node, Jump  # ⭐ 必须导入 Jump
+from core.models import Project, Task, Node, Jump
 from core.utils import load_json
 
 
 def load_project(project_dir):
     """
     修正版：绝对扁平化解析项目蓝图，支持同屏多任务组平铺读取
-    （纯连线驱动：废弃 jump_type，通过 target_node 和 target_task 统一路由）
+    （纯连线驱动：直接通过 Jump.from_dict 解析精准 target_node / target_task）
     """
     try:
         for fname in ["project_blueprint.json", "project.json"]:
@@ -31,18 +31,6 @@ def load_project(project_dir):
                         "nodes": blueprint_data.get("nodes", [])
                     }]
 
-                def parse_jump(jump_data):
-                    if not isinstance(jump_data, dict):
-                        return Jump(type="end")
-
-                    target_node = jump_data.get("target_node")
-                    target_task = jump_data.get("target_task") or jump_data.get("target")
-
-                    if target_node:
-                        return Jump(type="node", target_node=target_node, target=target_task)
-                    else:
-                        return Jump(type="end")
-
                 for task_data in tasks_data:
                     nodes = []
                     raw_nodes = task_data.get("nodes", [])
@@ -52,6 +40,7 @@ def load_project(project_dir):
                             on_success = params_data.get("on_success", {})
                             on_failure = params_data.get("on_failure", {})
 
+                            # ⚡ 使用 Jump.from_dict 规范解析连线路由
                             node = Node(
                                 node_id=node_data["node_id"],
                                 node_name=node_data.get("node_name", node_data["node_id"]),
@@ -60,13 +49,13 @@ def load_project(project_dir):
                                 delay_before=node_data.get("delay_before", 0),
                                 loop_count=node_data.get("loop_count", 1),
                                 enabled=node_data.get("enabled", True),
-                                on_success=parse_jump(on_success),
-                                on_failure=parse_jump(on_failure),
+                                on_success=Jump.from_dict(on_success),
+                                on_failure=Jump.from_dict(on_failure),
                                 position=node_data.get("position")
                             )
                             nodes.append(node)
                         except Exception as e:
-                            print(f"解析节点出错: {e}")
+                            print(f"解析节点 [{node_data.get('node_id')}] 出错: {e}")
                             continue
 
                     task = Task(

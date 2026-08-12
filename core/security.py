@@ -1,40 +1,84 @@
 # core/security.py
 import os
 import json
+import time
 import tempfile
+import threading
+from pathlib import Path
+from typing import Any
 from fastapi import HTTPException
 
+# 全局线程锁：防止多线程并发原子写入同一个文件引发文件冲突
+_write_lock = threading.Lock()
 
-def assert_safe_path(base_dir: str, target_path: str) -> str:
+
+def assert_safe_path(base_path: str, target_path: str) -> str:
     """
-    路径校验防护：确保目标绝对路径严格包含在 base_dir 范围内，防止 ../ 跨目录越权访问
+    校验目标路径是否处于项目基础目录内部，防止目录穿越攻击
+    针对 Windows 盘符大小写、斜杠以及未创建路径进行了彻底规范化处理
     """
-    if not base_dir or not target_path:
-        raise HTTPException(status_code=400, detail="路径参数不能为空")
-
-    abs_base = os.path.abspath(base_dir)
-    abs_target = os.path.abspath(os.path.join(base_dir, target_path))
-
-    if not abs_target.startswith(abs_base):
-        raise HTTPException(status_code=403, detail="非法路径访问：受限于项目根目录操作")
-
-    return abs_target
-
-
-def atomic_write_json(file_path: str, data: dict, indent: int = 2):
-    """
-    文件原子化落盘：先写入临时文件，写入完成后通过 OS 级别 replace 替换，防止写入中断损坏 JSON
-    """
-    dir_name = os.path.dirname(os.path.abspath(file_path))
-    os.makedirs(dir_name, exist_ok=True)
-
+    if not base_path or not target_path:
+        return target_path
     try:
-        with tempfile.NamedTemporaryFile("w", dir=dir_name, delete=False, encoding="utf-8") as tf:
-            json.dump(data, tf, indent=indent, ensure_ascii=False)
-            temp_name = tf.name
+        # 使用 abspath + normcase 统一转为绝对路径与小写，彻底避免 Windows 盘符大小写与 realpath 差异
+        norm_base = os.path.normcase(os.path.abspath(base_path))
+        norm_target = os.path.normcase(os.path.abspath(target_path))
 
-        os.replace(temp_name, file_path)
+        # 确保 base 路径结尾带有路径分隔符，防止 prefix 误判 (例如 /demo 与 /demo_2)
+        base_prefix = norm_base if norm_base.endswith(os.sep) else norm_base + os.sep
+
+        if norm_target != norm_base and not norm_target.startswith(base_prefix):
+            raise HTTPException(status_code=400, detail="非法路径越界操作")
+
+        return str(target_path)
+    except HTTPException:
+        raise
     except Exception as e:
-        if 'temp_name' in locals() and os.path.exists(temp_name):
-            os.remove(temp_name)
-        raise IOError(f"原子写入文件失败 [{file_path}]: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"路径校验失败: {str(e)}")
+
+
+def atomic_write_json(file_path: str, data: Any, indent: int = 2, max_retries: int = 5):
+    """
+    带 Windows 重试机制与线程安全锁的原子 JSON 写入函数
+    """
+    target_path = Path(file_path).resolve()
+    target_dir = target_path.parent
+    target_dir.mkdir(parents=True, exist_ok=True)
+
+    with _write_lock:
+        temp_file = None
+        try:
+            # 1. 在目标文件同目录下创建临时文件
+            temp_file = tempfile.NamedTemporaryFile(
+                mode="w",
+                dir=str(target_dir),
+                delete=False,
+                encoding="utf-8"
+            )
+            temp_name = temp_file.name
+
+            # 2. 写入 JSON 数据
+            json.dump(data, temp_file, ensure_ascii=False, indent=indent)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+            temp_file.close()  # 必须显式关闭临时文件句柄，否则 Windows 下 os.replace 会报拒绝访问
+
+            # 3. 带重试机制的原子替换 (专门解决 Windows 下 WinError 5 拒绝访问)
+            for attempt in range(max_retries):
+                try:
+                    os.replace(temp_name, str(target_path))
+                    break  # 替换成功，退出重试循环
+                except (PermissionError, OSError) as e:
+                    if attempt < max_retries - 1:
+                        time.sleep(0.05 * (attempt + 1))  # 递增休眠 50ms, 100ms...
+                    else:
+                        raise e
+
+        except Exception as e:
+            # 如果中途报错，清理残留的临时文件
+            if temp_file and os.path.exists(temp_file.name):
+                try:
+                    os.remove(temp_file.name)
+                except Exception:
+                    pass
+            raise IOError(f"原子写入文件失败 [{file_path}]: {str(e)}")

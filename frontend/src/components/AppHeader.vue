@@ -1,7 +1,8 @@
+<!-- frontend/src/components/AppHeader.vue -->
 <template>
     <header class="app-header">
         <div class="left-group">
-            <el-icon class="menu-icon" @click="toggleMenu"><Menu /></el-icon>
+            <el-icon class="menu-icon"><Menu /></el-icon>
             <span class="logo">⚡ 节点自动化</span>
         </div>
 
@@ -17,8 +18,8 @@
                  background-color="#2d2d44"
                  text-color="#cfd3e6"
                  active-text-color="#409EFF"
-                 @select="onMenuSelect"
-                 class="menu-bar">
+                 class="menu-bar"
+                 @select="onMenuSelect">
             <el-menu-item index="file">文件</el-menu-item>
             <el-menu-item index="edit">编辑</el-menu-item>
             <el-menu-item index="view">视图</el-menu-item>
@@ -30,72 +31,68 @@
             <el-button type="primary" size="small" @click="runTask">▶ 运行</el-button>
         </div>
 
-        <ScreenshotTool ref="screenshotTool" />
+        <ScreenshotTool ref="screenshotToolRef" />
     </header>
 </template>
 
-<script>
+<script setup>
+    import { ref } from 'vue'
     import { Menu } from '@element-plus/icons-vue'
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
     import ScreenshotTool from './ScreenshotTool.vue'
 
-    export default {
-        components: { Menu, ScreenshotTool },
-        data() {
-            return { activeMenu: 'file' }
-        },
-        setup() {
-            const store = useMainStore()
-            return { store }
-        },
-        methods: {
-            async switchProject() {
-                try {
-                    const { value: path } = await ElMessageBox.prompt('请输入新的项目完整路径', '切换项目', {
-                        confirmButtonText: '确定',
-                        cancelButtonText: '取消',
-                        inputValue: this.store.currentProjectPath || '',
-                        inputPattern: /^[a-zA-Z]:[\\/].+/,
-                        inputErrorMessage: '请输入有效的绝对路径（如 D:/MyProjects/demo）'
-                    })
-                    if (path) {
-                        await this.store.loadProjectByPath(path)
-                        ElMessage.success(`已切换到项目: ${this.store.currentProjectName}`)
-                        this.store.selectedNodeId = null
-                    }
-                } catch (err) {
-                    if (err !== 'cancel') {
-                        ElMessage.error('切换失败: ' + err.message)
-                    }
-                }
-            },
-            onMenuSelect(index) {
-                this.activeMenu = index
-                if (index === 'screenshot') this.openScreenshot()
-            },
-            openScreenshot() {
-                this.$refs.screenshotTool.open()
-            },
-            async runTask() {
-                if (!this.store.currentTaskId) {
-                    ElMessage.warning('请先选择一个任务')
-                    return
-                }
-                try {
-                    ElMessage.info('任务执行中...')
-                    const result = await this.store.runTask(this.store.currentTaskId, null)
-                    if (result.status === 'started') {
-                        ElMessage.success('任务已启动，请查看执行状态')
-                    } else {
-                        ElMessage.error('执行失败: ' + (result.message || '未知错误'))
-                    }
-                } catch (err) {
-                    ElMessage.error('执行请求失败: ' + (err.response?.data?.detail || err.message))
-                    console.error(err)
-                }
-            },
-            toggleMenu() { }
+    const store = useMainStore()
+    const activeMenu = ref('file')
+    const screenshotToolRef = ref(null)
+
+    const switchProject = async () => {
+        try {
+            const { value: path } = await ElMessageBox.prompt('请输入新的项目完整路径', '切换项目', {
+                confirmButtonText: '确定',
+                cancelButtonText: '取消',
+                inputValue: store.currentProjectPath || '',
+                inputPattern: /^[a-zA-Z]:[\\/].+/,
+                inputErrorMessage: '请输入有效的绝对路径（如 D:/MyProjects/demo）'
+            })
+            if (path) {
+                await store.loadProjectByPath(path)
+                ElMessage.success(`已切换到项目: ${store.currentProjectName}`)
+                store.selectedNodeId = null
+            }
+        } catch (err) {
+            if (err !== 'cancel') {
+                ElMessage.error('切换失败: ' + err.message)
+            }
+        }
+    }
+
+    const onMenuSelect = (index) => {
+        activeMenu.value = index
+        if (index === 'screenshot') openScreenshot()
+    }
+
+    const openScreenshot = () => {
+        if (screenshotToolRef.value) {
+            screenshotToolRef.value.open('template')
+        }
+    }
+
+    const runTask = async () => {
+        if (!store.currentTaskId) {
+            ElMessage.warning('请先选择一个任务')
+            return
+        }
+        try {
+            ElMessage.info('任务执行中...')
+            const result = await store.runTask(store.currentTaskId, null)
+            if (result && result.status === 'started') {
+                ElMessage.success('任务已启动，请查看执行状态')
+            } else {
+                ElMessage.error('执行失败')
+            }
+        } catch (err) {
+            ElMessage.error('执行请求失败: ' + err.message)
         }
     }
 </script>

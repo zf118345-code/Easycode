@@ -9,10 +9,29 @@ PARAM_DEFINITIONS = {
                 "default": "",
                 "label": "模板图片"
             },
+            "gray_scale": {
+                "type": "bool",
+                "default": True,
+                "label": "去除背景干扰 (灰度处理)"
+            },
+            "gray_threshold": {
+                "type": "int",
+                "default": 127,
+                "label": "二值化灰度阈值",
+                "min": 0,
+                "max": 255,
+                "step": 1,
+                "visible_if": {
+                    "field": "gray_scale",
+                    "operator": "eq",
+                    "value": True
+                }
+            },
             "threshold": {
                 "type": "int",
                 "default": 85,
                 "label": "匹配相似度",
+                "suffix": "%",  # ⚡ 增加单位后缀，驱动 ControlNumber 正确显示 0-99%
                 "min": 1,
                 "max": 100
             },
@@ -20,10 +39,10 @@ PARAM_DEFINITIONS = {
                 "type": "int",
                 "default": 3000,
                 "label": "匹配超时时长",
+                "suffix": "ms",  # ⚡ 增加单位后缀
                 "min": 100,
                 "step": 100
             },
-
             "region_type": {
                 "type": "select",
                 "options": [
@@ -42,24 +61,6 @@ PARAM_DEFINITIONS = {
                     "field": "region_type",
                     "operator": "in",
                     "value": ["recorded", "custom"]
-                }
-            },
-            "gray_scale": {
-                "type": "bool",
-                "default": True,
-                "label": "开启灰度/二值化预处理 (增强轮廓，过滤背景杂色)"
-            },
-            "gray_threshold": {
-                "type": "int",
-                "default": 127,
-                "label": "二值化灰度阈值 (0-255，调节至轮廓最清晰)",
-                "min": 0,
-                "max": 255,
-                "step": 1,
-                "visible_if": {
-                    "field": "gray_scale",
-                    "operator": "eq",
-                    "value": True
                 }
             },
             "on_success_action": {
