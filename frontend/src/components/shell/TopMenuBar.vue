@@ -60,6 +60,18 @@
             </el-dropdown>
         </div>
 
+        <!-- ⚡ 双画布模式切换 Tab：业务流程 / 页面拓扑 -->
+        <div class="canvas-mode-switcher">
+            <div v-for="opt in canvasModeOptions"
+                 :key="opt.value"
+                 class="canvas-mode-tab"
+                 :class="{ active: store.canvasMode === opt.value }"
+                 @click="handleSwitchCanvasMode(opt.value)">
+                <component :is="opt.icon" class="mode-icon" :size="13" />
+                <span class="mode-label">{{ opt.label }}</span>
+            </div>
+        </div>
+
         <!-- 右侧操作区：工作面板胶囊 + 运行按钮 -->
         <div class="menu-right-actions">
             <div class="workspace-switcher-badge" @click="$emit('openSettings')">
@@ -80,9 +92,16 @@
     import { computed } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage } from 'element-plus'
+    import { Workflow, Share2 } from 'lucide-vue-next'
 
     const store = useMainStore()
     defineEmits(['run', 'openSettings'])
+
+    // ⚡ 画布模式选项配置
+    const canvasModeOptions = [
+        { value: 'workflow', label: '业务流程', icon: Workflow },
+        { value: 'topology', label: '页面拓扑', icon: Share2 }
+    ]
 
     const currentWorkspaceName = computed(() => {
         const ctx = store.currentContext
@@ -91,6 +110,14 @@
         }
         return 'Windows 桌面'
     })
+
+    // ⚡ 切换画布模式
+    const handleSwitchCanvasMode = (mode) => {
+        if (store.canvasMode === mode) return
+        store.setCanvasMode(mode)
+        const label = canvasModeOptions.find(o => o.value === mode)?.label || mode
+        ElMessage.info(`已切换到「${label}」画布`)
+    }
 
     const handleMenuCommand = (command) => {
         if (command === 'toggle_minimap') store.toggleMinimap()
@@ -142,6 +169,51 @@
             background: var(--el-fill-color-light);
             color: var(--el-text-color-primary);
         }
+
+    /* ⚡ 画布模式切换 Tab 样式 */
+    .canvas-mode-switcher {
+        display: flex;
+        align-items: center;
+        background: var(--el-fill-color-light);
+        border: 1px solid var(--el-border-color-light);
+        border-radius: 8px;
+        padding: 2px;
+        gap: 2px;
+    }
+
+    .canvas-mode-tab {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 3px 12px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 12px;
+        color: var(--el-text-color-secondary);
+        transition: all 0.2s ease;
+        user-select: none;
+        white-space: nowrap;
+    }
+
+        .canvas-mode-tab:hover {
+            color: var(--el-text-color-primary);
+            background: var(--el-fill-color);
+        }
+
+        .canvas-mode-tab.active {
+            background: var(--el-color-primary);
+            color: #fff;
+            font-weight: 600;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        }
+
+    .mode-icon {
+        flex-shrink: 0;
+    }
+
+    .mode-label {
+        line-height: 1;
+    }
 
     .menu-right-actions {
         margin-left: auto;

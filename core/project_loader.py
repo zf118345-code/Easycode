@@ -1,14 +1,16 @@
 # core/project_loader.py
+# P1 改造：加载全局 edges 列表、拓扑地图数据、调用 merge_defaults()
+
 import os
 import json
-from core.models import Project, Task, Node, Jump
+from core.models import Project, Task, Node, Jump, Edge, TopologyMap
 from core.utils import load_json
 
 
 def load_project(project_dir):
     """
-    修正版：绝对扁平化解析项目蓝图，支持同屏多任务组平铺读取
-    （纯连线驱动：直接通过 Jump.from_dict 解析精准 target_node / target_task）
+    加载项目蓝图
+    P1 增强：解析全局 edges、拓扑地图、多画布坐标
     """
     try:
         for fname in ["project_blueprint.json", "project.json"]:
@@ -20,6 +22,21 @@ def load_project(project_dir):
                     project_name=blueprint_data.get("project_name", os.path.basename(project_dir)),
                     variables=blueprint_data.get("variables", {}),
                 )
+
+                # P1 新增：加载全局 edges
+                edges_data = blueprint_data.get("edges", [])
+                for edge_data in edges_data:
+                    edge = Edge.from_dict(edge_data)
+                    if edge:
+                        project.edges.append(edge)
+
+                # P1 新增：加载拓扑地图
+                topology_data = blueprint_data.get("topology")
+                if topology_data:
+                    project.topology = TopologyMap.from_dict(topology_data)
+
+                # P1 新增：加载 ui_state
+                project.ui_state = blueprint_data.get("ui_state", {})
 
                 tasks_data = blueprint_data.get("tasks", [])
                 if not tasks_data and "nodes" in blueprint_data:
@@ -40,7 +57,6 @@ def load_project(project_dir):
                             on_success = params_data.get("on_success", {})
                             on_failure = params_data.get("on_failure", {})
 
-                            # ⚡ 使用 Jump.from_dict 规范解析连线路由
                             node = Node(
                                 node_id=node_data["node_id"],
                                 node_name=node_data.get("node_name", node_data["node_id"]),
@@ -51,8 +67,19 @@ def load_project(project_dir):
                                 enabled=node_data.get("enabled", True),
                                 on_success=Jump.from_dict(on_success),
                                 on_failure=Jump.from_dict(on_failure),
-                                position=node_data.get("position")
+                                position=node_data.get("position"),
+                                # P1 新增：多画布坐标
+                                positions=node_data.get("positions", {}),
+                                size=node_data.get("size"),
+                                canvas_ids=node_data.get("canvas_ids", ["workflow"])
                             )
+
+                            # P1 修复：加载时合并默认参数
+                            try:
+                                node.merge_defaults()
+                            except Exception as e:
+                                print(f"合并节点默认参数失败 [{node.node_id}]: {e}")
+
                             nodes.append(node)
                         except Exception as e:
                             print(f"解析节点 [{node_data.get('node_id')}] 出错: {e}")
@@ -66,6 +93,7 @@ def load_project(project_dir):
                         nodes=nodes
                     )
                     project.tasks[task.task_id] = task
+
                 return project
 
         return Project(project_name=os.path.basename(project_dir), variables={})

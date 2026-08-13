@@ -10,6 +10,12 @@
                 </el-button>
             </div>
 
+            <!-- ⚡ 拓扑模式资产目录引导提示条 -->
+            <div v-if="store.canvasMode === 'topology'" class="topology-asset-tip">
+                <span class="tip-icon">🧭</span>
+                <span class="tip-text">拓扑资产模式：已自动定位至 <strong>topology_assets/</strong> 目录</span>
+            </div>
+
             <div class="tree-wrapper">
                 <el-tree ref="treeRef"
                          :data="treeData"
@@ -31,7 +37,10 @@
                                        @blur="submitInlineFolder(data)" />
                             </template>
                             <template v-else>
-                                <span class="node-label">📁 {{ node.label }}</span>
+                                <span class="node-label">
+                                    <span v-if="data.isTopologyRoot" class="topo-badge">拓扑</span>
+                                    📁 {{ node.label }}
+                                </span>
                                 <el-button class="node-mkdir-btn"
                                            type="primary"
                                            link
@@ -51,7 +60,7 @@
         <div class="content-body">
             <div class="location-bar">
                 <span>当前选择路径: </span>
-                <strong class="path-highlight">/templates/{{ currentRelPath || '(根目录)' }}</strong>
+                <strong class="path-highlight">/{{ store.canvasMode === 'topology' ? 'topology_assets' : 'templates' }}/{{ currentRelPath || '(根目录)' }}</strong>
             </div>
 
             <!-- 图片网格查看 -->
@@ -105,6 +114,7 @@
     import { ref, watch, nextTick } from 'vue'
     import { ElMessage, ElMessageBox } from 'element-plus'
     import { visionApi } from '@/api/visionApi'
+    import { useMainStore } from '@/stores'
 
     const props = defineProps({
         projectPath: { type: String, required: true },
@@ -113,6 +123,11 @@
     })
 
     const emit = defineEmits(['select', 'save', 'close'])
+
+    const store = useMainStore()
+
+    // ⚡ 拓扑模式专属资产目录名
+    const TOPOLOGY_ASSET_DIR = 'topology_assets'
 
     const treeRef = ref(null)
     const inlineInputRef = ref(null)
@@ -126,8 +141,40 @@
 
     const defaultProps = { children: 'children', label: 'name' }
 
+    // ⚡ 拓扑模式下需要确保 topology_assets 目录存在，并在树中标记为拓扑根目录
+    const ensureTopologyAssetDir = async () => {
+        if (!props.projectPath) return
+        try {
+            // 复用 createTemplateFolder 创建 topology_assets 目录（已存在则安全忽略）
+            await visionApi.createTemplateFolder(props.projectPath, '', TOPOLOGY_ASSET_DIR)
+        } catch {
+            /* 已存在则安全忽略 */
+        }
+    }
+
+    // ⚡ 将目录树中的 topology_assets 节点标记为拓扑根目录
+    const markTopologyRootInTree = (nodes) => {
+        const walk = (list) => {
+            for (const n of list) {
+                if (n.name === TOPOLOGY_ASSET_DIR) {
+                    n.isTopologyRoot = true
+                }
+                if (n.children && n.children.length) walk(n.children)
+            }
+        }
+        walk(nodes)
+    }
+
     const fetchTree = async () => {
         try {
+            // ⚡ 拓扑模式下先确保资产目录存在，并将 initialPath 指向 topology_assets
+            if (store.canvasMode === 'topology') {
+                await ensureTopologyAssetDir()
+                if (!props.initialPath) {
+                    currentRelPath.value = TOPOLOGY_ASSET_DIR
+                }
+            }
+
             if (props.initialPath) {
                 try {
                     await visionApi.createTemplateFolder(props.projectPath, '', props.initialPath)
@@ -137,11 +184,21 @@
             }
 
             const res = await visionApi.getTemplatesTree(props.projectPath)
+            const children = res.tree || []
+            // ⚡ 拓扑模式下标记拓扑资产目录节点
+            if (store.canvasMode === 'topology') {
+                markTopologyRootInTree(children)
+            }
             treeData.value = [
-                { name: '根目录 (templates)', id: '', children: res.tree || [] }
+                { name: '根目录 (templates)', id: '', children }
             ]
 
-            currentRelPath.value = props.initialPath || ''
+            // ⚡ 拓扑模式下自动导航到 topology_assets 目录
+            if (store.canvasMode === 'topology') {
+                currentRelPath.value = TOPOLOGY_ASSET_DIR
+            } else {
+                currentRelPath.value = props.initialPath || ''
+            }
             fetchImages(currentRelPath.value)
         } catch (err) {
             console.error('获取目录树失败', err)
@@ -316,6 +373,21 @@
         },
         { immediate: true }
     )
+
+    // ⚡ 监听画布模式切换：进入拓扑模式时自动导航到 topology_assets 资产目录
+    watch(
+        () => store.canvasMode,
+        (newMode) => {
+            if (newMode === 'topology' && props.projectPath) {
+                currentRelPath.value = TOPOLOGY_ASSET_DIR
+                fetchTree()
+                ElMessage.info('已切换到拓扑资产目录 topology_assets/')
+            } else if (newMode === 'workflow' && props.projectPath) {
+                currentRelPath.value = props.initialPath || ''
+                fetchTree()
+            }
+        }
+    )
 </script>
 
 <style scoped>
@@ -348,6 +420,31 @@
         align-items: center;
     }
 
+    /* ⚡ 拓扑模式资产目录引导提示条 */
+    .topology-asset-tip {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        background: rgba(78, 209, 156, 0.1);
+        border-bottom: 1px solid rgba(78, 209, 156, 0.25);
+        font-size: 11px;
+        color: var(--el-color-primary);
+    }
+
+    .tip-icon {
+        font-size: 13px;
+        flex-shrink: 0;
+    }
+
+    .topology-asset-tip .tip-text {
+        line-height: 1.4;
+    }
+
+        .topology-asset-tip .tip-text strong {
+            color: var(--el-color-primary);
+        }
+
     .tree-wrapper {
         flex: 1;
         overflow-y: auto;
@@ -366,6 +463,19 @@
         width: 100%;
         padding-right: 6px;
         font-size: 12px;
+    }
+
+    /* ⚡ 拓扑资产目录标记徽章 */
+    .topo-badge {
+        display: inline-block;
+        background: var(--el-color-primary);
+        color: #fff;
+        font-size: 9px;
+        padding: 1px 5px;
+        border-radius: 3px;
+        margin-right: 4px;
+        line-height: 1.3;
+        vertical-align: middle;
     }
 
     .inline-folder-input {

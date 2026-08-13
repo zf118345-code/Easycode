@@ -14,11 +14,21 @@
                 </div>
 
                 <div v-show="expandedSection === 'user'" class="accordion-content">
-                    <!-- 工具栏：新建变量弹窗触发与一键清理 -->
+                    <!-- 工具栏：新建变量、配置客户表单、导出脚本包与一键清理 -->
                     <div class="vars-toolbar">
                         <el-button size="small" type="primary" class="pure-btn" @click="openCreateDialog">
                             <Plus class="btn-icon" />
                             <span>新建变量</span>
+                        </el-button>
+
+                        <el-button size="small" type="success" plain class="pure-btn" @click="schemaDialogVisible = true">
+                            <Settings class="btn-icon" />
+                            <span>配置客户表单</span>
+                        </el-button>
+
+                        <el-button size="small" type="warning" plain class="pure-btn" @click="schemaDialogVisible = true">
+                            <Package class="btn-icon" />
+                            <span>导出脚本包</span>
                         </el-button>
 
                         <el-button size="small"
@@ -32,7 +42,7 @@
                         </el-button>
                     </div>
 
-                    <!-- 用户变量列表 (完全向系统变量的简洁样式靠拢) -->
+                    <!-- 用户变量列表 -->
                     <div class="vars-list-scroll">
                         <template v-if="userVarList.length">
                             <div v-for="item in userVarList"
@@ -44,12 +54,12 @@
                                     <span class="var-name-text" :title="item.key">{{ item.key }}</span>
                                 </div>
 
-                                <!-- 中列：静态当前值预览 (无边框/无按键噪音) -->
+                                <!-- 中列：静态当前值预览 -->
                                 <div class="var-val-col">
                                     <span class="static-val-text" :title="item.displayValue">{{ item.displayValue }}</span>
                                 </div>
 
-                                <!-- 右列：默认显示引用次数，悬停淡入 Lucide 操作按钮组 -->
+                                <!-- 右列：默认显示引用次数，悬停淡入操作按钮组 -->
                                 <div class="var-action-col">
                                     <span class="ref-tag" :class="{ 'is-unused': item.refCount === 0 }">
                                         {{ item.refCount > 0 ? `${item.refCount} 次引用` : '—' }}
@@ -135,7 +145,7 @@
 
         </div>
 
-        <!-- ⚡ 彻底复用 ParamRenderer 表单网关的新建/编辑变量弹窗 -->
+        <!-- ⚡ 新建/编辑变量弹窗 -->
         <el-dialog v-model="varDialogVisible"
                    :title="isEditing ? `✏️ 编辑变量 [${editingKey}]` : '➕ 新建全局变量'"
                    width="460px"
@@ -167,6 +177,9 @@
                 </div>
             </template>
         </el-dialog>
+
+        <!-- ⚡ 客户动态表单配置器弹窗组件 -->
+        <FormSchemaEditor v-model="schemaDialogVisible" />
     </div>
 </template>
 
@@ -174,17 +187,18 @@
     import { ref, computed, reactive } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
-    import { Plus, Trash2, Copy, ChevronDown, Pencil, Check, X } from 'lucide-vue-next'
+    import { Plus, Trash2, Copy, ChevronDown, Pencil, Check, X, Settings, Package } from 'lucide-vue-next'
     import ParamRenderer from '@/components/ParamRenderer.vue'
+    import FormSchemaEditor from '@/components/schema/FormSchemaEditor.vue'
 
     const store = useMainStore()
     const expandedSection = ref('user')
+    const schemaDialogVisible = ref(false)
 
     const toggleSection = (key) => {
         expandedSection.value = expandedSection.value === key ? null : key
     }
 
-    // 弹窗状态与表单模型
     const varDialogVisible = ref(false)
     const isEditing = ref(false)
     const editingKey = ref('')
@@ -198,7 +212,6 @@
         value_json: ''
     })
 
-    // 打开新建变量弹窗
     const openCreateDialog = () => {
         isEditing.value = false
         editingKey.value = ''
@@ -211,7 +224,6 @@
         varDialogVisible.value = true
     }
 
-    // 打开编辑变量弹窗
     const openEditDialog = (item) => {
         isEditing.value = true
         editingKey.value = item.key
@@ -226,7 +238,6 @@
         varDialogVisible.value = true
     }
 
-    // 动态注册交由 ParamRenderer 的编辑/新建 Schema
     const activeFormSchema = computed(() => {
         return {
             name: {
@@ -279,7 +290,6 @@
         dialogFormPayload[field] = val
     }
 
-    // 确认保存（新建或编辑）
     const confirmSaveVar = async () => {
         const name = dialogFormPayload.name ? dialogFormPayload.name.trim() : ''
         if (!name) return ElMessage.warning('请输入变量名称')
@@ -317,7 +327,6 @@
         varDialogVisible.value = false
     }
 
-    // 上下文 Schema 与属性关联
     const setWindowSchema = computed(() => store.paramsDefinitions?.set_window?.params || {})
 
     const ctxContextObject = computed(() => {
@@ -586,6 +595,7 @@
         gap: 8px;
         border-bottom: 1px solid var(--el-border-color-light);
         flex-shrink: 0;
+        flex-wrap: wrap;
     }
 
     .pure-btn {
@@ -608,7 +618,6 @@
         overflow-y: auto;
     }
 
-    /* ⚡ 卡片网格对齐样式 */
     .var-card-row {
         position: relative;
         background: var(--el-fill-color-blank);
@@ -716,7 +725,6 @@
             background: transparent;
         }
 
-    /* ⚡ 鼠标悬停时平滑替换为 Lucide 图标集 */
     .hover-action-group {
         display: none;
         align-items: center;

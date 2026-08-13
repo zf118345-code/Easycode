@@ -1,10 +1,10 @@
-<!-- frontend/src/components/shell/ToolWindow.vue -->
+Ôªø<!-- frontend/src/components/shell/ToolWindow.vue -->
 <template>
     <div class="tool-window-pane" :style="{ width: width, height: height }">
         <div class="tool-window-header">
             <span class="window-title">{{ title }}</span>
             <div class="window-tools">
-                <button class="window-tool-btn" title="◊Ó–°ªØ ’∆" @click="$emit('close')">
+                <button class="window-tool-btn" title="ÊúÄÂ∞èÂåñÊî∂Ëµ∑" @click="$emit('close')">
                     <Minus style="width: 12px; height: 12px;" />
                 </button>
             </div>
@@ -19,7 +19,7 @@
 import { Minus } from 'lucide-vue-next'
 
 defineProps({
-  title: { type: String, default: 'π§æﬂ√Ê∞Â' },
+  title: { type: String, default: 'Â∑•ÂÖ∑Èù¢Êùø' },
   width: { type: String, default: '280px' },
   height: { type: String, default: '100%' }
 })

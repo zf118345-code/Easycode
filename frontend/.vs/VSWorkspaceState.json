@@ -3,14 +3,10 @@
     "",
     "\\src",
     "\\src\\api",
-    "\\src\\components",
-    "\\src\\components\\panels",
     "\\src\\composables",
-    "\\src\\config",
-    "\\src\\layouts",
-    "\\src\\stores",
-    "\\src\\utils"
+    "\\src\\utils",
+    "\\src\\views"
   ],
-  "SelectedNode": "\\src\\components\\WorkflowCanvas.vue",
+  "SelectedNode": "\\index.html",
   "PreviewInSolutionExplorer": false
 }

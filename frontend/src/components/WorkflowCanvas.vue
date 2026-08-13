@@ -253,7 +253,7 @@
 
     import {
         MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
-        Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2
+        Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2, Compass
     } from 'lucide-vue-next'
 
     const store = useMainStore()
@@ -309,7 +309,8 @@
         logic_check: '🔍 逻辑判断',
         variable_op: '🔢 变量操作',
         log: '📝 日志输出',
-        script_call: '📜 调用脚本'
+        script_call: '📜 调用脚本',
+        smart_jump: '🧭 智能跳转' // ⚡ 新增智能跳转节点
     }
 
     const nodeIconComponentMap = {
@@ -322,7 +323,8 @@
         logic_check: SearchCheck,
         variable_op: Binary,
         log: ListOrdered,
-        script_call: FileCode
+        script_call: FileCode,
+        smart_jump: Compass // ⚡ 绑定智能跳转图标
     }
 
     const getNodeIcon = (nodeType) => nodeIconComponentMap[nodeType] || FileCode

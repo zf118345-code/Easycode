@@ -1,12 +1,17 @@
 <!-- frontend/src/App.vue -->
 <template>
     <div id="app" @contextmenu.prevent>
-        <!-- 主界面：直接挂载新一代 IDE 骨架布局 -->
-        <template v-if="store.currentProjectPath && projectLoaded">
+        <!-- 1. 客户 Player 专有轻量模式 -->
+        <template v-if="isPlayerMode">
+            <PlayerView />
+        </template>
+
+        <!-- 2. 开发者 Studio IDE 模式：加载项目并挂载 IDE 骨架 -->
+        <template v-else-if="store.currentProjectPath && projectLoaded">
             <IdeLayout />
         </template>
 
-        <!-- 欢迎界面（无项目或加载失败） -->
+        <!-- 3. 开发者 Studio IDE 欢迎界面（无项目或加载失败） -->
         <div v-else class="welcome">
             <div class="welcome-content">
                 <h1>⚡ Easycode 自动化工作台</h1>
@@ -50,10 +55,17 @@
     import { ElMessage } from 'element-plus'
     import { InfoFilled } from '@element-plus/icons-vue'
     import IdeLayout from '@/layouts/IdeLayout.vue'
+    import PlayerView from '@/views/PlayerView.vue'
 
     const store = useMainStore()
     const projectPathInput = ref('')
     const projectLoaded = ref(false)
+
+    // ⚡ 自动探测是否为 Player 运行模式（可以通过 URL 参数或 window 全局变量触发）
+    const isPlayerMode = computed(() => {
+        const urlParams = new URLSearchParams(window.location.search)
+        return urlParams.get('mode') === 'player' || window.__EASYCODE_PLAYER_MODE__ === true
+    })
 
     const cachedPath = computed(() => store.currentProjectPath || '')
 
@@ -90,7 +102,6 @@
         if (ok) {
             ElMessage.success(`已打开项目: ${store.currentProjectName}`)
         } else {
-            // 若打开失败，从最近打开列表中剔除失效项目
             store.recentProjects = store.recentProjects.filter(p => p.path !== path)
             localStorage.setItem('recentProjects', JSON.stringify(store.recentProjects))
         }
@@ -98,6 +109,8 @@
 
     // 页面挂载初始化
     onMounted(async () => {
+        if (isPlayerMode.value) return
+
         await store.loadParams()
         if (store.currentProjectPath) {
             projectPathInput.value = store.currentProjectPath

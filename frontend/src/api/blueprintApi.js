@@ -1,4 +1,5 @@
 // frontend/src/api/blueprintApi.js
+// 修复：新增 stopExecution 方法，对齐后端停止执行路由
 import client from './client'
 
 export const blueprintApi = {
@@ -14,5 +15,7 @@ export const blueprintApi = {
     getTaskNodes: (taskId, projectPath) => client.get(`/api/tasks/${taskId}/nodes`, { params: { project_path: projectPath } }),
     saveTaskOrder: (projectPath, order) => client.post('/api/tasks/order', { project_path: projectPath, order }),
     runTask: (projectPath, taskId, startNodeId, blueprintData) => client.post('/api/run', { project_path: projectPath, task_id: taskId, start_node_id: startNodeId, blueprint_data: blueprintData }),
-    getExecutionStatus: (executionId) => client.get(`/api/execution/${executionId}`)
+    getExecutionStatus: (executionId) => client.get(`/api/execution/${executionId}`),
+    // 新增：停止执行
+    stopExecution: (executionId) => client.post(`/api/execution/${executionId}/stop`)
 }

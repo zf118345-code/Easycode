@@ -25,18 +25,26 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
             context.log("❌ 未指定模板图片名称", "error")
             return self.build_jump_result(False, params.get("on_failure", {}), error="template name missing")
 
-        templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
-        template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
+        # ⚡ 工业级优化：优先从内存密包解密出的 _memory_templates 中直接获取矩阵，实现零落盘
+        memory_templates = getattr(context, "_memory_templates", {})
+        template = None
+        if memory_templates and template_name in memory_templates:
+            template = memory_templates[template_name]
+            context.log(f"📦 [内存加载] 成功从密包 RAM 中获取模板: {template_name}")
+        else:
+            # 降级：若内存中没有（在 Studio IDE 调试时），则去物理磁盘读取
+            templates_dir = os.path.normpath(os.path.join(context.project_dir, "templates"))
+            template_path = os.path.normpath(os.path.join(templates_dir, template_name + ".png"))
 
-        if not os.path.exists(template_path):
-            context.log(f"❌ 模板文件不存在: {template_path}", "error")
-            return self.build_jump_result(False, params.get("on_failure", {}), error="template not found")
+            if not os.path.exists(template_path):
+                context.log(f"❌ 模板文件不存在: {template_path}", "error")
+                return self.build_jump_result(False, params.get("on_failure", {}), error="template not found")
 
-        try:
-            template = load_image(template_path)
-        except Exception:
-            context.log(f"❌ 模板文件加载失败: {template_path}", "error")
-            return self.build_jump_result(False, params.get("on_failure", {}), error="template load error")
+            try:
+                template = load_image(template_path)
+            except Exception:
+                context.log(f"❌ 模板文件加载失败: {template_path}", "error")
+                return self.build_jump_result(False, params.get("on_failure", {}), error="template load error")
 
         # 2. 搜索区域计算
         region_type = params.get("region_type", "fullwindow")

@@ -5,7 +5,7 @@ import pyautogui
 import numpy as np
 from typing import Any
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
-from core.utils import match_template_cv
+from core.vision.memory_matcher import MemoryTemplateMatcher
 
 
 @ConditionRegistry.register("image_exists")
@@ -29,7 +29,7 @@ class ImageExistsEvaluator(BaseConditionEvaluator):
 
         project_dir = getattr(context, 'project_dir', None) or getattr(context, 'project_path', None)
 
-        if not image_source or not project_dir:
+        if not image_source:
             if hasattr(context, "last_match_score"):
                 context.last_match_score = 0.0
             return True if is_not_exists_mode else False
@@ -38,67 +38,48 @@ class ImageExistsEvaluator(BaseConditionEvaluator):
         if clean_name.lower().endswith(".png"):
             clean_name = clean_name[:-4]
 
-        template_path = os.path.join(project_dir, "templates", f"{clean_name}.png")
+        # ⚡ 3. 核心升级：内存与磁盘双通道模板读取 (支持 DRM 零落盘加密模式)
+        template_bgr = None
 
-        if not os.path.exists(template_path):
+        # 通道 A: 尝试从 RAM 内存对象中提取已解密的模板矩阵
+        memory_templates = getattr(context, 'memory_templates', None)
+        if isinstance(memory_templates, dict) and clean_name in memory_templates:
+            template_bgr = memory_templates[clean_name]
+
+        # 通道 B: 内存未命中时，降级从磁盘模板目录读取 (Studio IDE 调试模式)
+        if template_bgr is None and project_dir:
+            template_path = os.path.join(project_dir, "templates", f"{clean_name}.png")
+            if os.path.exists(template_path):
+                template_bgr = cv2.imread(template_path)
+
+        if template_bgr is None:
             if hasattr(context, "last_match_score"):
                 context.last_match_score = 0.0
             if hasattr(context, 'log'):
-                context.log(f"⚠️ [识图条件] 模板文件不存在: {template_path}", "warning")
+                context.log(f"⚠️ [识图条件] 无法获取模板矩阵 (内存与磁盘均未命中): {clean_name}", "warning")
             return True if is_not_exists_mode else False
 
         try:
-            # 截取全屏图像 (BGR 格式)
+            # 4. 截取全屏图像 (BGR 格式)
             screen = pyautogui.screenshot()
             screen_bgr = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
-            template_bgr = cv2.imread(template_path)
 
-            if template_bgr is None:
-                if hasattr(context, "last_match_score"):
-                    context.last_match_score = 0.0
-                return True if is_not_exists_mode else False
-
-            tpl_h, tpl_w = template_bgr.shape[:2]
-            screen_h, screen_w = screen_bgr.shape[:2]
-
-            # 3. 提取匹配区域参数 (多键名兼容)
+            # 5. 提取匹配区域参数
             region_type = str(params.get("region_type") or params.get("match_mode", "fullwindow")).lower()
             region_value = (
-                params.get("region_value") or
-                params.get("crop_rect") or
-                params.get("region") or
-                [0, 0, 0, 0]
+                    params.get("region_value") or
+                    params.get("crop_rect") or
+                    params.get("region") or
+                    [0, 0, 0, 0]
             )
 
-            target_roi = screen_bgr
-
-            # ⚡ 4. 智能区域裁剪与外扩 Margin 保护
-            if region_type in ("recorded", "custom") and isinstance(region_value, (list, tuple)) and len(region_value) >= 4:
-                rx, ry, rw, rh = [int(v) for v in region_value[:4]]
-
-                # 如果录制区域过于微小（低于模板尺寸），自动以原区域中心点强行按模板尺寸外扩 20%
-                if rw < tpl_w or rh < tpl_h:
-                    center_x = rx + rw // 2
-                    center_y = ry + rh // 2
-                    rw = max(rw, int(tpl_w * 1.3))
-                    rh = max(rh, int(tpl_h * 1.3))
-                    rx = center_x - rw // 2
-                    ry = center_y - rh // 2
-
-                # 向四周额外外扩 15 像素，容忍轻微移动偏差
-                padding = 15
-                x1 = max(0, rx - padding)
-                y1 = max(0, ry - padding)
-                x2 = min(screen_w, rx + rw + padding)
-                y2 = min(screen_h, ry + rh + padding)
-
-                # 确保裁剪出的 ROI 高度宽度都合法
-                if (x2 - x1) >= tpl_w and (y2 - y1) >= tpl_h:
-                    target_roi = screen_bgr[y1:y2, x1:x2]
-
-            # ⚡ 5. 真实计算 OpenCV 匹配分数，无论高低百分之百挂载
-            max_val, _ = match_template_cv(target_roi, template_bgr)
-            score = max(0.0, float(max_val)) if max_val is not None and max_val > -1.0 else 0.0
+            # ⚡ 6. 调取 MemoryTemplateMatcher 内存级比对引擎
+            score, _ = MemoryTemplateMatcher.match_in_memory(
+                screen_bgr=screen_bgr,
+                template_bgr=template_bgr,
+                region_type=region_type,
+                region_value=region_value
+            )
 
             # 强制将真实的得分回传至 context
             if hasattr(context, "last_match_score"):
