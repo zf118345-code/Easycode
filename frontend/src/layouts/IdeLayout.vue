@@ -9,6 +9,11 @@
             <DebugToolbar />
         </div>
 
+        <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
+        <div class="debug-toolbar-bar">
+            <DebugToolbar />
+        </div>
+
         <!-- 2. 全局主工作区 -->
         <div class="ide-workspace-root">
 <!-- 左侧固定 40px 图标栏 -->

@@ -768,6 +768,63 @@ v-if="customContextMenu.visible"
         customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
         customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
         menuZIndex.value = getNextZIndex()
+        closeSpawnMenu()
+    }
+
+    // ===== 调试：切换节点断点 =====
+    function handleToggleBreakpoint(nodeId) {
+        if (!nodeId) return
+        const added = uiStore.toggleBreakpoint(nodeId)
+        customContextMenu.visible = false
+        ElMessage.info(
+            added ? `🔴 已设置断点：${nodeId}` : `⚪ 已移除断点：${nodeId}`
+        )
+    }
+
+    // ===== 调试：设置断点并运行到此处 =====
+    async function handleAddBreakpointAndRun(nodeId) {
+        if (!nodeId) return
+        uiStore.enableBreakpoint(nodeId)
+        customContextMenu.visible = false
+
+        // 找到归属 task 并执行
+        const tasks = store.blueprint?.tasks || []
+        let targetTaskId = null
+        for (const task of tasks) {
+            if ((task.nodes || []).some(n => n.node_id === nodeId)) {
+                targetTaskId = task.task_id
+                break
+            }
+        }
+        if (!targetTaskId) {
+            ElMessage.error('未找到该节点所属任务组')
+            return
+        }
+        try {
+            const result = await store.runTask(targetTaskId)
+            if (result?.status === 'started') {
+                ElMessage.success('任务已启动，将在设置的断点处暂停')
+            } else {
+                ElMessage.error('启动失败')
+            }
+        } catch (err) {
+            ElMessage.error('启动失败：' + err.message)
+        }
+    }
+
+    // ===== 调试：右键节点打开上下文菜单 =====
+    function openNodeContextMenu(e, node) {
+        customContextMenu.visible = true
+        customContextMenu.targetType = 'node'
+        customContextMenu.targetId = node.node_id
+        customContextMenu.targetName = node.node_name
+        customContextMenu.clientX = e.clientX
+        customContextMenu.clientY = e.clientY
+        // 相对容器坐标
+        const rect = containerRef.value?.getBoundingClientRect?.()
+        customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
+        customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
+        menuZIndex.value = getNextZIndex()
         spawnMenu.value.visible = false
     }
 
@@ -2291,6 +2348,44 @@ v-if="customContextMenu.visible"
             border: 2px solid var(--el-color-primary);
             box-shadow: 0 0 12px rgba(78, 209, 156, 0.5);
         }
+
+        /* ===== 调试：当前执行命中节点高亮 ===== */
+        .canvas-node-card.is-active-debug {
+            border: 2px solid #ffb020 !important;
+            box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.35), 0 6px 18px rgba(255, 176, 32, 0.25) !important;
+            animation: debug-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes debug-pulse {
+            0%, 100% { filter: brightness(1); }
+            50%      { filter: brightness(1.12); }
+        }
+
+    /* ===== 节点头部断点 gutter + 当前执行标签 ===== */
+    .node-breakpoint-gutter {
+        width: 18px; height: 18px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        margin-right: 4px; cursor: pointer; user-select: none;
+        border-radius: 50%;
+        transition: background-color 0.15s;
+    }
+    .node-breakpoint-gutter:hover { background: rgba(255,255,255,0.08); }
+    .node-breakpoint-gutter .bp-dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #e5484d;
+        box-shadow: 0 0 6px rgba(229, 72, 77, 0.8), inset 0 -2px 0 rgba(0,0,0,0.2);
+    }
+    .node-breakpoint-gutter.active { background: rgba(229, 72, 77, 0.12); }
+
+    .node-debug-tag {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #ffb020; color: #1a1a1a;
+        box-shadow: 0 0 8px rgba(255, 176, 32, 0.8);
+        flex-shrink: 0;
+        animation: debug-pulse 1s ease-in-out infinite;
+    }
+    .debug-pulse-icon { width: 12px; height: 12px; }
 
         /* ===== 调试：当前执行命中节点高亮 ===== */
         .canvas-node-card.is-active-debug {

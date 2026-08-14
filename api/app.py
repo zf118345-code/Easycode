@@ -81,6 +81,12 @@ except ImportError:
     logger.warning('DebugService 不可用')
 
 try:
+    from core.services.debug_service import DebugService
+except ImportError:
+    DebugService = None
+    logger.warning("DebugService 不可用")
+
+try:
     from core.services.export_service import ExportService
 except ImportError:
     ExportService = None

@@ -1,6 +1,5 @@
 import logging
-
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi.responses import StreamingResponse
 
 from core.schemas import RunRequestSchema
@@ -12,8 +11,8 @@ def _service_unavailable(name):
     raise HTTPException(status_code=503, detail=f'服务不可用: {name} 模块未加载')
 
 
-def create_execution_router(execution_service, debug_service=None):
-    router = APIRouter(tags=['执行引擎'])
+def create_execution_router(execution_service):
+    router = APIRouter(tags=["执行引擎"])
 
     @router.post('/api/run')
     async def run_task(request: RunRequestSchema, background_tasks: BackgroundTasks):
@@ -21,15 +20,6 @@ def create_execution_router(execution_service, debug_service=None):
         if execution_service is None:
             _service_unavailable('ExecutionService')
         bp_dict = request.blueprint_data if request.blueprint_data else None
-        breakpoints = None
-        if isinstance(bp_dict, dict) and '__debug' in bp_dict:
-            debug_cfg = bp_dict.pop('__debug') or {}
-            breakpoints = debug_cfg.get('breakpoints')
-            if debug_service is not None and breakpoints:
-                try:
-                    debug_service.set_breakpoints(None, list(breakpoints))
-                except Exception as e:
-                    logger.warning(f'设置初始断点失败（忽略，继续执行）: {e}')
         try:
             return execution_service.run_task(
                 request.project_path, request.task_id, request.start_node_id, bp_dict, background_tasks
