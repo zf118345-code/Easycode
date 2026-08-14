@@ -4,7 +4,8 @@
         <div class="input-grid">
             <div v-for="(item, idx) in fields" :key="item.key" class="field-item">
                 <span class="field-label">{{ item.label }}</span>
-                <el-input-number v-model="getValues[idx]"
+                <el-input-number
+v-model="getValues[idx]"
                                  :controls="false"
                                  size="small"
                                  class="compact-num-input"
@@ -31,7 +32,7 @@
         { key: 'right', label: 'R' }
     ]
 
-    // ÏìÓ¦Ê½Ö±½ÓÓ³ÉäÊı×éÏî£¬ÎŞĞè watch
+    // ï¿½ï¿½Ó¦Ê½Ö±ï¿½ï¿½Ó³ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½î£¬ï¿½ï¿½ï¿½ï¿½ watch
     const getValues = computed(() => {
         const arr = Array.isArray(props.modelValue) ? props.modelValue : [0, 0, 0, 0]
         return fields.map((_, i) => Number(arr[i]) || 0)

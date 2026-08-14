@@ -2,7 +2,12 @@
 <template>
     <div class="ide-shell-layout">
         <!-- 1. 顶部主菜单栏 -->
-        <TopMenuBar @run="handleRun" @openSettings="settingsVisible = true" />
+        <TopMenuBar @run="handleRun" @open-settings="settingsVisible = true" />
+
+        <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
+        <div class="debug-toolbar-bar">
+            <DebugToolbar />
+        </div>
 
         <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
         <div class="debug-toolbar-bar">
@@ -11,22 +16,24 @@
 
         <!-- 2. 全局主工作区 -->
         <div class="ide-workspace-root">
-
-            <!-- 左侧固定 40px 图标栏 -->
+<!-- 左侧固定 40px 图标栏 -->
             <div class="fixed-dock-left">
-                <ActivityBar position="left"
+                <ActivityBar
+position="left"
                              :items="leftPanelsConfig"
                              :active-id="leftActive"
                              @select="toggleLeftPanel" />
                 <div class="bottom-toggle-dock">
-                    <el-tooltip v-for="item in bottomPanelsConfig"
+                    <el-tooltip
+v-for="item in bottomPanelsConfig"
                                 :key="item.id"
                                 effect="dark"
                                 :content="item.title"
                                 placement="right"
                                 :show-after="300"
                                 popper-class="ide-sidebar-tooltip">
-                        <div class="activity-icon-item"
+                        <div
+class="activity-icon-item"
                              :class="{ 'is-active': store.uiState.bottomPanelExpanded && bottomActive === item.id }"
                              @click="toggleBottomPanel(item.id)">
                             <component :is="item.icon" class="act-svg" />
@@ -37,11 +44,11 @@
 
             <!-- 中间大区域 -->
             <div class="ide-middle-area">
-
-                <!-- 上半行：左侧面板 + 画布 + 右侧面板 -->
+<!-- 上半行：左侧面板 + 画布 + 右侧面板 -->
                 <div class="ide-upper-row">
                     <!-- 左侧展开面板 -->
-                    <ToolWindow v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
+                    <ToolWindow
+v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
                                 :title="currentLeftPanel.title"
                                 :width="store.uiState.leftPanelWidth + 'px'"
                                 class="ide-card-panel"
@@ -50,7 +57,8 @@
                     </ToolWindow>
 
                     <!-- 左侧 5px 拖拽调节分割线 -->
-                    <div v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
+                    <div
+v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
                          class="splitter-v"
                          @mousedown="startLeftResize" />
 
@@ -63,12 +71,14 @@
                     </div>
 
                     <!-- 右侧 5px 拖拽调节分割线 -->
-                    <div v-if="store.uiState.rightPanelExpanded && currentRightPanel"
+                    <div
+v-if="store.uiState.rightPanelExpanded && currentRightPanel"
                          class="splitter-v"
                          @mousedown="startRightResize" />
 
                     <!-- 右侧展开面板：拓扑模式下显示拓扑节点编辑器 -->
-                    <ToolWindow v-if="store.uiState.rightPanelExpanded && currentRightPanel"
+                    <ToolWindow
+v-if="store.uiState.rightPanelExpanded && currentRightPanel"
                                 :title="rightPanelTitle"
                                 :width="store.uiState.rightPanelWidth + 'px'"
                                 class="ide-card-panel"
@@ -121,12 +131,14 @@
                 </div>
 
                 <!-- 底部 5px 拖拽调节分割线 -->
-                <div v-if="store.uiState.bottomPanelExpanded && currentBottomPanel"
+                <div
+v-if="store.uiState.bottomPanelExpanded && currentBottomPanel"
                      class="splitter-h"
                      @mousedown="startBottomResize" />
 
                 <!-- 下半行：底部工具窗口 -->
-                <ToolWindow v-if="store.uiState.bottomPanelExpanded && currentBottomPanel"
+                <ToolWindow
+v-if="store.uiState.bottomPanelExpanded && currentBottomPanel"
                             :title="currentBottomPanel.title"
                             width="100%"
                             :height="store.uiState.bottomPanelHeight + 'px'"
@@ -134,18 +146,17 @@
                             @close="store.updateUiState('bottomPanelExpanded', false)">
                     <component :is="currentBottomPanel.component" />
                 </ToolWindow>
-
-            </div>
+</div>
 
             <!-- 右侧固定 40px 图标栏 -->
             <div class="fixed-dock-right">
-                <ActivityBar position="right"
+                <ActivityBar
+position="right"
                              :items="rightPanelsConfig"
                              :active-id="rightActive"
                              @select="toggleRightPanel" />
             </div>
-
-        </div>
+</div>
 
         <!-- 3. 底部纯净状态栏 -->
         <footer class="ide-status-footer">

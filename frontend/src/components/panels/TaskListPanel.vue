@@ -7,13 +7,15 @@
             </el-button>
         </div>
 
-        <draggable v-model="sortedTasks"
+        <draggable
+v-model="sortedTasks"
                    item-key="task_id"
                    class="task-list"
                    handle=".drag-handle"
                    @end="onDragEnd">
             <template #item="{ element: task }">
-                <div class="task-card"
+                <div
+class="task-card"
                      :class="{ active: store.currentTaskId === task.task_id }"
                      @click="selectTask(task.task_id)">
                     <!-- 第一行：任务名称 + 操作按钮 -->
@@ -22,7 +24,8 @@
                             <span v-if="editingName !== task.task_id" class="task-name" @dblclick="startEditName(task)">
                                 {{ task.task_name }}
                             </span>
-                            <el-input v-else
+                            <el-input
+v-else
                                       v-model="editNameValue"
                                       size="small"
                                       maxlength="10"
@@ -30,7 +33,8 @@
                                       @keyup.enter="finishEditName(task)"
                                       class="inline-input"
                                       ref="nameInput" />
-                            <el-button link
+                            <el-button
+link
                                        size="small"
                                        class="edit-icon"
                                        @click.stop="startEditName(task)">
@@ -64,7 +68,8 @@
                             <span v-if="editingInterval !== task.task_id" class="meta-value" @dblclick="startEditInterval(task)">
                                 {{ task.loop_interval || 0 }} ms
                             </span>
-                            <el-input v-else
+                            <el-input
+v-else
                                       v-model="editIntervalValue"
                                       size="small"
                                       type="number"
@@ -72,7 +77,8 @@
                                       @keyup.enter="finishEditInterval(task)"
                                       class="inline-input"
                                       ref="intervalInput" />
-                            <el-button link
+                            <el-button
+link
                                        size="small"
                                        class="meta-edit-icon"
                                        @click.stop="startEditInterval(task)">
@@ -84,7 +90,8 @@
                             <span v-if="editingLoop !== task.task_id" class="meta-value" @dblclick="startEditLoop(task)">
                                 {{ task.loop_count === -1 ? '无限' : (task.loop_count ?? 1) + ' 次' }}
                             </span>
-                            <el-input v-else
+                            <el-input
+v-else
                                       v-model="editLoopValue"
                                       size="small"
                                       type="number"
@@ -92,7 +99,8 @@
                                       @keyup.enter="finishEditLoop(task)"
                                       class="inline-input"
                                       ref="loopInput" />
-                            <el-button link
+                            <el-button
+link
                                        size="small"
                                        class="meta-edit-icon"
                                        @click.stop="startEditLoop(task)">

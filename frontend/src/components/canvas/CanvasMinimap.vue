@@ -2,11 +2,12 @@
 <template>
     <div v-show="store.minimapExpanded" class="minimap-container">
         <div class="minimap-header" @click="store.toggleMinimap">
-            <span>È«¾°µ¼º½</span>
-            <span class="collapse-icon">¨‹</span>
+            <span>È«ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½</span>
+            <span class="collapse-icon">ï¿½ï¿½</span>
         </div>
         <div class="minimap-body">
-            <canvas ref="canvasRef"
+            <canvas
+ref="canvasRef"
                     width="200"
                     height="150"
                     @click="handleMinimapClick" />

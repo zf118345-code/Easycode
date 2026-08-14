@@ -14,7 +14,7 @@
         <!-- 3. 开发者 Studio IDE 欢迎界面（无项目或加载失败） -->
         <div v-else class="welcome">
             <div class="welcome-content">
-                <h1>⚡ Easycode 自动化工作台</h1>
+                <h1><Zap :size="28" style="vertical-align: middle;" /> Easycode 自动化工作台</h1>
                 <p>请选择并打开一个项目文件夹以开始编排</p>
 
                 <div v-if="cachedPath" class="cached-hint">
@@ -23,21 +23,24 @@
                 </div>
 
                 <div class="open-section">
-                    <el-input v-model="projectPathInput"
+                    <el-input
+v-model="projectPathInput"
                               placeholder="输入项目绝对路径，如 D:/MyProjects/demo"
                               style="width: 500px;"
                               clearable
                               @keyup.enter="handleOpenProject" />
                     <div style="margin-top: 12px;">
                         <el-button type="primary" size="large" @click="handleOpenProject">
-                            📂 打开项目
+                            <FolderOpen :size="18" style="vertical-align: middle; margin-right: 4px;" />
+                            打开项目
                         </el-button>
                     </div>
                 </div>
 
                 <div v-if="store.recentProjects?.length" class="recent">
                     <span>最近打开：</span>
-                    <el-link v-for="p in (store.recentProjects || [])"
+                    <el-link
+v-for="p in (store.recentProjects || [])"
                              :key="p.path"
                              style="margin: 0 8px;"
                              @click="handleOpenRecent(p.path)">
@@ -54,6 +57,7 @@
     import { useProjectStore } from '@/stores'
     import { ElMessage } from 'element-plus'
     import { InfoFilled } from '@element-plus/icons-vue'
+    import { Zap, FolderOpen } from 'lucide-vue-next'
     import IdeLayout from '@/layouts/IdeLayout.vue'
     import PlayerView from '@/views/PlayerView.vue'
 

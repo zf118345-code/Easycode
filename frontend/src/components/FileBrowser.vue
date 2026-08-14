@@ -4,20 +4,21 @@
         <!-- 左侧目录树区域 -->
         <div class="tree-sidebar">
             <div class="tree-header">
-                <span>📁 文件夹目录</span>
+                <span><Folder :size="16" style="vertical-align: middle;" /> 文件夹目录</span>
                 <el-button type="primary" link size="small" @click="inlineCreateFolder('')">
-                    ➕ 根新建
+                    <Plus :size="14" style="vertical-align: middle;" /> 根新建
                 </el-button>
             </div>
 
             <!-- ⚡ 拓扑模式资产目录引导提示条 -->
             <div v-if="store.canvasMode === 'topology'" class="topology-asset-tip">
-                <span class="tip-icon">🧭</span>
+                <Compass :size="16" class="tip-icon" />
                 <span class="tip-text">拓扑资产模式：已自动定位至 <strong>topology_assets/</strong> 目录</span>
             </div>
 
             <div class="tree-wrapper">
-                <el-tree ref="treeRef"
+                <el-tree
+ref="treeRef"
                          :data="treeData"
                          :props="defaultProps"
                          node-key="id"
@@ -28,8 +29,9 @@
                     <template #default="{ node, data }">
                         <div class="custom-tree-node">
                             <template v-if="data.isCreating">
-                                <span class="node-icon">📁</span>
-                                <input ref="inlineInputRef"
+                                <Folder :size="14" class="node-icon" />
+                                <input
+ref="inlineInputRef"
                                        v-model="data.creatingName"
                                        class="inline-folder-input"
                                        @keyup.enter="submitInlineFolder(data)"
@@ -39,9 +41,10 @@
                             <template v-else>
                                 <span class="node-label">
                                     <span v-if="data.isTopologyRoot" class="topo-badge">拓扑</span>
-                                    📁 {{ node.label }}
+                                    <Folder :size="14" style="vertical-align: middle;" /> {{ node.label }}
                                 </span>
-                                <el-button class="node-mkdir-btn"
+                                <el-button
+class="node-mkdir-btn"
                                            type="primary"
                                            link
                                            size="small"
@@ -65,7 +68,8 @@
 
             <!-- 图片网格查看 -->
             <div class="image-grid">
-                <div v-for="img in imageList"
+                <div
+v-for="img in imageList"
                      :key="img.name"
                      class="image-card"
                      :class="{ selected: selectedImage === img.name }"
@@ -77,7 +81,7 @@
                     <div class="image-name" :title="img.name">{{ img.name }}</div>
                 </div>
                 <div v-if="!imageList.length" class="empty-tip">
-                    📂 当前目录下暂无图片，可在下方直接输入新名称保存
+                    <FolderOpen :size="16" style="vertical-align: middle;" /> 当前目录下暂无图片，可在下方直接输入新名称保存
                 </div>
             </div>
 
@@ -85,7 +89,8 @@
             <div v-if="mode === 'save'" class="action-footer">
                 <div class="input-group">
                     <span class="input-label">图片名称:</span>
-                    <el-input v-model="saveFileName"
+                    <el-input
+v-model="saveFileName"
                               placeholder="点击图片复制名，或输入新名称"
                               clearable
                               style="width: 300px;"
@@ -98,7 +103,7 @@
             </div>
 
             <div v-else class="action-footer">
-                <span class="tip-text">💡 单击填充名，双击直接确认选择</span>
+                <span class="tip-text"><Lightbulb :size="14" style="vertical-align: middle;" /> 单击填充名，双击直接确认选择</span>
                 <div class="btn-group">
                     <el-button type="info" @click="$emit('close')">取消</el-button>
                     <el-button type="success" :disabled="!selectedImage" @click="confirmSelect">
@@ -113,6 +118,7 @@
 <script setup>
     import { ref, watch, nextTick } from 'vue'
     import { ElMessage, ElMessageBox } from 'element-plus'
+    import { Folder, FolderOpen, Plus, Compass, Lightbulb } from 'lucide-vue-next'
     import { visionApi } from '@/api/visionApi'
     import { useMainStore } from '@/stores'
 

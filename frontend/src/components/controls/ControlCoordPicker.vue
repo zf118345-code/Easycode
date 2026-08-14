@@ -4,7 +4,8 @@
         <!-- 顶栏：左侧标题，右侧“取点 / 框选区域”按钮 -->
         <div class="coord-header-row">
             <span class="coord-title">{{ label }}</span>
-            <button type="button"
+            <button
+type="button"
                     class="app-btn-secondary"
                     @click="$emit('openScreenshot', is2D ? 'point' : 'region')">
                 <component :is="is2D ? MapPinned : SquareDashedMousePointer" class="app-btn-icon" />

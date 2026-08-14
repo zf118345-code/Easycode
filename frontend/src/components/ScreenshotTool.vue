@@ -1,7 +1,8 @@
 <!-- frontend/src/components/ScreenshotTool.vue -->
 <template>
     <teleport to="body">
-        <div v-if="visible"
+        <div
+v-if="visible"
              ref="overlayRef"
              class="screenshot-overlay"
              :style="{ zIndex: overlayZIndex }"
@@ -11,7 +12,8 @@
             <div class="main-layout" @click.stop>
                 <!-- 左侧：工作区 Canvas 画面 -->
                 <div ref="containerRef" class="canvas-wrapper">
-                    <canvas ref="canvasRef"
+                    <canvas
+ref="canvasRef"
                             @mousedown="onMouseDown"
                             @mousemove="onMouseMove"
                             @mouseup="onMouseUp" />
@@ -20,9 +22,9 @@
                 <!-- 右侧：微调与放大预览面板 -->
                 <div class="sidebar-panel">
                     <div class="panel-header">
-                        <span v-if="mode === 'template'">📷 模板截图录入</span>
-                        <span v-else-if="mode === 'point'">📍 坐标点提取</span>
-                        <span v-else-if="mode === 'region'">📐 区域框选</span>
+                        <span v-if="mode === 'template'"><Camera :size="16" style="vertical-align: middle;" /> 模板截图录入</span>
+                        <span v-else-if="mode === 'point'"><MapPin :size="16" style="vertical-align: middle;" /> 坐标点提取</span>
+                        <span v-else-if="mode === 'region'"><Square :size="16" style="vertical-align: middle;" /> 区域框选</span>
                     </div>
 
                     <!-- 选点模式预览 -->
@@ -38,9 +40,9 @@
                             </div>
                         </div>
                         <div class="tips-box">
-                            <p>💡 点击左侧画板标定坐标点</p>
-                            <p>💡 <b>方向键 (↑↓←→)</b> 微调像素点位</p>
-                            <p>💡 <b>回车 (Enter)</b> 确认并填入</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> 点击左侧画板标定坐标点</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> <b>方向键 (↑↓←→)</b> 微调像素点位</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> <b>回车 (Enter)</b> 确认并填入</p>
                         </div>
                     </div>
 
@@ -61,10 +63,10 @@
                             </div>
                         </div>
                         <div class="tips-box">
-                            <p>💡 拖拽鼠标划定框选范围</p>
-                            <p>💡 <b>方向键 (↑↓←→)</b> 平移位置</p>
-                            <p>💡 <b>Shift + 方向键</b> 调整宽高</p>
-                            <p>💡 <b>回车 (Enter)</b> 确认并进入保存</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> 拖拽鼠标划定框选范围</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> <b>方向键 (↑↓←→)</b> 平移位置</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> <b>Shift + 方向键</b> 调整宽高</p>
+                            <p><Lightbulb :size="12" style="vertical-align: middle;" /> <b>回车 (Enter)</b> 确认并进入保存</p>
                         </div>
                     </div>
 
@@ -88,6 +90,7 @@
     import { useMainStore } from '@/stores'
     import { workspaceApi } from '@/api/workspaceApi'
     import { getNextZIndex } from '@/utils/zIndexManager'
+    import { Camera, MapPin, Square, Lightbulb } from 'lucide-vue-next'
 
     const emit = defineEmits(['template-crop-selected', 'point-selected', 'region-selected'])
     const store = useMainStore()

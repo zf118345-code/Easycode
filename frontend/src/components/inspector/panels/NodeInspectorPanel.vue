@@ -36,7 +36,8 @@
                             <span>二值化灰度阈值: <strong>{{ node.params.gray_threshold ?? 127 }}</strong></span>
                             <span class="slider-tip">(向左增强浅色，向右过滤背景)</span>
                         </div>
-                        <el-slider v-model="node.params.gray_threshold"
+                        <el-slider
+v-model="node.params.gray_threshold"
                                    :min="0"
                                    :max="255"
                                    :step="1"
@@ -46,7 +47,8 @@
 
                     <!-- 基础通用参数渲染网关 -->
                     <div v-else-if="!['gray_threshold', 'on_success', 'on_failure'].includes(paramName)" class="param-item">
-                        <ParamRenderer :config="config"
+                        <ParamRenderer
+:config="config"
                                        :value="node.params[paramName]"
                                        :label="config.label || paramName"
                                        :context="node.params"

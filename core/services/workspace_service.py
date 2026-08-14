@@ -1,20 +1,21 @@
 # core/services/workspace_service.py
-import os
-import json
-import io
 import base64
 import ctypes
+import io
+import json
+import os
+
+import pyautogui
+import win32con
 import win32gui
 import win32process
-import win32con
-import pyautogui
-from typing import List, Dict, Any
 from fastapi import HTTPException
+
+from core.schemas import ContextSaveRequestSchema
 from core.security import assert_safe_path, atomic_write_json
-from core.schemas import ContextSaveRequestSchema, CropScreenshotRequestSchema
 from core.services.vision_service import VisionService
 
-CONTEXT_FILE = "context.json"
+CONTEXT_FILE = 'context.json'
 
 
 def get_unicode_window_text(hwnd: int) -> str:
@@ -24,18 +25,22 @@ def get_unicode_window_text(hwnd: int) -> str:
         buffer = ctypes.create_unicode_buffer(length + 1)
         ctypes.windll.user32.GetWindowTextW(hwnd, buffer, length + 1)
         return buffer.value.strip()
-    return ""
+    return ''
 
 
 class WorkspaceService:
-
     @staticmethod
     def get_windows() -> dict:
         windows = []
         seen_titles = set()
         IGNORE_TITLES = {
-            "Program Manager", "Windows 输入体验", "Windows Input Experience",
-            "新通知", "通知中心", "设置", "Settings"
+            'Program Manager',
+            'Windows 输入体验',
+            'Windows Input Experience',
+            '新通知',
+            '通知中心',
+            '设置',
+            'Settings',
         }
 
         def callback(hwnd, extra):
@@ -68,64 +73,61 @@ class WorkspaceService:
                     return
                 seen_titles.add(title)
 
-                windows.append({
-                    "hwnd": hwnd,
-                    "title": title,
-                    "process_id": pid,
-                    "class_name": win32gui.GetClassName(hwnd)
-                })
+                windows.append(
+                    {'hwnd': hwnd, 'title': title, 'process_id': pid, 'class_name': win32gui.GetClassName(hwnd)}
+                )
             except Exception:
                 pass
 
         win32gui.EnumWindows(callback, None)
-        return {"windows": windows}
+        return {'windows': windows}
 
     @staticmethod
     def save_context(request: ContextSaveRequestSchema) -> dict:
         context = request.context
         mapped_context = {
-            "window_title": context.get("windowTitle", ""),
-            "is_emulator": context.get("isEmulator", False),
-            "offset_top": context.get("offsetTop", 0),
-            "offset_bottom": context.get("offsetBottom", 0),
-            "offset_left": context.get("offsetLeft", 0),
-            "offset_right": context.get("offsetRight", 0),
-            "target_content_width": context.get("targetContentWidth", 0),
-            "target_content_height": context.get("targetContentHeight", 0)
+            'window_title': context.get('windowTitle', ''),
+            'is_emulator': context.get('isEmulator', False),
+            'offset_top': context.get('offsetTop', 0),
+            'offset_bottom': context.get('offsetBottom', 0),
+            'offset_left': context.get('offsetLeft', 0),
+            'offset_right': context.get('offsetRight', 0),
+            'target_content_width': context.get('targetContentWidth', 0),
+            'target_content_height': context.get('targetContentHeight', 0),
         }
         context_path = os.path.join(request.project_path, CONTEXT_FILE)
         atomic_write_json(context_path, mapped_context)
-        return {"status": "success"}
+        return {'status': 'success'}
 
     @staticmethod
     def get_context(project_path: str) -> dict:
         context_path = os.path.join(project_path, CONTEXT_FILE)
         if not os.path.exists(context_path):
             return {}
-        with open(context_path, "r", encoding="utf-8") as f:
+        with open(context_path, encoding='utf-8') as f:
             data = json.load(f)
 
         return {
-            "windowTitle": data.get("window_title", ""),
-            "isEmulator": data.get("is_emulator", False),
-            "offsetTop": data.get("offset_top", 0),
-            "offsetBottom": data.get("offset_bottom", 0),
-            "offsetLeft": data.get("offset_left", 0),
-            "offsetRight": data.get("offset_right", 0),
-            "targetContentWidth": data.get("target_content_width", 0),
-            "targetContentHeight": data.get("target_content_height", 0)
+            'windowTitle': data.get('window_title', ''),
+            'isEmulator': data.get('is_emulator', False),
+            'offsetTop': data.get('offset_top', 0),
+            'offsetBottom': data.get('offset_bottom', 0),
+            'offsetLeft': data.get('offset_left', 0),
+            'offsetRight': data.get('offset_right', 0),
+            'targetContentWidth': data.get('target_content_width', 0),
+            'targetContentHeight': data.get('target_content_height', 0),
         }
 
     @staticmethod
-    def get_full_screenshot(project_path: str = "") -> dict:
+    def get_full_screenshot(project_path: str = '') -> dict:
         region = None
         if project_path:
             context_path = os.path.join(project_path, CONTEXT_FILE)
             if os.path.exists(context_path):
                 try:
-                    with open(context_path, "r", encoding="utf-8") as f:
+                    with open(context_path, encoding='utf-8') as f:
                         ctx = json.load(f)
-                    window_title = ctx.get("window_title")
+                    window_title = ctx.get('window_title')
                     if window_title:
                         hwnd = win32gui.FindWindow(None, window_title)
                         if hwnd:
@@ -133,8 +135,8 @@ class WorkspaceService:
                             left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
                             right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
 
-                            off_top, off_bottom = ctx.get("offset_top", 0), ctx.get("offset_bottom", 0)
-                            off_left, off_right = ctx.get("offset_left", 0), ctx.get("offset_right", 0)
+                            off_top, off_bottom = ctx.get('offset_top', 0), ctx.get('offset_bottom', 0)
+                            off_left, off_right = ctx.get('offset_left', 0), ctx.get('offset_right', 0)
 
                             x = left + off_left
                             y = top + off_top
@@ -144,32 +146,32 @@ class WorkspaceService:
                             if w > 0 and h > 0:
                                 region = (x, y, w, h)
                 except Exception as e:
-                    print(f"读取工作区失败: {e}")
+                    print(f'读取工作区失败: {e}')
 
         screenshot = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
         buffer = io.BytesIO()
-        screenshot.save(buffer, format="PNG")
-        img_str = base64.b64encode(buffer.getvalue()).decode("utf-8")
+        screenshot.save(buffer, format='PNG')
+        img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
         return {
-            "image": img_str,
-            "width": screenshot.width,
-            "height": screenshot.height,
-            "region": region or [0, 0, pyautogui.size()[0], pyautogui.size()[1]]
+            'image': img_str,
+            'width': screenshot.width,
+            'height': screenshot.height,
+            'region': region or [0, 0, pyautogui.size()[0], pyautogui.size()[1]],
         }
 
     @staticmethod
-    def crop_screenshot(project_path: str, template_name: str, crop_rect: List[int]) -> dict:
+    def crop_screenshot(project_path: str, template_name: str, crop_rect: list[int]) -> dict:
         """
         ⚡ 统一截图落盘服务 (遵循沙箱越界安全规范)
         支持在 templates/ 及其任意子目录下 (如 templates/ocr/) 裁剪与保存图片
         """
-        templates_dir = os.path.join(project_path, "templates")
+        templates_dir = os.path.join(project_path, 'templates')
         os.makedirs(templates_dir, exist_ok=True)
 
-        clean_key = template_name.replace(".png", "").replace(".PNG", "").replace("\\", "/")
+        clean_key = template_name.replace('.png', '').replace('.PNG', '').replace('\\', '/')
 
         # ⚡ 工业级安全路径修复：先通过 os.path.join 拼出完整的目标绝对路径，再提交安全防越界校验
-        full_target_path = os.path.join(templates_dir, f"{clean_key}.png")
+        full_target_path = os.path.join(templates_dir, f'{clean_key}.png')
         save_path = assert_safe_path(templates_dir, full_target_path)
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
@@ -178,16 +180,16 @@ class WorkspaceService:
         abs_x, abs_y = rel_x, rel_y
 
         if os.path.exists(context_path):
-            with open(context_path, "r", encoding="utf-8") as f:
+            with open(context_path, encoding='utf-8') as f:
                 ctx = json.load(f)
-            window_title = ctx.get("window_title")
+            window_title = ctx.get('window_title')
             if window_title:
                 hwnd = win32gui.FindWindow(None, window_title)
                 if hwnd:
                     client_rect = win32gui.GetClientRect(hwnd)
                     left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-                    abs_x = left + ctx.get("offset_left", 0) + rel_x
-                    abs_y = top + ctx.get("offset_top", 0) + rel_y
+                    abs_x = left + ctx.get('offset_left', 0) + rel_x
+                    abs_y = top + ctx.get('offset_top', 0) + rel_y
 
         full_img = pyautogui.screenshot()
         cropped_img = full_img.crop((abs_x, abs_y, abs_x + w, abs_y + h))
@@ -196,20 +198,20 @@ class WorkspaceService:
         # 统一复用 VisionService 写入 regions 坐标索引
         VisionService.save_region(project_path, clean_key, crop_rect)
 
-        return {"status": "success", "file_path": save_path, "key": clean_key}
+        return {'status': 'success', 'file_path': save_path, 'key': clean_key}
 
     @staticmethod
     def take_screenshot(request_data: dict) -> dict:
-        window_title = request_data.get("window_title")
-        offset_top = request_data.get("offset_top", 0)
-        offset_bottom = request_data.get("offset_bottom", 0)
-        offset_left = request_data.get("offset_left", 0)
-        offset_right = request_data.get("offset_right", 0)
+        window_title = request_data.get('window_title')
+        offset_top = request_data.get('offset_top', 0)
+        offset_bottom = request_data.get('offset_bottom', 0)
+        offset_left = request_data.get('offset_left', 0)
+        offset_right = request_data.get('offset_right', 0)
 
         if window_title:
             hwnd = win32gui.FindWindow(None, window_title)
             if not hwnd:
-                raise HTTPException(status_code=404, detail="未找到窗口")
+                raise HTTPException(status_code=404, detail='未找到窗口')
             client_rect = win32gui.GetClientRect(hwnd)
             left, top = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
             right, bottom = win32gui.ClientToScreen(hwnd, (client_rect[2], client_rect[3]))
@@ -218,7 +220,7 @@ class WorkspaceService:
             w = (right - left) - offset_left - offset_right
             h = (bottom - top) - offset_bottom - offset_bottom
             if w <= 0 or h <= 0:
-                raise HTTPException(status_code=400, detail="裁剪后区域无效")
+                raise HTTPException(status_code=400, detail='裁剪后区域无效')
             region = (x, y, w, h)
         else:
             screen_w, screen_h = pyautogui.size()
@@ -226,9 +228,6 @@ class WorkspaceService:
 
         screenshot = pyautogui.screenshot(region=region)
         buffered = io.BytesIO()
-        screenshot.save(buffered, format="PNG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-        return {
-            "image": f"data:image/png;base64,{img_base64}",
-            "rect": region
-        }
+        screenshot.save(buffered, format='PNG')
+        img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')
+        return {'image': f'data:image/png;base64,{img_base64}', 'rect': region}

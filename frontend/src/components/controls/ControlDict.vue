@@ -1,7 +1,8 @@
 <!-- frontend/src/components/controls/ControlDict.vue -->
 <template>
     <div class="dict-container">
-        <ParamRenderer v-for="(subConfig, subKey) in config.sub"
+        <ParamRenderer
+v-for="(subConfig, subKey) in config.sub"
                        :key="subKey"
                        :config="subConfig"
                        :value="localDict ? localDict[subKey] : undefined"

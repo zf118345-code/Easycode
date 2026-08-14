@@ -1,8 +1,9 @@
 # core/security/__init__.py
-import os
 import json
-from core.security.licensing import LicenseManager
+import os
+
 from core.security.crypto import SecureAssetCrypto
+from core.security.licensing import LicenseManager
 
 
 def atomic_write_json(file_path: str, data: dict) -> None:
@@ -18,9 +19,7 @@ def atomic_write_json(file_path: str, data: dict) -> None:
     def clean_transient_fields(obj):
         if isinstance(obj, dict):
             return {
-                k: clean_transient_fields(v)
-                for k, v in obj.items()
-                if not (isinstance(k, str) and k.startswith("_"))
+                k: clean_transient_fields(v) for k, v in obj.items() if not (isinstance(k, str) and k.startswith('_'))
             }
         elif isinstance(obj, list):
             return [clean_transient_fields(item) for item in obj]
@@ -28,8 +27,8 @@ def atomic_write_json(file_path: str, data: dict) -> None:
 
     cleaned_data = clean_transient_fields(data)
 
-    temp_path = f"{file_path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
+    temp_path = f'{file_path}.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as f:
         json.dump(cleaned_data, f, ensure_ascii=False, indent=2)
 
     if os.path.exists(file_path):
@@ -42,20 +41,23 @@ def assert_safe_path(base_dir: str, target_path: str) -> str:
     """
     工业级路径安全断言（防御目录穿越 / Path Traversal 攻击）
     确保目标路径绝对位于基础目录内部
+
+    修复：使用 normcase + 分隔符前缀检查，防止兄弟目录前缀碰撞
+    (例如 /demo 与 /demo_evil 被 startswith 误判为父子关系)
     """
-    abs_base = os.path.abspath(base_dir)
-    abs_target = os.path.abspath(target_path)
+    if not base_dir or not target_path:
+        return target_path
 
-    # 检查目标路径是否以基准路径为前缀
-    if not abs_target.startswith(abs_base):
-        raise ValueError(f"安全违规：非法的越权文件路径访问 -> {target_path}")
+    norm_base = os.path.normcase(os.path.abspath(base_dir))
+    norm_target = os.path.normcase(os.path.abspath(target_path))
 
-    return abs_target
+    # 确保 base 路径结尾带分隔符，防止 /demo 与 /demo_evil 的前缀碰撞
+    base_prefix = norm_base if norm_base.endswith(os.sep) else norm_base + os.sep
+
+    if norm_target != norm_base and not norm_target.startswith(base_prefix):
+        raise ValueError(f'安全违规：非法的越权文件路径访问 -> {target_path}')
+
+    return str(target_path)
 
 
-__all__ = [
-    "LicenseManager",
-    "SecureAssetCrypto",
-    "atomic_write_json",
-    "assert_safe_path"
-]
+__all__ = ['LicenseManager', 'SecureAssetCrypto', 'atomic_write_json', 'assert_safe_path']

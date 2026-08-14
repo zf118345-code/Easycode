@@ -1,6 +1,7 @@
 <!-- frontend/src/components/controls/ControlWindowSelect.vue -->
 <template>
-    <el-select :model-value="modelValue"
+    <el-select
+:model-value="modelValue"
                filterable
                allow-create
                default-first-option
@@ -10,7 +11,8 @@
                :loading="loading"
                @visible-change="onVisibleChange"
                @update:model-value="val => $emit('update:modelValue', val)">
-        <el-option v-for="w in windowList"
+        <el-option
+v-for="w in windowList"
                    :key="w.hwnd || w.title"
                    :label="w.title"
                    :value="w.title" />

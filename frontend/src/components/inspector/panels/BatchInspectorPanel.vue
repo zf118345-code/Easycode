@@ -7,7 +7,8 @@
                 <div class="node-type-icon-badge" title="批量编辑">
                     <Files class="inspector-type-svg" />
                 </div>
-                <el-input :model-value="`批量编辑已选中的 ${nodes.length} 个节点`"
+                <el-input
+:model-value="`批量编辑已选中的 ${nodes.length} 个节点`"
                           readonly
                           size="default"
                           class="node-name-input batch-title-input" />
@@ -19,7 +20,8 @@
             <div class="params-container">
                 <template v-for="(config, paramName) in commonParams" :key="paramName">
                     <div v-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'candidates'].includes(paramName)" class="param-item">
-                        <ParamRenderer :config="config"
+                        <ParamRenderer
+:config="config"
                                        :value="getCommonParamValue(paramName)"
                                        :label="config.label || paramName"
                                        :context="{}"

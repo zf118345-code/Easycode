@@ -7,3 +7,5 @@ numpy>=1.24.0
 Pillow>=10.0.0
 pywin32>=306
 cryptography>=41.0.0
+slowapi>=0.1.9
+python-dotenv>=1.0.0

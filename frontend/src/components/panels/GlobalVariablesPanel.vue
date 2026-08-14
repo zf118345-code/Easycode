@@ -2,8 +2,7 @@
 <template>
     <div class="global-vars-panel">
         <div class="accordion-container">
-
-            <!-- 1. 第一行：用户自定义全局变量 -->
+<!-- 1. 第一行：用户自定义全局变量 -->
             <div class="accordion-item" :class="{ 'is-expanded': expandedSection === 'user' }">
                 <div class="accordion-header" @click="toggleSection('user')">
                     <div class="header-left">
@@ -31,7 +30,8 @@
                             <span>导出脚本包</span>
                         </el-button>
 
-                        <el-button size="small"
+                        <el-button
+size="small"
                                    type="danger"
                                    plain
                                    class="pure-btn"
@@ -45,7 +45,8 @@
                     <!-- 用户变量列表 -->
                     <div class="vars-list-scroll">
                         <template v-if="userVarList.length">
-                            <div v-for="item in userVarList"
+                            <div
+v-for="item in userVarList"
                                  :key="item.key"
                                  class="var-card-row">
                                 <!-- 左列：类型标识 Badge + 变量名 -->
@@ -101,7 +102,8 @@
                         <div class="ctx-form-box">
                             <template v-for="(config, field) in setWindowSchema" :key="field">
                                 <div v-if="!['on_success', 'on_failure'].includes(field)" class="ctx-param-item">
-                                    <ParamRenderer :config="config"
+                                    <ParamRenderer
+:config="config"
                                                    :value="getCtxFieldValue(field)"
                                                    :label="config.label || field"
                                                    :context="ctxContextObject"
@@ -124,7 +126,8 @@
 
                 <div v-show="expandedSection === 'env'" class="accordion-content">
                     <div class="vars-list-scroll">
-                        <div v-for="env in systemEnvList"
+                        <div
+v-for="env in systemEnvList"
                              :key="env.key"
                              class="var-card-row readonly-row">
                             <div class="var-name-col">
@@ -142,11 +145,11 @@
                     </div>
                 </div>
             </div>
-
-        </div>
+</div>
 
         <!-- ⚡ 新建/编辑变量弹窗 -->
-        <el-dialog v-model="varDialogVisible"
+        <el-dialog
+v-model="varDialogVisible"
                    :title="isEditing ? `✏️ 编辑变量 [${editingKey}]` : '➕ 新建全局变量'"
                    width="460px"
                    append-to-body
@@ -155,7 +158,8 @@
             <div class="dialog-form-body">
                 <template v-for="(schema, field) in activeFormSchema" :key="field">
                     <div class="form-item-wrapper">
-                        <ParamRenderer :config="schema"
+                        <ParamRenderer
+:config="schema"
                                        :value="dialogFormPayload[field]"
                                        :label="schema.label"
                                        :context="dialogFormPayload"

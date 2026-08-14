@@ -1,7 +1,8 @@
 <!-- frontend/src/components/inspector/controls/VariableInputControl.vue -->
 <template>
     <div class="variable-input-control">
-        <el-select :model-value="modelValue"
+        <el-select
+:model-value="modelValue"
                    :placeholder="config.placeholder || '选择已有变量或直接输入常数'"
                    size="small"
                    filterable
@@ -11,7 +12,8 @@
                    class="var-select-full"
                    @change="handleSelectChange"
                    @update:model-value="val => $emit('update:model-value', val)">
-            <el-option v-for="item in availableVariables"
+            <el-option
+v-for="item in availableVariables"
                        :key="item.value"
                        :label="item.label"
                        :value="item.value">

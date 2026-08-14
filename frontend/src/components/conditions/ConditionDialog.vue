@@ -1,25 +1,31 @@
 <!-- frontend/src/components/conditions/ConditionDialog.vue -->
 <template>
-    <el-dialog v-model="dialogVisible"
-               :title="isBranch ? '⚙️ 设置分流条件分支' : '➕ 设置判定条件'"
+    <el-dialog
+v-model="dialogVisible"
                width="560px"
                append-to-body
                destroy-on-close
                :close-on-click-modal="false"
                custom-class="condition-dialog-custom">
+        <template #title>
+            <Settings v-if="isBranch" :size="16" style="vertical-align: middle;" />
+            <Plus v-else :size="16" style="vertical-align: middle;" />
+            {{ isBranch ? '设置分流条件分支' : '设置判定条件' }}
+        </template>
         <div class="condition-form-body">
             <!-- 1. 条件类别切换 (5大判定场景) -->
             <div class="type-selector-item">
                 <span class="selector-label">条件判定类型</span>
-                <el-select v-model="activeConditionType"
+                <el-select
+v-model="activeConditionType"
                            placeholder="请选择条件类型"
                            style="width: 100%"
                            @change="handleTypeChange">
-                    <el-option label="🖼️ 屏幕/区域存在指定图片" value="image_exists" />
-                    <el-option label="🔤 屏幕/区域包含指定文本 (OCR)" value="text_contains" />
-                    <el-option label="🔢 变量数值/逻辑比较" value="variable_check" />
-                    <el-option label="🪟 指定窗口状态 (存在/激活/关闭)" value="window_state" />
-                    <el-option label="📂 本地文件/文件夹是否存在" value="file_exists" />
+                    <el-option label="屏幕/区域存在指定图片" value="image_exists" />
+                    <el-option label="屏幕/区域包含指定文本 (OCR)" value="text_contains" />
+                    <el-option label="变量数值/逻辑比较" value="variable_check" />
+                    <el-option label="指定窗口状态 (存在/激活/关闭)" value="window_state" />
+                    <el-option label="本地文件/文件夹是否存在" value="file_exists" />
                 </el-select>
             </div>
 
@@ -27,13 +33,15 @@
             <div class="schema-rendered-container">
                 <template v-for="(config, paramName) in currentParamsSchema" :key="paramName">
                     <!-- 灰度阈值滑块定制优化 -->
-                    <div v-if="paramName === 'gray_threshold' && conditionPayload.gray_scale"
+                    <div
+v-if="paramName === 'gray_threshold' && conditionPayload.gray_scale"
                          class="param-item-wrapper slider-box">
                         <div class="slider-header">
                             <span>二值化灰度阈值: <strong>{{ conditionPayload.gray_threshold ?? 127 }}</strong></span>
                             <span class="slider-tip">(向左增强浅色，向右过滤背景)</span>
                         </div>
-                        <el-slider v-model="conditionPayload.gray_threshold"
+                        <el-slider
+v-model="conditionPayload.gray_threshold"
                                    :min="0"
                                    :max="255"
                                    :step="1"
@@ -42,7 +50,8 @@
 
                     <!-- 统一原子控件渲染 -->
                     <div v-else-if="paramName !== 'gray_threshold'" class="param-item-wrapper">
-                        <ParamRenderer :config="config"
+                        <ParamRenderer
+:config="config"
                                        :value="conditionPayload[paramName]"
                                        :label="config.label || paramName"
                                        :context="conditionPayload"
@@ -70,6 +79,7 @@
     import { useMainStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
     import { ElMessage } from 'element-plus'
+    import { Settings, Plus } from 'lucide-vue-next'
 
     const props = defineProps({
         visible: { type: Boolean, default: false },

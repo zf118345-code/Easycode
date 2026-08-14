@@ -13,19 +13,23 @@
                 <span>当前项目暂无任务组或节点</span>
             </div>
 
-            <div v-for="(task, tIdx) in tasksList"
+            <div
+v-for="(task, tIdx) in tasksList"
                  :key="task.task_id || tIdx"
                  class="task-group-item">
                 <!-- 1. 任务组 Header (第一层) -->
-                <div class="group-header"
+                <div
+class="group-header"
                      :class="{ 'is-selected': isGroupSelected(task) }"
                      @click="handleGroupClick(task)">
                     <div class="header-left">
                         <span class="toggle-arrow" @click.stop="toggleGroupExpand(task.task_id || tIdx)">
-                            <ChevronDown class="arrow-svg"
+                            <ChevronDown
+class="arrow-svg"
                                          :class="{ 'is-collapsed': collapsedGroups.includes(task.task_id || tIdx) }" />
                         </span>
-                        <component :is="collapsedGroups.includes(task.task_id || tIdx) ? Folder : FolderOpen"
+                        <component
+:is="collapsedGroups.includes(task.task_id || tIdx) ? Folder : FolderOpen"
                                    class="group-icon" />
                         <span class="group-title">{{ task.task_name || `任务组 ${tIdx + 1}` }}</span>
                     </div>
@@ -33,9 +37,11 @@
                 </div>
 
                 <!-- 2. 节点列表 Body (第二层) -->
-                <div v-show="!collapsedGroups.includes(task.task_id || tIdx)"
+                <div
+v-show="!collapsedGroups.includes(task.task_id || tIdx)"
                      class="node-list-container">
-                    <div v-for="node in (task.nodes || [])"
+                    <div
+v-for="node in (task.nodes || [])"
                          :key="node.node_id"
                          class="node-tree-item"
                          :class="{ 'is-selected': isNodeSelected(node.node_id) }"

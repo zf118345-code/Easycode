@@ -14,7 +14,8 @@
                     刷新
                 </el-button>
                 <el-button size="small" type="danger" plain @click="clearLogs">清空</el-button>
-                <el-switch v-model="autoScroll" size="small" inline-prompt
+                <el-switch
+v-model="autoScroll" size="small" inline-prompt
                            active-text="自动滚动" inactive-text="手动滚动" />
             </div>
         </div>
@@ -27,7 +28,8 @@
                 <div class="empty-sub">运行工作流后将在这里显示节点执行结果、状态、SSE 事件流。</div>
             </div>
 
-            <div v-for="(log, i) in logs" :key="i"
+            <div
+v-for="(log, i) in logs" :key="i"
                  class="log-row"
                  :class="[ 'level-' + (log.level || 'info'), { 'is-err': log.level === 'error' || log.level === 'fatal' } ]">
                 <span class="log-time">[{{ log.timestamp || formatTime(log.time || Date.now()) }}]</span>

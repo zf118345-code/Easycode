@@ -1,18 +1,21 @@
-﻿<!-- frontend/src/components/schema/FormSchemaEditor.vue -->
+<!-- frontend/src/components/schema/FormSchemaEditor.vue -->
 <template>
-    <el-dialog v-model="dialogVisible"
-               title="🛠️ 配置暴露给客户的动态表单面板 (Schema Editor)"
+    <el-dialog
+v-model="dialogVisible"
                width="850px"
                append-to-body
                destroy-on-close
                :close-on-click-modal="false">
+        <template #title>
+            <Wrench :size="16" style="vertical-align: middle;" /> 配置暴露给客户的动态表单面板 (Schema Editor)
+        </template>
         <div class="schema-editor-body">
             <!-- 顶栏标题与配置操作 -->
             <div class="header-toolbar">
                 <el-input v-model="localSchema.form_title" placeholder="请输入客户面板标题（如：弹弹堂挂机助手配置）" style="width: 320px;" size="small" />
                 <div class="right-btns">
-                    <el-button type="primary" plain size="small" @click="addGroup">➕ 添加配置分组</el-button>
-                    <el-button type="warning" plain size="small" @click="autoGenerateFromVars">⚡ 从现有变量一键生成</el-button>
+                    <el-button type="primary" plain size="small" @click="addGroup"><Plus :size="14" style="vertical-align: middle;" /> 添加配置分组</el-button>
+                    <el-button type="warning" plain size="small" @click="autoGenerateFromVars"><Zap :size="14" style="vertical-align: middle;" /> 从现有变量一键生成</el-button>
                 </div>
             </div>
 
@@ -21,11 +24,11 @@
                 <div v-for="(group, gIdx) in localSchema.groups" :key="gIdx" class="group-card">
                     <div class="group-header">
                         <div class="group-title-input">
-                            <span class="drag-handle">☰</span>
+                            <span class="drag-handle"><GripVertical :size="14" /></span>
                             <el-input v-model="group.group_title" placeholder="分组名称（如：挂机功能选择）" size="small" style="width: 240px;" />
                         </div>
                         <div class="group-actions">
-                            <el-button type="primary" link size="small" @click="addField(group)">➕ 添加控件项</el-button>
+                            <el-button type="primary" link size="small" @click="addField(group)"><Plus :size="14" style="vertical-align: middle;" /> 添加控件项</el-button>
                             <el-button type="danger" link size="small" @click="removeGroup(gIdx)">删除分组</el-button>
                         </div>
                     </div>
@@ -66,12 +69,12 @@
                                     </td>
                                     <td>
                                         <el-select v-model="field.ui_type" size="small" @change="() => onUiTypeChange(field)">
-                                            <el-option label="☑️ 多选框组" value="checkbox_group" />
-                                            <el-option label="🔘 下拉选择" value="select" />
-                                            <el-option label="🔤 字符串输入" value="str" />
-                                            <el-option label="🔢 数字微调" value="number" />
-                                            <el-option label="🎚️ 匹配滑块" value="slider" />
-                                            <el-option label="🔀 逻辑开关" value="switch" />
+                                            <el-option label="多选框组" value="checkbox_group" />
+                                            <el-option label="下拉选择" value="select" />
+                                            <el-option label="字符串输入" value="str" />
+                                            <el-option label="数字微调" value="number" />
+                                            <el-option label="匹配滑块" value="slider" />
+                                            <el-option label="逻辑开关" value="switch" />
                                         </el-select>
                                     </td>
                                     <td>
@@ -88,9 +91,9 @@
                                     <td>
                                         <el-select v-model="field.provider" placeholder="静态选项" size="small" clearable>
                                             <el-option label="静态 Options" value="" />
-                                            <el-option label="🪟 当前打开窗口列表" value="sys.window_list" />
-                                            <el-option label="🖥️ 显示器分辨率" value="sys.monitors" />
-                                            <el-option label="🔌 硬件串口端口" value="sys.com_ports" />
+                                            <el-option label="当前打开窗口列表" value="sys.window_list" />
+                                            <el-option label="显示器分辨率" value="sys.monitors" />
+                                            <el-option label="硬件串口端口" value="sys.com_ports" />
                                         </el-select>
                                     </td>
                                     <td>
@@ -100,7 +103,7 @@
                             </tbody>
                         </table>
                         <div v-else class="empty-field-tip">
-                            暂无控件项，点击右上角“➕ 添加控件项”以定义此分组表单
+                            暂无控件项，点击右上角“添加控件项”以定义此分组表单
                         </div>
                     </div>
                 </div>
@@ -110,9 +113,9 @@
         <template #footer>
             <div class="dialog-footer">
                 <el-button size="small" @click="dialogVisible = false">取消</el-button>
-                <el-button type="success" plain size="small" @click="handleExportPackage">📦 仅打包密包 (.ebp)</el-button>
+                <el-button type="success" plain size="small" @click="handleExportPackage"><Package :size="14" style="vertical-align: middle;" /> 仅打包密包 (.ebp)</el-button>
                 <el-button type="warning" plain size="small" :loading="compileLoading" @click="handleCompileExecutable">
-                    🔨 一键编译发布完整客户端 (.exe)
+                    <Hammer :size="14" style="vertical-align: middle;" /> 一键编译发布完整客户端 (.exe)
                 </el-button>
                 <el-button type="primary" size="small" @click="handleSaveSchema">确认并保存 Schema</el-button>
             </div>
@@ -126,6 +129,7 @@
     import { ElMessage, ElLoading } from 'element-plus'
     import { exporterApi } from '@/api/exporterApi'
     import client from '@/api/client'
+    import { Wrench, GripVertical, Plus, Package, Hammer, Zap } from 'lucide-vue-next'
 
     const props = defineProps({
         modelValue: { type: Boolean, default: false }

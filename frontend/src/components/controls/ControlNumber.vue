@@ -1,7 +1,8 @@
 <!-- frontend/src/components/controls/ControlNumber.vue -->
 <template>
     <!-- 普通无单位数字输入框 -->
-    <el-input-number v-if="!hasSuffix"
+    <el-input-number
+v-if="!hasSuffix"
                      :model-value="modelValue"
                      :min="config.min !== undefined ? config.min : 0"
                      :max="config.max !== undefined ? config.max : Infinity"
@@ -12,7 +13,8 @@
                      @update:model-value="val => $emit('update:modelValue', val)" />
 
     <!-- 带有单位/后缀的输入框 (由 config.suffix 或 config.unit 驱动) -->
-    <el-input v-else
+    <el-input
+v-else
               :model-value="modelValue"
               type="number"
               :min="config.min !== undefined ? config.min : 0"

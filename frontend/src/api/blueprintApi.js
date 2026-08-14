@@ -1,5 +1,6 @@
 // frontend/src/api/blueprintApi.js
-// ÐÞ¸´£ºÐÂÔö stopExecution ·½·¨£¬¶ÔÆëºó¶ËÍ£Ö¹Ö´ÐÐÂ·ÓÉ
+// è“å›¾ä¸Žä»»åŠ¡ç®¡ç† API
+// æ³¨: æ‰§è¡Œç›¸å…³æŽ¥å£ (status/stop/pause/resume/step/debug) å·²ç»Ÿä¸€æ”¶æ•›è‡³ executionApi.js
 import client from './client'
 
 export const blueprintApi = {
@@ -14,8 +15,5 @@ export const blueprintApi = {
     deleteTask: (taskId, projectPath) => client.delete(`/api/tasks/${taskId}`, { params: { project_path: projectPath } }),
     getTaskNodes: (taskId, projectPath) => client.get(`/api/tasks/${taskId}/nodes`, { params: { project_path: projectPath } }),
     saveTaskOrder: (projectPath, order) => client.post('/api/tasks/order', { project_path: projectPath, order }),
-    runTask: (projectPath, taskId, startNodeId, blueprintData) => client.post('/api/run', { project_path: projectPath, task_id: taskId, start_node_id: startNodeId, blueprint_data: blueprintData }),
-    getExecutionStatus: (executionId) => client.get(`/api/execution/${executionId}`),
-    // ÐÂÔö£ºÍ£Ö¹Ö´ÐÐ
-    stopExecution: (executionId) => client.post(`/api/execution/${executionId}/stop`)
+    runTask: (projectPath, taskId, startNodeId, blueprintData) => client.post('/api/run', { project_path: projectPath, task_id: taskId, start_node_id: startNodeId, blueprint_data: blueprintData })
 }

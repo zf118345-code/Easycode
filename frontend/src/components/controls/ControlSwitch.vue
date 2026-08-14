@@ -1,6 +1,7 @@
 <!-- frontend/src/components/controls/ControlSwitch.vue -->
 <template>
-    <el-switch :model-value="modelValue"
+    <el-switch
+:model-value="modelValue"
                class="custom-fixed-switch"
                @update:model-value="val => $emit('update:modelValue', val)" />
 </template>

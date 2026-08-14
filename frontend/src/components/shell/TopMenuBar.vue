@@ -1,8 +1,8 @@
-﻿<!-- frontend/src/components/shell/TopMenuBar.vue -->
+<!-- frontend/src/components/shell/TopMenuBar.vue -->
 <template>
     <div class="top-menu-bar">
         <div class="menu-brand">
-            <span class="brand-logo">⚡</span>
+            <span class="brand-logo"><Zap :size="18" /></span>
             <span class="brand-title">Easycode IDE</span>
         </div>
 
@@ -44,7 +44,7 @@
                 <template #dropdown>
                     <el-dropdown-menu>
                         <el-dropdown-item command="run_task">▶ 运行当前任务</el-dropdown-item>
-                        <el-dropdown-item command="screenshot">📷 截图工具</el-dropdown-item>
+                        <el-dropdown-item command="screenshot"><Camera :size="14" style="vertical-align: middle;" /> 截图工具</el-dropdown-item>
                     </el-dropdown-menu>
                 </template>
             </el-dropdown>
@@ -62,7 +62,8 @@
 
         <!-- ⚡ 双画布模式切换 Tab：业务流程 / 页面拓扑 -->
         <div class="canvas-mode-switcher">
-            <div v-for="opt in canvasModeOptions"
+            <div
+v-for="opt in canvasModeOptions"
                  :key="opt.value"
                  class="canvas-mode-tab"
                  :class="{ active: store.canvasMode === opt.value }"
@@ -75,14 +76,14 @@
         <!-- 右侧操作区：工作面板胶囊 + 运行按钮 -->
         <div class="menu-right-actions">
             <div class="workspace-switcher-badge" @click="$emit('openSettings')">
-                <span class="device-icon">💻</span>
+                <span class="device-icon"><Monitor :size="14" /></span>
                 <span class="workspace-label">工作面板:</span>
                 <span class="workspace-name">{{ currentWorkspaceName }}</span>
-                <span class="dropdown-arrow">▼</span>
+                <ChevronDown :size="10" class="dropdown-arrow" />
             </div>
 
             <el-button type="success" size="small" class="run-quick-btn" @click="$emit('run')">
-                ▶ 运行
+                <Play :size="12" style="vertical-align: middle;" /> 运行
             </el-button>
         </div>
     </div>
@@ -92,7 +93,7 @@
     import { computed } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage } from 'element-plus'
-    import { Workflow, Share2 } from 'lucide-vue-next'
+    import { Workflow, Share2, Zap, Camera, Monitor, ChevronDown, Play } from 'lucide-vue-next'
 
     const store = useMainStore()
     defineEmits(['run', 'openSettings'])

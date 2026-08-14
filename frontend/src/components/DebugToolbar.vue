@@ -8,7 +8,7 @@ import { computed, onMounted, onUnmounted } from 'vue'
 import { useMainStore, useExecutionStore, useUiStore } from '@/stores'
 import { ElMessage } from 'element-plus'
 import {
-    Play, Pause, Square, SkipForward, ArrowDownToLine, ArrowUpFromLine, CircleDot, CircleDashed, Clock
+    Play, Pause, Square, SkipForward, ArrowDownToLine, ArrowUpFromLine, CircleDot, CircleDashed, Clock, Target
 } from 'lucide-vue-next'
 
 const store = useMainStore()
@@ -25,9 +25,9 @@ const isStopped = computed(() => !isRunning.value && !isPaused.value)
 const breakpointCount = computed(() => uiStore.getBreakpointList?.()?.length ?? uiStore.breakpoints?.size ?? 0)
 const currentActiveNodeId = computed(() => execStore.currentActiveNodeId)
 const stateText = computed(() => {
-    if (isPaused.value) return '⏸ 已暂停'
-    if (isRunning.value) return '▶ 执行中'
-    return '⏹ 就绪'
+    if (isPaused.value) return '已暂停'
+    if (isRunning.value) return '执行中'
+    return '就绪'
 })
 const stateClass = computed(() => ({
     'state-stopped': isStopped.value,
@@ -112,7 +112,8 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
         <div class="dbg-sep" />
 
         <!-- ▶ 运行（停止/就绪时可用） -->
-        <button class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
+        <button
+class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
                 @click="runSelectedTask" title="运行选中任务 (F5)">
             <Play class="dbg-icon" :size="16" />
             <span class="dbg-hint">F5</span>
@@ -167,7 +168,7 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
 
         <!-- 激活节点 -->
         <div v-if="currentActiveNodeId" class="dbg-meta active-node" title="当前调试命中节点">
-            <span class="dbg-active-icon">🎯</span>
+            <Target class="dbg-active-icon" :size="12" />
             <span class="dbg-meta-label">命中：</span>
             <span class="dbg-node-id">{{ currentActiveNodeId }}</span>
         </div>

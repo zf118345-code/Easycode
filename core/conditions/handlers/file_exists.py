@@ -1,17 +1,17 @@
 # core/conditions/handlers/file_exists.py
 import os
 from typing import Any
+
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
 from core.utils import resolve_template_string
 
 
-@ConditionRegistry.register("file_exists")
+@ConditionRegistry.register('file_exists')
 class FileExistsEvaluator(BaseConditionEvaluator):
-
     @classmethod
     def evaluate(cls, params: dict, context: Any) -> bool:
-        raw_path = str(params.get("file_path", "")).strip()
-        operator = str(params.get("operator", "exists"))
+        raw_path = str(params.get('file_path', '')).strip()
+        operator = str(params.get('operator', 'exists'))
 
         if not raw_path:
             return False
@@ -26,9 +26,9 @@ class FileExistsEvaluator(BaseConditionEvaluator):
 
         path_exists = os.path.exists(file_path)
 
-        if operator == "exists":
+        if operator == 'exists':
             return path_exists
-        elif operator in ("not_exists", "not_exist"):
+        elif operator in ('not_exists', 'not_exist'):
             return not path_exists
 
         return False
