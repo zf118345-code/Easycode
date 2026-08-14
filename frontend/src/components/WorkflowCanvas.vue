@@ -8,61 +8,11 @@ ref="containerRef"
          @contextmenu="onContextMenu">
         <!-- 视口变换层 -->
         <div class="canvas-viewport" :style="viewportStyle">
-<!-- SVG 连线层 -->
-            <svg class="canvas-edges-layer">
-                <defs>
-                    <pattern id="grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
-                        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1" />
-                    </pattern>
-
-                    <marker id="arrow-succ-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 8 2 L 5 9 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 8 L 8 8 L 5 1 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 2 8 L 9 5 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-left" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 8 2 L 8 8 L 1 5 z" fill="#4ed19c" />
-                    </marker>
-
-                    <marker id="arrow-fail-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 8 2 L 5 9 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 8 L 8 8 L 5 1 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 2 8 L 9 5 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-left" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 8 2 L 8 8 L 1 5 z" fill="#f56c6c" />
-                    </marker>
-
-                    <marker id="arrow-preview" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                        <path d="M 0 2 L 10 5 L 0 8 z" fill="#4ed19c" />
-                    </marker>
-                </defs>
-
-                <rect x="-5000" y="-5000" width="15000" height="15000" fill="url(#grid-pattern)" pointer-events="none" />
-
-                <!-- 纯净流光连线层 -->
-                <g v-for="edge in computedEdges" :key="edge.id">
-                    <path
-:d="edge.path"
-                          :class="['edge-path', { 'is-selected': edge.selected, 'is-danger': edge.isFail }]"
-                          :marker-end="edge.markerUrl"
-                          @click.stop="onEdgeClick(edge)" />
-                    <path
-:d="edge.path"
-                          :class="['edge-flow-path', { 'is-danger': edge.isFail }]"
-                          pointer-events="none" />
-                </g>
-
-                <path v-if="drawingConnection.active" :d="drawingConnection.path" class="edge-path preview-path" :marker-end="drawingConnection.previewMarkerUrl" />
-            </svg>
+            <!-- SVG 连线层（P2 子组件） -->
+            <CanvasEdgeLayer
+                :edges="computedEdges"
+                :drawing-connection="drawingConnection"
+                @edge-click="onEdgeClick" />
 
             <!-- 任务组包围框 -->
             <div
@@ -101,88 +51,23 @@ v-if="draggingNodeId && dragPreviewBox.visible"
                 </div>
             </div>
 
-            <!-- 节点卡片层 -->
-            <div
-v-for="node in renderNodes"
-                 :key="node.node_id"
-                 :data-node-id="node.node_id"
-                 :class="['canvas-node-card', { 'is-selected': node.selected, 'is-active-debug': store.currentActiveNodeId === node.node_id }]"
-                 :style="{ left: node.position.x + 'px', top: node.position.y + 'px', width: node.w + 'px', height: node.h + 'px' }"
-                 @mousedown.stop="onNodeMouseDown($event, node)"
-                 @mouseup="onNodeMouseUpCard($event, node)"
-                 @dblclick.stop="onNodeDoubleClick($event, node)"
-                 @contextmenu.prevent.stop="openNodeContextMenu($event, node)">
-                <!-- 1. 卡片头部：左侧图标 + 名称 + 右上角断点红点 -->
-                <div class="node-header" :data-node-id="node.node_id">
-                    <!-- 断点红点（点击切换） -->
-                    <span
-class="node-breakpoint-gutter"
-                          :class="{ active: uiStore.hasBreakpoint(node.node_id) }"
-                          title="点击切换断点"
-                          @click.stop="handleToggleBreakpoint(node.node_id)">
-                        <span v-if="uiStore.hasBreakpoint(node.node_id)" class="bp-dot" />
-                    </span>
-                    <div class="node-header-left" :data-node-id="node.node_id">
-                        <component :is="getNodeIcon(node.node_type)" class="node-type-icon" />
-                        <span class="node-title" :data-node-id="node.node_id">{{ node.node_name }}</span>
-                    </div>
-                    <!-- 调试命中标示 -->
-                    <span v-if="store.currentActiveNodeId === node.node_id" class="node-debug-tag" title="当前执行命中此节点">
-                        <CirclePlay class="debug-pulse-icon" />
-                    </span>
-                </div>
-
-                <!-- 2. 卡片中间主体区 -->
-                <div class="node-body" :data-node-id="node.node_id">
-                    <!-- 图像识别节点预览 -->
-                    <div
-v-if="node.node_type === 'image_recognition'"
-                         class="node-image-embedded"
-                         :style="node.params?.image_source ? { '--bg-image-url': `url(${getImageThumbnailUrl(node.params.image_source)})` } : {}">
-                        <img
-v-if="node.params?.image_source"
-                             :src="getImageThumbnailUrl(node.params.image_source)"
-                             :class="['embedded-template-img', { 'is-contain': isSpecialTallImage(node.node_id) }]"
-                             alt="模板"
-                             @load="(e) => onImageLoaded(e, node.node_id)"
-                             @error="$event.target.style.display = 'none'" />
-                        <div v-else class="embedded-placeholder">
-                            <Image style="width: 16px; height: 16px; opacity: 0.5; margin-bottom: 2px;" />
-                            <span>未选模板</span>
-                        </div>
-                    </div>
-
-                    <!-- ⚡ 分支选择 Branch 节点: 行级条件与专属出口锚点 -->
-                    <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
-                        <div
-v-for="(cand, cIdx) in (node.params?.candidates || [])"
-                             :key="cIdx"
-                             class="branch-candidate-item">
-                            <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
-                                {{ formatCondDesc(cand.condition || cand) }}
-                            </span>
-                            <div
-class="node-handle source-handle branch-handle"
-                                 :title="`分支 ${cIdx + 1} 成立时流向出口`"
-                                 @mousedown.stop="startConnection($event, node.node_id, `branch_${cIdx}`)" />
-                        </div>
-                        <div v-if="!node.params?.candidates?.length" class="empty-cand-placeholder">
-                            <span>未配置分流条件</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 3. 卡片底部固定边栏 -->
-                <div class="node-footer-bar" :data-node-id="node.node_id">
-                    <span class="footer-tag">延时: {{ node.delay_before ?? 200 }}ms</span>
-                    <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
-                </div>
-
-                <!-- 通用入口与失败/兜底锚点 -->
-                <div class="node-handle target-handle top-handle" title="入口位置" />
-                <div v-if="node.node_type !== 'branch'" class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="startConnection($event, node.node_id, 'succ')" />
-                <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" :title="node.node_type === 'branch' ? 'Else 兜底分支出口' : '失败分支出口'" @mousedown.stop="startConnection($event, node.node_id, 'fail')" />
-            </div>
+            <!-- 节点卡片层（P2 子组件） -->
+            <CanvasNodeCard
+                v-for="node in renderNodes"
+                :key="node.node_id"
+                :node="node"
+                :selected="node.selected"
+                :is-active-debug="store.currentActiveNodeId === node.node_id"
+                :has-breakpoint="uiStore.hasBreakpoint(node.node_id)"
+                :current-project-path="store.currentProjectPath"
+                :blueprint-version="store.blueprint?.version || 0"
+                @node-mousedown="onNodeMouseDown"
+                @node-mouseup="onNodeMouseUpCard"
+                @node-dblclick="onNodeDoubleClick"
+                @node-contextmenu="openNodeContextMenu"
+                @toggle-breakpoint="handleToggleBreakpoint"
+                @start-connection="startConnection"
+                @image-loaded="(data) => onImageLoaded(data)" />
 </div>
 
         <!-- 全景缩略图导航面板 -->
@@ -193,91 +78,25 @@ class="node-handle source-handle branch-handle"
         <!-- 框选 UI -->
         <div v-if="selectionBox.visible" class="selection-box" :style="selectionBoxStyle" />
 
-        <!-- 节点类型选择菜单 -->
-        <div
-v-if="spawnMenu.visible"
-             class="spawn-menu"
-             :style="{ left: spawnMenu.x + 'px', top: spawnMenu.y + 'px', zIndex: menuZIndex }"
-             @mousedown.stop
-             @click.stop>
-            <div class="spawn-menu-header">
-                ⚡ {{ spawnMenu.sourceNodeId ? `快捷创建并连接` : '✨ 选择新建节点类型' }}
-            </div>
-            <div class="spawn-menu-list">
-                <div v-for="(label, type) in availableNodeTypes" :key="type" class="spawn-menu-item" @click="createAndConnectNode(type)">
-                    {{ label }}
-                </div>
-            </div>
-        </div>
-
-        <!-- 画布空白处右键菜单 -->
-        <div
-v-if="customContextMenu.visible"
-             class="custom-context-menu"
-             :style="{ left: customContextMenu.x + 'px', top: customContextMenu.y + 'px', zIndex: menuZIndex }"
-             @mousedown.stop
-             @click.stop>
-            <template v-if="customContextMenu.targetType === 'node'">
-                <div class="menu-item" @click="handleRunFromNode">
-                    <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
-                    <span>从此节点开始运行</span>
-                </div>
-                <div class="menu-divider" />
-                <div class="menu-item" @click="handleToggleBreakpoint(customContextMenu.targetId)">
-                    <span class="menu-item-icon bp-dot-inline" />
-                    <span>{{ uiStore.hasBreakpoint(customContextMenu.targetId) ? '🔴 移除断点' : '⚪ 设置断点' }}</span>
-                </div>
-                <div class="menu-item" @click="handleAddBreakpointAndRun(customContextMenu.targetId)">
-                    <span class="menu-item-icon">🎯</span>
-                    <span>设断点并运行到此处</span>
-                </div>
-                <template v-if="store.isPaused">
-                    <div class="menu-divider" />
-                    <div class="menu-item" @click="store.resumeExecution()">▶️ 继续执行 (F5)</div>
-                    <div class="menu-item" @click="store.stepOverExecution()">⏭ 单步跳过 (F10)</div>
-                    <div class="menu-item" @click="store.stepIntoExecution()">⏬ 单步进入 (F11)</div>
-                </template>
-                <div class="menu-divider" />
-                <div class="menu-item danger" @click="handleDeleteNode">
-                    <Trash2 class="menu-item-icon" />
-                    <span>删除节点</span>
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'group'">
-                <div class="menu-item danger" @click="handleDeleteGroup">
-                    <Trash2 class="menu-item-icon" />
-                    <span>删除组</span>
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'canvas_in_group'">
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    📁 在当前组 [{{ customContextMenu.targetName }}] 新建节点
-                </div>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'canvas_public'">
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    ✨ 在新建组中新建节点
-                </div>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-            </template>
-
-            <template v-else>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    ✨ 新建节点
-                </div>
-            </template>
-        </div>
+        <!-- 右键菜单 + Spawn 菜单（P2 子组件） -->
+        <CanvasContextMenu
+            :spawn-menu="spawnMenu"
+            :context-menu="customContextMenu"
+            :menu-z-index="menuZIndex"
+            :available-node-types="availableNodeTypes"
+            :has-breakpoint="customContextMenu.targetId ? uiStore.hasBreakpoint(customContextMenu.targetId) : false"
+            :is-paused="store.isPaused"
+            @create-and-connect="createAndConnectNode"
+            @run-from-node="handleRunFromNode"
+            @toggle-breakpoint="handleToggleBreakpoint"
+            @add-breakpoint-and-run="handleAddBreakpointAndRun"
+            @resume-execution="store.resumeExecution"
+            @step-over="store.stepOverExecution"
+            @step-into="store.stepIntoExecution"
+            @delete-node="handleDeleteNode"
+            @delete-group="handleDeleteGroup"
+            @canvas-new-node="handleCanvasNewNode"
+            @canvas-new-group="handleCanvasNewGroup" />
     </div>
 </template>
 
@@ -293,14 +112,23 @@ v-if="customContextMenu.visible"
     } from '@/utils/nodeModel'
     import { getNextZIndex } from '@/utils/zIndexManager'
 
-    // ===== 画布增强 Composables（快捷键/撤销重做/连线标签） =====
+    // ===== 画布增强 Composables（快捷键/撤销重做） =====
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { createPiniaUndoRedo } from '@/composables/useUndoRedo'
 
-    import {
-        MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
-        Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2, Compass
-    } from 'lucide-vue-next'
+    // ===== P2 拆分的 Composables =====
+    import { useViewport } from '@/composables/useViewport'
+    import { useNodeDrag } from '@/composables/useNodeDrag'
+    import { useConnection } from '@/composables/useConnection'
+    import { useContextMenu } from '@/composables/useContextMenu'
+    // ===== P4 共享 CSS 注入（边/节点基础样式，供子组件复用） =====
+    import { useCanvasSharedStyle } from '@/composables/useCanvasSharedStyle'
+    useCanvasSharedStyle()
+
+    // ===== P2 拆分的子组件 =====
+    import CanvasNodeCard from '@/components/canvas/CanvasNodeCard.vue'
+    import CanvasEdgeLayer from '@/components/canvas/CanvasEdgeLayer.vue'
+    import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
 
     const store = useMainStore()
     const uiStore = useUiStore()
@@ -337,46 +165,40 @@ v-if="customContextMenu.visible"
 
     const containerRef = ref(null)
     const minimapCanvasRef = ref(null)
-    const menuZIndex = ref(3000)
-    const isCtrlHeldRef = ref(false)
-    const draggedSourceGroupSnapshot = ref(null)
-    const ghostPlaceholder = ref(null)
-
-    const viewport = ref({ x: 0, y: 0, zoom: 1 })
-    const isPanning = ref(false)
-    const panStart = ref({ x: 0, y: 0 })
-
-    const localDraftPositions = reactive({})
-    const draggingNodeId = ref(null)
-    const dragStartMouse = ref({ x: 0, y: 0 })
-    const nodeInitialPos = ref({ x: 0, y: 0 })
-    const hasMoved = ref(false)
-
-    const dynamicImageHeights = reactive({})
-    const tallImageFlags = reactive({})
-
-    const dragPreviewBox = ref({ visible: false, x: 0, y: 0, w: 0, h: 0, hasCollision: false })
-    const selectionBox = ref({ visible: false, startX: 0, startY: 0, endX: 0, endY: 0 })
-    const drawingConnection = ref({ active: false, sourceNodeId: null, portType: 'succ', currentX: 0, currentY: 0, previewMarkerUrl: 'url(#arrow-preview)' })
-
-    const spawnMenu = ref({ visible: false, x: 0, y: 0, sourceNodeId: null, portType: 'succ', clientX: 0, clientY: 0 })
-
-    const customContextMenu = reactive({
-        visible: false,
-        x: 0,
-        y: 0,
-        targetType: 'canvas',
-        targetId: null,
-        targetName: '',
-        clientX: 0,
-        clientY: 0
-    })
-
-    const selectedEdgeId = ref(null)
-    const localSelectedNodeIds = ref([])
 
     const GRID_SIZE = 20
     const NODE_GRID_W = 8
+
+    // ===== 从 P2 Composables 获取状态与方法 =====
+    const { viewport, isPanning, panStart, viewportStyle } = useViewport()
+
+    const dragComposable = useNodeDrag({
+        viewport,
+        getRenderNodes: () => renderNodes.value,
+        getDynamicGroups: () => dynamicGroups.value,
+        GRID_SIZE,
+        NODE_GRID_W
+    })
+    const {
+        draggingNodeId, hasMoved, isCtrlHeldRef, dragPreviewBox,
+        localDraftPositions, draggedSourceGroupSnapshot, ghostPlaceholder,
+        selectionBox, resolveCollisionsAndPushOthers, calculateOverlapRatio,
+        resolveGroupCollisionsAndPushOthers
+    } = dragComposable
+
+    const { drawingConnection } = useConnection()
+
+    const { customContextMenu, spawnMenu } = useContextMenu()
+
+    const menuZIndex = ref(3000)
+    const dynamicImageHeights = reactive({})
+    const tallImageFlags = reactive({})
+    const selectedEdgeId = ref(null)
+    const localSelectedNodeIds = ref([])
+
+    // 拖拽辅助状态（useNodeDrag 未导出，本地维护）
+    const dragStartMouse = ref({ x: 0, y: 0 })
+    const nodeInitialPos = ref({ x: 0, y: 0 })
 
     const availableNodeTypes = {
         click: '🖱️ 鼠标点击',
@@ -391,66 +213,12 @@ v-if="customContextMenu.visible"
         smart_jump: '🧭 智能跳转' // ⚡ 新增智能跳转节点
     }
 
-    const nodeIconComponentMap = {
-        click: MousePointerClick,
-        wait: Clock,
-        set_window: Target,
-        image_recognition: Image,
-        ocr_recognition: FileSearch,
-        branch: GitBranch,
-        logic_check: SearchCheck,
-        variable_op: Binary,
-        log: ListOrdered,
-        script_call: FileCode,
-        smart_jump: Compass // ⚡ 绑定智能跳转图标
-    }
-
-    const getNodeIcon = (nodeType) => nodeIconComponentMap[nodeType] || FileCode
-
     const getNodeShortLabel = (nodeType) => {
         const label = availableNodeTypes[nodeType] || nodeType
         return label.replace(/^[^\u4e00-\u9fa5]+/, '').trim()
     }
 
-    // ⚡ 格式化 Branch 条件的纯简描述
-    const formatCondDesc = (item) => {
-        if (!item) return '未配置条件'
-        const condType = item.condition_type || item.type || 'variable_check'
-        const params = item.params || item
-
-        if (condType === 'image_exists') {
-            const opText = params.exist_mode === 'not_exists' ? '不存在' : '存在'
-            return `🖼️ ${opText}: ${params.image_source || '未选图片'}`
-        }
-        if (condType === 'text_contains') {
-            return `🔤 文本: ${params.target_text || '未设文本'}`
-        }
-        if (condType === 'variable_check') {
-            return `🔢 变量: ${params.variable_name || params.var_name || '未选'} (${params.operator || 'eq'}) ${params.compare_value ?? params.target_value ?? ''}`
-        }
-        if (condType === 'window_state') {
-            return `🪟 窗口: ${params.window_title || '默认'} (${params.state_check || '存在'})`
-        }
-        if (condType === 'file_exists') {
-            return `📂 文件: ${params.file_path || '未设路径'}`
-        }
-        return `判定: ${condType}`
-    }
-
-    const getImageThumbnailUrl = (imageSource) => {
-        if (!imageSource) return ''
-        let cleanName = imageSource.replace(/\\/g, '/')
-        if (!/\.(png|jpg|jpeg)$/i.test(cleanName)) cleanName += '.png'
-        const version = store.blueprint?.version || 0
-        return `/api/image/thumb?project_path=${encodeURIComponent(store.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&v=${version}`
-    }
-
     const hasFailurePort = (nodeType) => ['image_recognition', 'ocr_recognition', 'branch', 'logic_check'].includes(nodeType)
-
-    const viewportStyle = computed(() => ({
-        transform: `translate(${viewport.value.x}px, ${viewport.value.y}px) scale(${viewport.value.zoom})`,
-        transformOrigin: '0 0'
-    }))
 
     const selectionBoxStyle = computed(() => {
         if (!containerRef.value) return {}
@@ -531,12 +299,8 @@ v-if="customContextMenu.visible"
         return allNodesList
     })
 
-    const onImageLoaded = (e, nodeId) => {
-        const img = e.target
-        const naturalW = img.naturalWidth || 100
-        const naturalH = img.naturalHeight || 100
-        const cardInnerWidth = (NODE_GRID_W * GRID_SIZE) - 24
-
+    const onImageLoaded = (data) => {
+        const { nodeId, width: naturalW, height: naturalH, cardInnerWidth } = data
         const ratio = naturalH / naturalW
         if (ratio > 1) {
             tallImageFlags[nodeId] = true
@@ -546,8 +310,6 @@ v-if="customContextMenu.visible"
             dynamicImageHeights[nodeId] = Math.round(cardInnerWidth * ratio)
         }
     }
-
-    const isSpecialTallImage = (nodeId) => !!tallImageFlags[nodeId]
 
     const fitViewToNodes = () => {
         nextTick(() => {
@@ -768,63 +530,6 @@ v-if="customContextMenu.visible"
         customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
         customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
         menuZIndex.value = getNextZIndex()
-        closeSpawnMenu()
-    }
-
-    // ===== 调试：切换节点断点 =====
-    function handleToggleBreakpoint(nodeId) {
-        if (!nodeId) return
-        const added = uiStore.toggleBreakpoint(nodeId)
-        customContextMenu.visible = false
-        ElMessage.info(
-            added ? `🔴 已设置断点：${nodeId}` : `⚪ 已移除断点：${nodeId}`
-        )
-    }
-
-    // ===== 调试：设置断点并运行到此处 =====
-    async function handleAddBreakpointAndRun(nodeId) {
-        if (!nodeId) return
-        uiStore.enableBreakpoint(nodeId)
-        customContextMenu.visible = false
-
-        // 找到归属 task 并执行
-        const tasks = store.blueprint?.tasks || []
-        let targetTaskId = null
-        for (const task of tasks) {
-            if ((task.nodes || []).some(n => n.node_id === nodeId)) {
-                targetTaskId = task.task_id
-                break
-            }
-        }
-        if (!targetTaskId) {
-            ElMessage.error('未找到该节点所属任务组')
-            return
-        }
-        try {
-            const result = await store.runTask(targetTaskId)
-            if (result?.status === 'started') {
-                ElMessage.success('任务已启动，将在设置的断点处暂停')
-            } else {
-                ElMessage.error('启动失败')
-            }
-        } catch (err) {
-            ElMessage.error('启动失败：' + err.message)
-        }
-    }
-
-    // ===== 调试：右键节点打开上下文菜单 =====
-    function openNodeContextMenu(e, node) {
-        customContextMenu.visible = true
-        customContextMenu.targetType = 'node'
-        customContextMenu.targetId = node.node_id
-        customContextMenu.targetName = node.node_name
-        customContextMenu.clientX = e.clientX
-        customContextMenu.clientY = e.clientY
-        // 相对容器坐标
-        const rect = containerRef.value?.getBoundingClientRect?.()
-        customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
-        customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
-        menuZIndex.value = getNextZIndex()
         spawnMenu.value.visible = false
     }
 
@@ -939,7 +644,7 @@ v-if="customContextMenu.visible"
     }
 
     // ⚡ 核心连线计算：支持常规成功、行级分支（branch_i）与 Else/失败兜底出口
-    // 使用 canvasRouter 统一 BFS 寻路（移除 pathfinding 依赖 + gridRouter + pathSmooth）
+    // 使用 canvasRouter 统一 BFS 寻路
     const computedEdges = computed(() => {
         let edges = []
         const allNodes = renderNodes.value
@@ -1379,180 +1084,6 @@ v-if="customContextMenu.visible"
             drawingConnection.value.currentX = Math.round(rawX / GRID_SIZE) * GRID_SIZE
             drawingConnection.value.currentY = Math.round(rawY / GRID_SIZE) * GRID_SIZE
         }
-    }
-
-    const resolveCollisionsAndPushOthers = (targetNodeId, dropPos, allNodes, nodeSize) => {
-        const GAP_GRIDS = 2
-
-        let movingNodes = [{ id: targetNodeId, pos: { ...dropPos }, h: nodeSize.h, w: nodeSize.w }]
-        localDraftPositions[targetNodeId] = { ...dropPos }
-
-        let maxIterations = 15
-        let iteration = 0
-
-        while (iteration < maxIterations) {
-            iteration++
-            let hasNewCollision = false
-
-            for (let i = 0; i < movingNodes.length; i++) {
-                const current = movingNodes[i]
-                const currPos = current.pos
-                const currSize = { w: current.w || nodeSize.w, h: current.h || nodeSize.h }
-
-                for (const other of allNodes) {
-                    if (other.node_id === current.id) continue
-                    if (movingNodes.some(m => m.id === other.node_id)) continue
-                    if (ghostPlaceholder.value && other.node_id === ghostPlaceholder.value.node_id) continue
-
-                    const alreadyMoved = movingNodes.find(m => m.id === other.node_id)
-                    const otherPos = alreadyMoved ? alreadyMoved.pos : (localDraftPositions[other.node_id] || other.position)
-                    const otherSize = {
-                        w: other.w || nodeSize.w,
-                        h: alreadyMoved ? alreadyMoved.h : (other.h || 120)
-                    }
-
-                    const isIntersect = !(
-                        currPos.x + currSize.w + 40 <= otherPos.x ||
-                        currPos.x >= otherPos.x + otherSize.w + 40 ||
-                        currPos.y + currSize.h + 40 <= otherPos.y ||
-                        currPos.y >= otherPos.y + otherSize.h + 40
-                    )
-
-                    if (isIntersect) {
-                        hasNewCollision = true
-
-                        const currCenterX = currPos.x + currSize.w / 2
-                        const otherCenterX = otherPos.x + otherSize.w / 2
-                        const currCenterY = currPos.y + currSize.h / 2
-                        const otherCenterY = otherPos.y + otherSize.h / 2
-
-                        const dx = currCenterX - otherCenterX
-                        const dy = currCenterY - otherCenterY
-
-                        let nextPos = { ...otherPos }
-
-                        if (Math.abs(dx) > Math.abs(dy)) {
-                            if (dx < 0) {
-                                const overlapPx = (currPos.x + currSize.w) - otherPos.x
-                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                nextPos.x = otherPos.x + (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                            } else {
-                                const overlapPx = (otherPos.x + otherSize.w) - currPos.x
-                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                nextPos.x = otherPos.x - (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                            }
-                        } else {
-                            if (dy < 0) {
-                                const overlapPx = (currPos.y + currSize.h) - otherPos.y
-                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                nextPos.y = otherPos.y + (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                            } else {
-                                const overlapPx = (otherPos.y + otherSize.h) - currPos.y
-                                const overlapGrids = Math.ceil(overlapPx / GRID_SIZE)
-                                nextPos.y = otherPos.y - (overlapGrids + GAP_GRIDS) * GRID_SIZE
-                            }
-                        }
-
-                        nextPos.x = Math.round(nextPos.x / GRID_SIZE) * GRID_SIZE
-                        nextPos.y = Math.round(nextPos.y / GRID_SIZE) * GRID_SIZE
-
-                        localDraftPositions[other.node_id] = nextPos
-                        other.position = nextPos
-
-                        movingNodes.push({
-                            id: other.node_id,
-                            pos: nextPos,
-                            h: otherSize.h,
-                            w: otherSize.w
-                        })
-                    }
-                }
-            }
-            if (!hasNewCollision) break
-        }
-        return localDraftPositions[targetNodeId] || dropPos
-    }
-
-    const calculateOverlapRatio = (rectA, rectB) => {
-        if (!rectA || !rectB) return 0
-        const xOverlap = Math.max(0, Math.min(rectA.x + rectA.w, rectB.x + rectB.w) - Math.max(rectA.x, rectB.x))
-        const yOverlap = Math.max(0, Math.min(rectA.y + rectA.h, rectB.y + rectB.h) - Math.max(rectA.y, rectB.y))
-        const intersectionArea = xOverlap * yOverlap
-        const areaA = rectA.w * rectA.h
-        if (areaA <= 0) return 0
-        return intersectionArea / areaA
-    }
-
-    const resolveGroupCollisionsAndPushOthers = (draggingTaskId, newBox, allGroups) => {
-        const MIN_GROUP_GAP = GRID_SIZE
-        let movingGroups = [{ id: draggingTaskId, box: { ...newBox } }]
-        let adjustedBoxes = { [draggingTaskId]: { ...newBox } }
-
-        let maxIterations = 10
-        let iteration = 0
-
-        while (iteration < maxIterations) {
-            iteration++
-            let hasNewCollision = false
-
-            for (let i = 0; i < movingGroups.length; i++) {
-                const current = movingGroups[i]
-                const currBox = current.box
-
-                for (const other of allGroups) {
-                    if (other.taskId === current.id) continue
-                    if (movingGroups.some(m => m.id === other.taskId)) continue
-
-                    const otherBox = adjustedBoxes[other.taskId] || other.box
-
-                    const isIntersect = !(
-                        currBox.x + currBox.w + MIN_GROUP_GAP <= otherBox.x ||
-                        currBox.x >= otherBox.x + otherBox.w + MIN_GROUP_GAP ||
-                        currBox.y + currBox.h + MIN_GROUP_GAP <= otherBox.y ||
-                        currBox.y >= otherBox.y + otherBox.h + MIN_GROUP_GAP
-                    )
-
-                    if (isIntersect) {
-                        hasNewCollision = true
-
-                        const currCenterX = currBox.x + currBox.w / 2
-                        const otherCenterX = otherBox.x + otherBox.w / 2
-                        const currCenterY = currBox.y + currBox.h / 2
-                        const otherCenterY = otherBox.y + otherBox.h / 2
-
-                        const dx = otherCenterX - currCenterX
-                        const dy = otherCenterY - currCenterY
-
-                        const overlapX = Math.min(currBox.x + currBox.w + MIN_GROUP_GAP - otherBox.x, otherBox.x + otherBox.w + MIN_GROUP_GAP - currBox.x)
-                        const overlapY = Math.min(currBox.y + currBox.h + MIN_GROUP_GAP - otherBox.y, otherBox.y + otherBox.h + MIN_GROUP_GAP - currBox.y)
-
-                        let nextBox = { ...otherBox }
-
-                        if (overlapX < overlapY) {
-                            if (dx > 0) {
-                                nextBox.x = currBox.x + currBox.w + MIN_GROUP_GAP
-                            } else {
-                                nextBox.x = currBox.x - otherBox.w - MIN_GROUP_GAP
-                            }
-                        } else {
-                            if (dy > 0) {
-                                nextBox.y = currBox.y + currBox.h + MIN_GROUP_GAP
-                            } else {
-                                nextBox.y = currBox.y - otherBox.h - MIN_GROUP_GAP
-                            }
-                        }
-
-                        nextBox.x = Math.round(nextBox.x / GRID_SIZE) * GRID_SIZE
-                        nextBox.y = Math.round(nextBox.y / GRID_SIZE) * GRID_SIZE
-
-                        adjustedBoxes[other.taskId] = nextBox
-                        movingGroups.push({ id: other.taskId, box: nextBox })
-                    }
-                }
-            }
-            if (!hasNewCollision) break
-        }
-        return adjustedBoxes
     }
 
     const onGlobalMouseUp = async (e) => {
@@ -2348,44 +1879,6 @@ v-if="customContextMenu.visible"
             border: 2px solid var(--el-color-primary);
             box-shadow: 0 0 12px rgba(78, 209, 156, 0.5);
         }
-
-        /* ===== 调试：当前执行命中节点高亮 ===== */
-        .canvas-node-card.is-active-debug {
-            border: 2px solid #ffb020 !important;
-            box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.35), 0 6px 18px rgba(255, 176, 32, 0.25) !important;
-            animation: debug-pulse 1.2s ease-in-out infinite;
-        }
-
-        @keyframes debug-pulse {
-            0%, 100% { filter: brightness(1); }
-            50%      { filter: brightness(1.12); }
-        }
-
-    /* ===== 节点头部断点 gutter + 当前执行标签 ===== */
-    .node-breakpoint-gutter {
-        width: 18px; height: 18px; flex-shrink: 0;
-        display: flex; align-items: center; justify-content: center;
-        margin-right: 4px; cursor: pointer; user-select: none;
-        border-radius: 50%;
-        transition: background-color 0.15s;
-    }
-    .node-breakpoint-gutter:hover { background: rgba(255,255,255,0.08); }
-    .node-breakpoint-gutter .bp-dot {
-        width: 12px; height: 12px; border-radius: 50%;
-        background: #e5484d;
-        box-shadow: 0 0 6px rgba(229, 72, 77, 0.8), inset 0 -2px 0 rgba(0,0,0,0.2);
-    }
-    .node-breakpoint-gutter.active { background: rgba(229, 72, 77, 0.12); }
-
-    .node-debug-tag {
-        display: inline-flex; align-items: center; justify-content: center;
-        width: 18px; height: 18px; border-radius: 50%;
-        background: #ffb020; color: #1a1a1a;
-        box-shadow: 0 0 8px rgba(255, 176, 32, 0.8);
-        flex-shrink: 0;
-        animation: debug-pulse 1s ease-in-out infinite;
-    }
-    .debug-pulse-icon { width: 12px; height: 12px; }
 
         /* ===== 调试：当前执行命中节点高亮 ===== */
         .canvas-node-card.is-active-debug {

@@ -175,6 +175,10 @@ v-if="conditionDialog.visible"
         ARROW_MARKERS_SVG
     } from '@/utils/canvasShared'
     import { computeEdgePath, getSimpleOrthoPath } from '@/utils/canvasRouter'
+    import { normalizeNodeList } from '@/utils/nodeModel'
+    // ===== P4 共享 CSS 注入（边/节点基础样式，与 WorkflowCanvas 一致） =====
+    import { useCanvasSharedStyle } from '@/composables/useCanvasSharedStyle'
+    useCanvasSharedStyle()
     import {
         Plus, Minus, Maximize, MousePointerClick, Timer, Image,
         Type, MapPin, Navigation, ScrollText, GitBranch, Filter,
@@ -220,16 +224,17 @@ v-if="conditionDialog.visible"
     const topologyNodes = computed(() => store.topologyNodes)
     const topologyEdges = computed(() => store.topologyEdges)
 
-    // 将拓扑节点转换为路由器需要的格式（带 size）
+    // 将拓扑节点转换为路由器需要的格式（统一使用 nodeModel 归一化）
     const nodesForRouting = computed(() => {
-        return topologyNodes.value.map(n => ({
+        const raw = topologyNodes.value.map(n => ({
             ...n,
             position: n.position || { x: 0, y: 0 },
-            size: { w: NODE_WIDTH, h: getNodeHeight(n) }
+            size: { w: NODE_WIDTH, h: computeTopologyNodeHeight(n) }
         }))
+        return normalizeNodeList(raw)
     })
 
-    function getNodeHeight(node) {
+    function computeTopologyNodeHeight(node) {
         let h = 38 // header
         if (node.type === 'page_state') {
             if (node.page_id) h += 18
@@ -467,7 +472,7 @@ v-if="conditionDialog.visible"
             const nx = n.position?.x || 0
             const ny = n.position?.y || 0
             const nw = NODE_WIDTH
-            const nh = getNodeHeight(n)
+            const nh = computeTopologyNodeHeight(n)
             return dropX >= nx && dropX <= nx + nw && dropY >= ny && dropY <= ny + nh
         })
 
@@ -647,52 +652,8 @@ v-if="conditionDialog.visible"
             cursor: pointer;
         }
 
-    /* 使用共享样式 */
-    :deep(.edge-path) {
-        fill: none;
-        stroke-width: 2.5px;
-        stroke-linecap: round;
-        stroke-linejoin: round;
-        transition: stroke 0.2s, stroke-width 0.2s;
-    }
-
-    :deep(.edge-path.is-success) {
-        stroke: #4ed19c;
-    }
-
-    :deep(.edge-path.is-failure) {
-        stroke: #f56c6c;
-    }
-
-    :deep(.edge-path.is-selected) {
-        stroke: #ffffff;
-        stroke-width: 4px;
-        filter: drop-shadow(0 0 6px rgba(255,255,255,0.6));
-    }
-
-    :deep(.edge-path:hover) {
-        stroke-width: 4px;
-        filter: drop-shadow(0 0 4px rgba(255,255,255,0.4));
-    }
-
-    :deep(.edge-flow-path) {
-        fill: none;
-        stroke: rgba(255, 255, 255, 0.7);
-        stroke-width: 2px;
-        stroke-dasharray: 8 16;
-        animation: edgeFlow 0.8s linear infinite;
-        pointer-events: none;
-    }
-
-    @keyframes edgeFlow {
-        from {
-            stroke-dashoffset: 24;
-        }
-
-        to {
-            stroke-dashoffset: 0;
-        }
-    }
+    /* 边的基础样式（.edge-path / .edge-flow-path / @keyframes）已由
+       useCanvasSharedStyle() 全局注入 SHARED_EDGE_CSS，此处不再重复定义 */
 
     .edge-label {
         fill: #a0a1ab;
@@ -760,44 +721,8 @@ v-if="conditionDialog.visible"
         color: #6b7280;
     }
 
-    /* 端口 */
-    .node-port {
-        position: absolute;
-        width: 12px;
-        height: 12px;
-        border-radius: 50%;
-        border: 2px solid #1e1f2b;
-        cursor: crosshair;
-        z-index: 10;
-        transition: transform 0.15s;
-    }
-
-        .node-port:hover {
-            transform: scale(1.4);
-        }
-
-        .node-port.port-success {
-            background: #4ed19c;
-        }
-
-        .node-port.port-failure {
-            background: #f56c6c;
-        }
-
-        .node-port.port-entry {
-            background: #909399;
-            cursor: default;
-        }
-
-        .node-port.port-exit {
-            background: #4ed19c;
-        }
-
-    /* 网格背景 */
-    .grid-background {
-        background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
-        background-size: 20px 20px;
-    }
+    /* 端口 / 网格背景基础样式已由 useCanvasSharedStyle() 全局注入 SHARED_NODE_CSS，
+       此处不再重复定义，保持与 WorkflowCanvas 视觉一致 */
 
     /* 工具栏 */
     .canvas-toolbar {
