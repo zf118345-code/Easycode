@@ -23,6 +23,7 @@ frontend/*.log
 *.md
 # IDE
 .vscode/
+.vs/
 .idea/
 *.iml
 .DS_Store
@@ -42,3 +43,6 @@ projects/build/player/
 
 # 迁移备份文件
 *.bak
+
+# AI 分析导出产物（Repomix 打包）
+Easycode.xml
