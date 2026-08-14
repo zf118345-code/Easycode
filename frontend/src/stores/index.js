@@ -37,6 +37,8 @@ export const useMainStore = defineStore('main', {
         nodes() { return useProjectStore().nodes },
         params() { return useProjectStore().params },
         uiState() { return useProjectStore().uiState },
+        workflowData() { return useProjectStore().workflowData },
+        topologyData() { return useProjectStore().topologyData },
 
         // ===== uiStore 关键字段代理 =====
         selectedNodeId() { return useUiStore().selectedNodeId },
@@ -79,6 +81,11 @@ export const useMainStore = defineStore('main', {
         toggleMinimap() { return useProjectStore().toggleMinimap() },
         toggleLogPanel() { return useProjectStore().toggleLogPanel() },
         async loadTasks() { return useProjectStore().loadTasks() },
+        async saveProjectMeta() { return useProjectStore().saveProjectMeta() },
+        saveProjectMetaDebounced() { return useProjectStore().saveProjectMetaDebounced() },
+        async saveWorkflowImmediately() { return useProjectStore().saveWorkflowImmediately() },
+        async saveTopologyData() { return useProjectStore().saveTopologyData() },
+        saveTopologyDebounced() { return useProjectStore().saveTopologyDebounced() },
         saveBlueprintDebounced() { return useProjectStore().saveBlueprintDebounced() },
         async saveBlueprintImmediately() { return useProjectStore().saveBlueprintImmediately() },
         async saveCurrentTask() { return useProjectStore().saveCurrentTask() },

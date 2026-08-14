@@ -1,7 +1,20 @@
 import { defineStore } from 'pinia'
+import {
+    fileNodeToFlat,
+    flatNodeToFile,
+    fileEdgeToFlat,
+    flatEdgeToFile,
+    topologyFlatToFile,
+    pruneTopologyEdgesForNode
+} from '@/utils/topologyModel'
+
+// topology.json 文件结构为任务组形式 {tasks: [{..., nodes: [...]}], edges: [...]}
+// 本 store 内部使用扁平结构（type/page_id/features/exits 位于顶层，连线用 source/target），
+// 组件（TopologyCanvas/InspectorPanel 等）零改动；折叠/展开转换集中在 topologyModel.js。
 
 export const useTopologyStore = defineStore('topology', {
     state: () => ({
+        // 内部扁平结构（组件消费）：nodes 为扁平拓扑节点，edges 用 source/target
         topologyBlueprint: { nodes: [], edges: [] },
         selectedTopologyNodeId: null
     }),
@@ -24,10 +37,21 @@ export const useTopologyStore = defineStore('topology', {
                 bp = useProjectStore().blueprint
             }
             const topo = bp?.topology
-            if (topo && Array.isArray(topo.nodes) && Array.isArray(topo.edges)) {
+            if (topo && Array.isArray(topo.tasks)) {
+                // 新结构：任务组 -> 展开为扁平节点
+                const nodes = []
+                for (const task of topo.tasks) {
+                    for (const n of (task.nodes || [])) nodes.push(fileNodeToFlat(n))
+                }
                 this.topologyBlueprint = {
-                    nodes: JSON.parse(JSON.stringify(topo.nodes)),
-                    edges: JSON.parse(JSON.stringify(topo.edges))
+                    nodes,
+                    edges: (topo.edges || []).map(fileEdgeToFlat)
+                }
+            } else if (topo && Array.isArray(topo.nodes)) {
+                // 兼容旧内存合并视图 {nodes, edges}
+                this.topologyBlueprint = {
+                    nodes: topo.nodes.map(n => ({ ...n })),
+                    edges: (topo.edges || []).map(e => ({ ...e }))
                 }
             } else if ((this.topologyBlueprint?.nodes || []).length === 0) {
                 // 只在真的没有数据时才初始化为空；有本地数据则保留（防止覆盖刚新增但尚未保存的节点）
@@ -41,18 +65,15 @@ export const useTopologyStore = defineStore('topology', {
         },
 
         syncTopologyToBlueprint() {
-            return {
-                nodes: JSON.parse(JSON.stringify(this.topologyBlueprint.nodes || [])),
-                edges: JSON.parse(JSON.stringify(this.topologyBlueprint.edges || []))
-            }
+            // 输出 topology.json 文件结构 {tasks, edges}
+            return topologyFlatToFile(this.topologyBlueprint)
         },
 
         async saveTopologyToBlueprint() {
-            const snapshot = this.syncTopologyToBlueprint()
             const { useProjectStore } = await import('./projectStore')
             const projectStore = useProjectStore()
-            projectStore.blueprint.topology = snapshot
-            projectStore.saveBlueprintDebounced()
+            projectStore.blueprint.topology = this.syncTopologyToBlueprint()
+            projectStore.saveTopologyDebounced()
         },
 
         addTopologyNode(nodeData) {
@@ -124,6 +145,29 @@ export const useTopologyStore = defineStore('topology', {
             if (!edgeId) return
             this.topologyBlueprint.edges = (this.topologyBlueprint.edges || []).filter(e => e.edge_id !== edgeId)
             this.saveTopologyToBlueprint()
+        },
+
+        removeTopologyEdgeByRoute(source, sourcePort) {
+            // 按 源节点+端口 断开连线（拉线空放断线）
+            if (!source) return false
+            const before = (this.topologyBlueprint.edges || []).length
+            this.topologyBlueprint.edges = (this.topologyBlueprint.edges || []).filter(e =>
+                !(e.source === source && (e.source_port || 'exit') === (sourcePort || 'exit'))
+            )
+            if (this.topologyBlueprint.edges.length !== before) {
+                this.saveTopologyToBlueprint()
+                return true
+            }
+            return false
+        },
+
+        pruneEdgesForNode(nodeId, exitsLength) {
+            // D3：exits 删除后修剪索引越界的 exit 连线
+            const pruned = pruneTopologyEdgesForNode(this.topologyBlueprint.edges, nodeId, exitsLength)
+            if (pruned.length !== (this.topologyBlueprint.edges || []).length) {
+                this.topologyBlueprint.edges = pruned
+                this.saveTopologyToBlueprint()
+            }
         }
     }
 })

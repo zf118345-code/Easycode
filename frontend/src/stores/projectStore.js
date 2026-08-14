@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { blueprintApi } from '@/api/blueprintApi'
 import { logger } from '@/utils/logger'
+import { useTopologyStore } from './topologyStore'
 import debounce from 'lodash-es/debounce'
 
 export const DEFAULT_UI_STATE = {
@@ -17,13 +18,14 @@ export const useProjectStore = defineStore('project', {
     state: () => ({
         currentProjectPath: localStorage.getItem('lastProjectPath') || null,
         currentProjectName: '',
+        // 内存合并视图：project.json + workflow.json + topology.json 的聚合（组件消费）
         blueprint: {
             project_name: '',
             tasks: [],
             variables: {},
             ui_state: { ...DEFAULT_UI_STATE },
             edges: [],
-            topology: { nodes: [], edges: [] }
+            topology: { tasks: [], edges: [] }
         },
         paramsDefinitions: {},
         currentTaskId: null,
@@ -43,7 +45,16 @@ export const useProjectStore = defineStore('project', {
         uiState: (state) => ({
             ...DEFAULT_UI_STATE,
             ...(state.blueprint?.ui_state || {})
-        })
+        }),
+        // ===== 画布数据源（Step 3 统一画布使用） =====
+        workflowData: (state) => ({
+            tasks: state.blueprint.tasks || [],
+            edges: state.blueprint.edges || []
+        }),
+        topologyData() {
+            // topology.json 文件结构 {tasks, edges}（经 topologyStore 同步，响应式）
+            return useTopologyStore().syncTopologyToBlueprint()
+        }
     },
 
     actions: {
@@ -79,16 +90,21 @@ export const useProjectStore = defineStore('project', {
         async loadProjectData() {
             if (!this.currentProjectPath) return
             try {
-                const data = await blueprintApi.getBlueprint(this.currentProjectPath)
-                if (!data.ui_state) {
-                    data.ui_state = { ...DEFAULT_UI_STATE }
-                } else {
-                    data.ui_state = { ...DEFAULT_UI_STATE, ...data.ui_state }
+                const [meta, workflow, topology] = await Promise.all([
+                    blueprintApi.getBlueprint(this.currentProjectPath),
+                    blueprintApi.getWorkflow(this.currentProjectPath),
+                    blueprintApi.getTopology(this.currentProjectPath)
+                ])
+                const data = {
+                    project_name: meta?.project_name || this.currentProjectName,
+                    variables: meta?.variables || {},
+                    ui_state: meta?.ui_state ? { ...DEFAULT_UI_STATE, ...meta.ui_state } : { ...DEFAULT_UI_STATE },
+                    tasks: workflow?.tasks || [],
+                    edges: workflow?.edges || [],
+                    topology: topology && (Array.isArray(topology.tasks) || Array.isArray(topology.nodes))
+                        ? topology
+                        : { tasks: [], edges: [] }
                 }
-                if (!data.tasks) data.tasks = []
-                if (!data.variables) data.variables = {}
-                if (!data.edges) data.edges = []
-                if (!data.topology) data.topology = { nodes: [], edges: [] }
 
                 this.blueprint = data
                 this.currentProjectName = data.project_name || this.currentProjectName
@@ -112,7 +128,7 @@ export const useProjectStore = defineStore('project', {
                     variables: {},
                     ui_state: { ...DEFAULT_UI_STATE },
                     edges: [],
-                    topology: { nodes: [], edges: [] }
+                    topology: { tasks: [], edges: [] }
                 }
             }
         },
@@ -126,7 +142,7 @@ export const useProjectStore = defineStore('project', {
             } else if (typeof keyOrObject === 'string') {
                 this.blueprint.ui_state[keyOrObject] = value
             }
-            this.saveBlueprintDebounced()
+            this.saveProjectMetaDebounced()
         },
 
         toggleMinimap() {
@@ -142,12 +158,69 @@ export const useProjectStore = defineStore('project', {
             return this.tasks
         },
 
-        saveBlueprintDebounced: debounce(async function () {
+        // ===== 三文件保存 =====
+
+        async saveProjectMeta() {
+            if (!this.currentProjectPath) return
+            try {
+                await blueprintApi.saveBlueprint(this.currentProjectPath, {
+                    project_name: this.blueprint.project_name,
+                    variables: this.blueprint.variables || {},
+                    ui_state: this.blueprint.ui_state || {}
+                })
+            } catch (err) {
+                console.error('保存项目元数据失败', err)
+                throw err
+            }
+        },
+
+        async saveWorkflowImmediately() {
+            if (!this.currentProjectPath) return
+            try {
+                await blueprintApi.saveWorkflow(this.currentProjectPath, {
+                    tasks: this.blueprint.tasks || [],
+                    edges: this.blueprint.edges || []
+                })
+            } catch (err) {
+                console.error('保存流程画布失败', err)
+                throw err
+            }
+        },
+
+        async saveTopologyData() {
             if (!this.currentProjectPath) return
             try {
                 const { useTopologyStore } = await import('./topologyStore')
                 this.blueprint.topology = useTopologyStore().syncTopologyToBlueprint()
-                await blueprintApi.saveBlueprint(this.currentProjectPath, this.blueprint)
+                await blueprintApi.saveTopology(this.currentProjectPath, this.blueprint.topology)
+            } catch (err) {
+                console.error('保存拓扑地图失败', err)
+                throw err
+            }
+        },
+
+        saveProjectMetaDebounced: debounce(async function () {
+            if (!this.currentProjectPath) return
+            try {
+                await this.saveProjectMeta()
+            } catch (err) {
+                console.error('防抖保存项目元数据失败', err)
+            }
+        }, 400),
+
+        saveTopologyDebounced: debounce(async function () {
+            if (!this.currentProjectPath) return
+            try {
+                await this.saveTopologyData()
+            } catch (err) {
+                console.error('防抖保存拓扑地图失败', err)
+            }
+        }, 400),
+
+        saveBlueprintDebounced: debounce(async function () {
+            if (!this.currentProjectPath) return
+            try {
+                await Promise.all([this.saveProjectMeta(), this.saveWorkflowImmediately(), this.saveTopologyData()])
             } catch (err) {
                 console.error('防抖保存蓝图失败', err)
             }
@@ -156,9 +229,7 @@ export const useProjectStore = defineStore('project', {
         async saveBlueprintImmediately() {
             if (!this.currentProjectPath) return
             try {
-                const { useTopologyStore } = await import('./topologyStore')
-                this.blueprint.topology = useTopologyStore().syncTopologyToBlueprint()
-                await blueprintApi.saveBlueprint(this.currentProjectPath, this.blueprint)
+                await Promise.all([this.saveProjectMeta(), this.saveWorkflowImmediately(), this.saveTopologyData()])
             } catch (err) {
                 console.error('保存蓝图失败', err)
                 throw err

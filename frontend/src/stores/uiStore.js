@@ -36,9 +36,11 @@ export const useUiStore = defineStore('ui', {
             if (mode !== 'workflow' && mode !== 'topology') return
             if (this.canvasMode === mode) return
             this.canvasMode = mode
-            if (mode === 'topology') {
-                useTopologyStore().selectedTopologyNodeId = null
-            }
+            // 切换模式时双向清空选中状态（workflow 选中 + 拓扑选中）
+            this.selectedNodeId = null
+            this.selectedNodeIds = []
+            this.selectedGroupId = null
+            useTopologyStore().selectedTopologyNodeId = null
             useProjectStore().updateUiState('canvasMode', mode)
         },
 

@@ -45,7 +45,7 @@ class PageStateNodeExecutor(BaseNodeExecutor):
             context.log(f'[page_state] 页面 [{page_name}] 未定义任何特征，判定为不匹配', 'warning')
             return self.build_jump_result(
                 success=False,
-                jump_conf=node.on_failure,
+                jump_conf=(node.params or {}).get('on_failure'),
                 error='页面未定义特征',
                 extra={'page_id': page_id, 'matched': False},
             )
@@ -58,11 +58,11 @@ class PageStateNodeExecutor(BaseNodeExecutor):
             context.variables['current_page_id'] = page_id
             context.log(f'[page_state] 已更新 current_page_id = {page_id}')
             return self.build_jump_result(
-                success=True, jump_conf=node.on_success, extra={'page_id': page_id, 'matched': True}
+                success=True, jump_conf=(node.params or {}).get('on_success'), extra={'page_id': page_id, 'matched': True}
             )
 
         return self.build_jump_result(
-            success=False, jump_conf=node.on_failure, extra={'page_id': page_id, 'matched': False}
+            success=False, jump_conf=(node.params or {}).get('on_failure'), extra={'page_id': page_id, 'matched': False}
         )
 
     # ========== 特征评估 ==========

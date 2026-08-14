@@ -39,3 +39,6 @@ projects/build/player/
 /dist/
 /release/
 /projects/
+
+# 迁移备份文件
+*.bak

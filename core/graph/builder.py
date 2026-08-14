@@ -5,6 +5,8 @@
 
 from collections import defaultdict
 
+from core.models import Jump, TopologyMap
+
 
 class AdjacencyGraph:
     """
@@ -89,30 +91,32 @@ class GraphBuilder:
                         edge.to_dict() if hasattr(edge, 'to_dict') else {},
                     )
 
-            # 3. 兼容旧版：从 node.on_success/on_failure 添加边
+            # 3. 兼容旧版：从 params.on_success/on_failure 添加边
             for node in task.nodes:
+                on_success = Jump.from_dict((node.params or {}).get('on_success'))
+                on_failure = Jump.from_dict((node.params or {}).get('on_failure'))
                 if (
-                    node.on_success
-                    and node.on_success.target_node
-                    and node.on_success.target_node not in [t[0] for t in graph.get_out_edges(node.node_id)]
+                    on_success
+                    and on_success.target_node
+                    and on_success.target_node not in [t[0] for t in graph.get_out_edges(node.node_id)]
                 ):
                     graph.add_edge(
                         node.node_id,
-                        node.on_success.target_node,
-                        node.on_success.target,
-                        {'source_port': 'success', **node.on_success.to_dict()},
+                        on_success.target_node,
+                        on_success.target,
+                        {'source_port': 'success', **on_success.to_dict()},
                     )
 
                 if (
-                    node.on_failure
-                    and node.on_failure.target_node
-                    and node.on_failure.target_node not in [t[0] for t in graph.get_out_edges(node.node_id)]
+                    on_failure
+                    and on_failure.target_node
+                    and on_failure.target_node not in [t[0] for t in graph.get_out_edges(node.node_id)]
                 ):
                     graph.add_edge(
                         node.node_id,
-                        node.on_failure.target_node,
-                        node.on_failure.target,
-                        {'source_port': 'failure', **node.on_failure.to_dict()},
+                        on_failure.target_node,
+                        on_failure.target,
+                        {'source_port': 'failure', **on_failure.to_dict()},
                     )
 
                 # 兼容 branch 节点的 candidates 连线
@@ -141,18 +145,30 @@ class GraphBuilder:
         """
         从拓扑地图构建页面级邻接表
         用于 smart_jump 的页面间寻路
-        :param topology_map: TopologyMap 对象
+        :param topology_map: TopologyMap 对象（任务组化：tasks + edges）
         """
         graph = AdjacencyGraph()
 
-        # 注册所有页面节点
-        for idx, node in enumerate(topology_map.nodes):
-            graph.add_node(node.page_id, idx, 'topology')
+        # 建立 node_id -> page 键 的映射（page_id 存于节点 params；无 page_id 的节点用 node_id 兜底）
+        page_keys: dict[str, str] = {}
+        for idx, node in enumerate(topology_map.iter_nodes()):
+            page_key = TopologyMap.node_page_id(node) or node.node_id
+            page_keys[node.node_id] = page_key
+            graph.add_node(page_key, idx, 'topology')
 
-        # 添加拓扑边
+        # 添加拓扑边：把 source_node/target_node 解析为 page 键
         for edge in topology_map.edges:
-            graph.add_edge(
-                edge.source_page, edge.target_page, None, {'action': edge.action, 'conditions': edge.conditions}
+            source_page = page_keys.get(edge.get('source_node', '')) or topology_map.resolve_page(
+                edge.get('source_node', '')
             )
+            target_page = page_keys.get(edge.get('target_node', '')) or topology_map.resolve_page(
+                edge.get('target_node', '')
+            )
+            if not source_page or not target_page:
+                continue
+            edge_data = dict(edge)
+            edge_data.setdefault('action', edge.get('action', ''))
+            edge_data.setdefault('conditions', edge.get('conditions', []))
+            graph.add_edge(source_page, target_page, None, edge_data)
 
         return graph

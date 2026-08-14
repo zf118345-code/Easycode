@@ -1,5 +1,5 @@
 # core/models.py
-# P1 重构：连线升格为一等公民（Edge），Node 支持多画布坐标，Project 扩展拓扑层
+# P1 重构：连线升格为一等公民（Edge），拓扑层任务组化（TopologyMap = tasks + edges）
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -91,16 +91,8 @@ class Node:
     delay_before: int = 0
     loop_count: int = 1  # -1 无限循环
     enabled: bool = True
-    on_success: Jump | None = None  # 兼容旧版：成功跳转
-    on_failure: Jump | None = None  # 兼容旧版：失败跳转
-    position: dict[str, int] | None = None  # 兼容旧版：单画布坐标 {x, y}
-
-    # P1 新增：多画布坐标支持，key 为画布类型 ("workflow" / "topology")
-    positions: dict[str, dict[str, int]] = field(default_factory=dict)
-    # P1 新增：节点尺寸（用于碰撞检测和画布渲染）
-    size: dict[str, int] | None = None
-    # P1 新增：节点所属画布列表
-    canvas_ids: list[str] = field(default_factory=lambda: ['workflow'])
+    position: dict[str, int] | None = None  # 单画布坐标 {x, y}
+    size: dict[str, int] | None = None  # 节点尺寸（用于碰撞检测和画布渲染）
 
     @staticmethod
     def get_defaults(node_type):
@@ -118,23 +110,6 @@ class Node:
 
         merge(self.params, defaults)
 
-    def get_position(self, canvas: str = 'workflow') -> dict[str, int] | None:
-        """获取指定画布上的节点坐标，优先从 positions 取，降级到旧版 position"""
-        if self.positions and canvas in self.positions:
-            return self.positions[canvas]
-        if canvas == 'workflow' and self.position:
-            return self.position
-        return None
-
-    def set_position(self, canvas: str, pos: dict[str, int]):
-        """设置指定画布上的节点坐标"""
-        if not self.positions:
-            self.positions = {}
-        self.positions[canvas] = pos
-        # 同步旧版 position 字段
-        if canvas == 'workflow':
-            self.position = pos
-
 
 @dataclass
 class Task:
@@ -145,117 +120,136 @@ class Task:
     nodes: list[Node] = field(default_factory=list)
 
 
-@dataclass
-class TopologyNode:
-    """
-    P1 新增：拓扑画布的页面状态节点
-    对应 Batch 3 的 page_state，定义"页面长什么样"
-    """
-
-    node_id: str
-    node_name: str
-    page_id: str = ''  # 页面唯一标识（如 "shop", "dungeon_entrance"）
-    features: list[dict[str, Any]] = field(default_factory=list)  # 复合特征列表 (AND/OR)
-    feature_mode: str = 'and'  # 特征组合模式: and / or
-    position: dict[str, int] | None = None
-    exits: list[dict[str, Any]] = field(default_factory=list)  # 出口列表（动作 + 目标 page_id）
-
-    @classmethod
-    def from_dict(cls, d: Any) -> Optional['TopologyNode']:
-        if not d or not isinstance(d, dict):
-            return None
-        return cls(
-            node_id=d.get('node_id', ''),
-            node_name=d.get('node_name', ''),
-            page_id=d.get('page_id', ''),
-            features=d.get('features', []),
-            feature_mode=d.get('feature_mode', 'and'),
-            position=d.get('position'),
-            exits=d.get('exits', []),
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            'node_id': self.node_id,
-            'node_name': self.node_name,
-            'page_id': self.page_id,
-            'features': self.features,
-            'feature_mode': self.feature_mode,
-            'position': self.position,
-            'exits': self.exits,
-        }
+def _topology_node_from_dict(d: Any) -> Optional['Node']:
+    """拓扑节点 dict -> Node（新格式 node_type+params；兼容旧版扁平字段，折叠进 params，原 params 值优先）"""
+    if not d or not isinstance(d, dict) or not d.get('node_id'):
+        return None
+    params = dict(d.get('params') or {})
+    for key, default in (('page_id', ''), ('features', []), ('feature_mode', 'and'), ('exits', [])):
+        if key not in params and key in d:
+            params[key] = d.get(key, default)
+    return Node(
+        node_id=d['node_id'],
+        node_name=d.get('node_name', d['node_id']),
+        node_type=d.get('node_type') or d.get('type') or 'page_state',
+        params=params,
+        delay_before=d.get('delay_before', 0),
+        loop_count=d.get('loop_count', 1),
+        enabled=d.get('enabled', True),
+        position=d.get('position'),
+        size=d.get('size'),
+    )
 
 
-@dataclass
-class TopologyEdge:
-    """
-    P1 新增：拓扑画布的连线
-    描述页面之间的互通关系（如：商城 -> 主城 -> 副本入口）
-    """
+def _topology_node_to_dict(node: 'Node') -> dict:
+    return {
+        'node_id': node.node_id,
+        'node_name': node.node_name,
+        'node_type': node.node_type,
+        'params': node.params,
+        'delay_before': node.delay_before,
+        'loop_count': node.loop_count,
+        'enabled': node.enabled,
+        'position': node.position,
+        'size': node.size,
+    }
 
-    edge_id: str
-    source_page: str  # 源页面 ID
-    target_page: str  # 目标页面 ID
-    action: str = ''  # 过图动作描述
-    conditions: list[dict[str, Any]] = field(default_factory=list)  # 过图前置条件
 
-    @classmethod
-    def from_dict(cls, d: Any) -> Optional['TopologyEdge']:
-        if not d or not isinstance(d, dict):
-            return None
-        return cls(
-            edge_id=d.get('edge_id', ''),
-            source_page=d.get('source_page', ''),
-            target_page=d.get('target_page', ''),
-            action=d.get('action', ''),
-            conditions=d.get('conditions', []),
-        )
-
-    def to_dict(self) -> dict:
-        return {
-            'edge_id': self.edge_id,
-            'source_page': self.source_page,
-            'target_page': self.target_page,
-            'action': self.action,
-            'conditions': self.conditions,
-        }
+def _normalize_topology_edge(d: dict) -> dict:
+    """拓扑连线统一为 source_node/target_node 键名，兼容旧 source/target 与 source_page/target_page"""
+    e = dict(d)
+    e.setdefault('edge_id', '')
+    e.setdefault('source_node', d.get('source') or d.get('source_page') or '')
+    e.setdefault('target_node', d.get('target') or d.get('target_page') or '')
+    e.setdefault('canvas', 'topology')
+    return e
 
 
 @dataclass
 class TopologyMap:
     """
-    P1 新增：拓扑地图蓝图数据结构
-    Batch 1 中引入的"专属拓扑地图蓝图数据结构"
+    拓扑地图蓝图：任务组化结构（与 workflow.json 同形）
+    tasks 内为拓扑节点（page_state 等，页面数据存于 params），edges 为 {source_node, target_node, canvas: 'topology'} 连线
+    兼容读取旧版扁平 {nodes, edges} 结构
     """
 
-    nodes: list[TopologyNode] = field(default_factory=list)
-    edges: list[TopologyEdge] = field(default_factory=list)
+    tasks: list[Task] = field(default_factory=list)
+    edges: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: Any) -> 'TopologyMap':
         if not d or not isinstance(d, dict):
             return cls()
-        nodes = [TopologyNode.from_dict(n) for n in d.get('nodes', []) if n]
-        edges = [TopologyEdge.from_dict(e) for e in d.get('edges', []) if e]
-        return cls(nodes=nodes, edges=edges)
+        edges = [_normalize_topology_edge(e) for e in d.get('edges', []) if isinstance(e, dict)]
+        if 'tasks' in d:
+            tasks = []
+            for task_data in d.get('tasks', []) or []:
+                if not isinstance(task_data, dict):
+                    continue
+                nodes = [n for n in (_topology_node_from_dict(nd) for nd in task_data.get('nodes', []) or []) if n]
+                tasks.append(
+                    Task(
+                        task_id=task_data.get('task_id', 'task_topology'),
+                        task_name=task_data.get('task_name', '拓扑地图'),
+                        loop_count=task_data.get('loop_count', 1),
+                        loop_interval=task_data.get('loop_interval', 0),
+                        nodes=nodes,
+                    )
+                )
+            return cls(tasks=tasks, edges=edges)
+        # 旧版扁平结构：nodes 折进默认任务组
+        nodes = [n for n in (_topology_node_from_dict(nd) for nd in d.get('nodes', []) or []) if n]
+        tasks = [
+            Task(task_id='task_topology', task_name='拓扑地图', loop_count=1, loop_interval=0, nodes=nodes)
+        ]
+        return cls(tasks=tasks, edges=edges)
 
     def to_dict(self) -> dict:
-        return {'nodes': [n.to_dict() for n in self.nodes], 'edges': [e.to_dict() for e in self.edges]}
+        return {
+            'tasks': [
+                {
+                    'task_id': t.task_id,
+                    'task_name': t.task_name,
+                    'loop_count': t.loop_count,
+                    'loop_interval': t.loop_interval,
+                    'nodes': [_topology_node_to_dict(n) for n in t.nodes],
+                }
+                for t in self.tasks
+            ],
+            'edges': [dict(e) for e in self.edges],
+        }
 
-    def get_node_by_page(self, page_id: str) -> TopologyNode | None:
-        for n in self.nodes:
-            if n.page_id == page_id:
-                return n
+    def iter_nodes(self):
+        for task in self.tasks:
+            for node in task.nodes:
+                yield node
+
+    @staticmethod
+    def node_page_id(node: 'Node') -> str:
+        return (node.params or {}).get('page_id', '') or ''
+
+    def resolve_page(self, ref: str) -> str:
+        """把 node_id 或 page_id 统一解析为 page 标识（无法解析时返回 ref 本身）"""
+        if not ref:
+            return ''
+        for node in self.iter_nodes():
+            if node.node_id == ref:
+                return TopologyMap.node_page_id(node) or ref
+        return ref
+
+    def get_node_by_page(self, page_id: str) -> Optional['Node']:
+        for node in self.iter_nodes():
+            if TopologyMap.node_page_id(node) == page_id:
+                return node
         return None
 
-    def get_neighbors(self, page_id: str) -> list[tuple[TopologyEdge, TopologyNode]]:
+    def get_neighbors(self, page_id: str) -> list[tuple[dict, Optional['Node']]]:
         """获取某页面的所有邻居（用于图论寻路）"""
         result = []
         for edge in self.edges:
-            if edge.source_page == page_id:
-                target_node = self.get_node_by_page(edge.target_page)
-                if target_node:
-                    result.append((edge, target_node))
+            if self.resolve_page(edge.get('source_node', '')) == page_id:
+                target_page = self.resolve_page(edge.get('target_node', ''))
+                result.append((edge, self.get_node_by_page(target_page)))
         return result
 
 

@@ -13,7 +13,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 class ProjectExporter:
     """
     工业级脚本打包与加密导出器
-    负责将 IDE 项目（project_blueprint.json, templates/*.png, context.json, form_schema.json）
+    负责将 IDE 项目（project.json/workflow.json/topology.json 三文件蓝图, templates/*.png, context.json, form_schema.json）
     打造成带 DRM 加密的单文件二进制资产包 (.ebp)
     """
 
@@ -53,14 +53,6 @@ class ProjectExporter:
         if not os.path.exists(project_dir):
             raise FileNotFoundError(f'项目目录不存在: {project_dir}')
 
-        # ⚡ 兼容适配：工业级蓝图路径寻址（优先寻找 project_blueprint.json，兼容 blueprint.json）
-        blueprint_path = os.path.join(project_dir, 'project_blueprint.json')
-        if not os.path.exists(blueprint_path):
-            blueprint_path = os.path.join(project_dir, 'blueprint.json')
-
-        if not os.path.exists(blueprint_path):
-            raise FileNotFoundError(f'缺少关键拓扑文件 (project_blueprint.json 或 blueprint.json): {project_dir}')
-
         if not output_dir:
             output_dir = os.path.join(project_dir, 'release')
         os.makedirs(output_dir, exist_ok=True)
@@ -68,10 +60,11 @@ class ProjectExporter:
         # 1. 内存中构建标准的无密码 zip 压缩流
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
-            # A. 读取项目蓝图并统一命名为 blueprint.json 写入密包内供 Player 运行时加载
-            with open(blueprint_path, encoding='utf-8') as f:
-                bp_content = f.read()
-            zf.writestr('blueprint.json', bp_content)
+            # A. 读取三文件蓝图（合并视图）并统一命名为 blueprint.json 写入密包内供 Player 运行时加载
+            from core.services.blueprint_service import BlueprintService
+
+            bp_dict = BlueprintService.load_blueprint(project_dir)
+            zf.writestr('blueprint.json', json.dumps(bp_dict, ensure_ascii=False, indent=2))
 
             # B. 写入客户表单 Schema (form_schema.json)
             zf.writestr('form_schema.json', json.dumps(form_schema, ensure_ascii=False, indent=2))

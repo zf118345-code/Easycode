@@ -36,12 +36,12 @@ export function useViewport() {
 
     /**
      * 滚轮缩放：以鼠标位置为中心进行缩放
-     * zoom 范围限制在 0.3 - 2.5
+     * zoom 范围限制在 0.2 - 4（统一 workflow / topology 行为）
      */
     const onCanvasWheel = (e) => {
         e.preventDefault()
         const delta = e.deltaY > 0 ? 0.9 : 1.1
-        const newZoom = Math.max(0.3, Math.min(2.5, viewport.value.zoom * delta))
+        const newZoom = Math.max(0.2, Math.min(4, viewport.value.zoom * delta))
         if (newZoom === viewport.value.zoom) return
 
         const rect = e.currentTarget.getBoundingClientRect()
@@ -84,17 +84,17 @@ export function useViewport() {
     }
 
     /**
-     * 放大视口（每次 +0.1，上限 2.5）
+     * 放大视口（工具栏：×1.2，上限 4）
      */
     const zoomIn = () => {
-        viewport.value.zoom = Math.min(2.5, viewport.value.zoom + 0.1)
+        viewport.value.zoom = Math.min(4, viewport.value.zoom * 1.2)
     }
 
     /**
-     * 缩小视口（每次 -0.1，下限 0.3）
+     * 缩小视口（工具栏：×0.8，下限 0.2）
      */
     const zoomOut = () => {
-        viewport.value.zoom = Math.max(0.3, viewport.value.zoom - 0.1)
+        viewport.value.zoom = Math.max(0.2, viewport.value.zoom * 0.8)
     }
 
     /**

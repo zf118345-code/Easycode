@@ -1,8 +1,14 @@
 <!-- frontend/src/components/canvas/CanvasEdgeLayer.vue -->
 <!--
-    Shared SVG edges layer for WorkflowCanvas + TopologyCanvas.
+    统一世界图层（grid + edges），WorkflowCanvas 与 TopologyCanvas 共用。
+    坐标系约定：
+      - SVG 不设 viewBox：user 单位 = CSS px = 世界坐标，与节点卡片 1:1；
+      - SVG 尺寸按可见世界区域动态计算（viewport + 容器尺寸 + 余量），随视口变化重算，
+        不再使用巨型固定画布（避免超大合成层）；
+      - 网格由本 SVG 矢量绘制（世界坐标 20px 间距，每 5 格一条主线），任何缩放倍率下
+        都精确清晰——画布背景不再绘制网格，网格/连线/节点共用同一套坐标与同一张网格。
     Renders:
-      1. subtle grid
+      1. vector grid (minor + major lines)
       2. clickable hit area (wide transparent path under each edge)
       3. the visible edge path (color-coded by success/failure)
       4. flow animation overlay
@@ -12,78 +18,72 @@
 <template>
     <svg
         class="canvas-edges-layer"
-        :width="svgWidth"
-        :height="svgHeight"
-        :viewBox="`0 0 ${svgWidth} ${svgHeight}`"
-        preserveAspectRatio="none">
+        :viewBox="viewBoxValue"
+        preserveAspectRatio="none"
+        :style="svgStyle">
         <defs>
-            <pattern id="grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
-                <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
-            </pattern>
-
             <!-- success markers (green) -->
             <marker
-id="arrow-succ-right" viewBox="0 0 10 10" refX="9" refY="5"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-succ-right" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ed19c" />
             </marker>
             <marker
-id="arrow-succ-left" viewBox="0 0 10 10" refX="1" refY="5"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-succ-left" viewBox="0 0 10 10" refX="1" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 10 0 L 0 5 L 10 10 z" fill="#4ed19c" />
             </marker>
             <marker
-id="arrow-succ-up" viewBox="0 0 10 10" refX="5" refY="1"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-succ-up" viewBox="0 0 10 10" refX="5" refY="1"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 10 L 5 0 L 10 10 z" fill="#4ed19c" />
             </marker>
             <marker
-id="arrow-succ-down" viewBox="0 0 10 10" refX="5" refY="9"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-succ-down" viewBox="0 0 10 10" refX="5" refY="9"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 5 10 L 10 0 z" fill="#4ed19c" />
             </marker>
 
             <!-- failure markers (red) -->
             <marker
-id="arrow-fail-right" viewBox="0 0 10 10" refX="9" refY="5"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-fail-right" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#f56c6c" />
             </marker>
             <marker
-id="arrow-fail-left" viewBox="0 0 10 10" refX="1" refY="5"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-fail-left" viewBox="0 0 10 10" refX="1" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 10 0 L 0 5 L 10 10 z" fill="#f56c6c" />
             </marker>
             <marker
-id="arrow-fail-up" viewBox="0 0 10 10" refX="5" refY="1"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-fail-up" viewBox="0 0 10 10" refX="5" refY="1"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 10 L 5 0 L 10 10 z" fill="#f56c6c" />
             </marker>
             <marker
-id="arrow-fail-down" viewBox="0 0 10 10" refX="5" refY="9"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-fail-down" viewBox="0 0 10 10" refX="5" refY="9"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 5 10 L 10 0 z" fill="#f56c6c" />
             </marker>
 
             <!-- default gray marker -->
             <marker
-id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
-                    markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+                id="arrow-default" viewBox="0 0 10 10" refX="9" refY="5"
+                markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b93a7" />
             </marker>
 
             <!-- Preview -->
             <marker
-id="arrow-preview" viewBox="0 0 10 10" refX="7" refY="5"
-                    markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+                id="arrow-preview" viewBox="0 0 10 10" refX="7" refY="5"
+                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 2 L 10 5 L 0 8 z" fill="#4ed19c" />
             </marker>
         </defs>
 
-        <!-- Background grid -->
-        <rect
-x="-5000" y="-5000" width="15000" height="15000"
-              fill="url(#grid-pattern)" pointer-events="none" />
+        <!-- Vector grid（世界坐标，与连线/节点同源） -->
+        <path v-if="gridPathMinor" :d="gridPathMinor" class="canvas-grid-line" />
+        <path v-if="gridPathMajor" :d="gridPathMajor" class="canvas-grid-line canvas-grid-line-major" />
 
         <!-- Edges group: each edge has 3 layers (hit / visible / flow) plus label -->
         <g v-for="edge in edges" :key="edge.id" class="edge-group">
@@ -129,15 +129,73 @@ x="-5000" y="-5000" width="15000" height="15000"
 <script setup>
     import { computed } from 'vue'
     import { getSimpleOrthoPath } from '@/utils/canvasRouter'
+    import { GRID_SIZE } from '@/utils/canvasShared'
 
     const props = defineProps({
         edges:           { type: Array,  default: () => [] },
         drawingConnection:{ type: Object, default: null },
-        svgWidth:        { type: Number, default: 5000 },
-        svgHeight:       { type: Number, default: 3000 }
+        viewport:        { type: Object, default: () => ({ x: 0, y: 0, zoom: 1 }) },
+        containerSize:   { type: Object, default: () => ({ width: 1200, height: 800 }) }
     })
 
     defineEmits(['edge-click'])
+
+    const GRID_MAJOR_EVERY = 5       // 每 5 格一条主线
+
+    // 可见世界区域（世界坐标）
+    const worldBox = computed(() => {
+        const zoom = props.viewport.zoom || 1
+        return {
+            left: -props.viewport.x / zoom,
+            top: -props.viewport.y / zoom,
+            width: (props.containerSize.width || 0) / zoom,
+            height: (props.containerSize.height || 0) / zoom
+        }
+    })
+
+    // 动态 viewBox = 精确可见世界窗口（无余量）：user 单位 = 世界坐标，
+    // 经 preserveAspectRatio="none" 严格 1:1 映射到容器，与节点完全同源
+    const viewBoxValue = computed(() => {
+        const b = worldBox.value
+        return `${b.left} ${b.top} ${b.width} ${b.height}`
+    })
+
+    // SVG 元素盒 = 精确可见世界窗口（世界坐标即 CSS px）：
+    //   left/top = 窗口原点，width/height = 窗口尺寸，可与负坐标窗口对齐。
+    // 配合同参数的 viewBox → viewBox 内部缩放系数恒为 1，
+    // 唯一的缩放由视口 transform 施加一次，与节点卡片完全同一套坐标系。
+    const svgStyle = computed(() => {
+        const b = worldBox.value
+        return {
+            position: 'absolute',
+            left: `${b.left}px`,
+            top: `${b.top}px`,
+            width: `${b.width}px`,
+            height: `${b.height}px`,
+            overflow: 'visible'
+        }
+    })
+
+    // 网格线路径（世界坐标 20px 间距，主线每 5 格；向窗口外多画一格，由 overflow visible 补齐）
+    const gridPathMinor = computed(() => buildGridPath(worldBox.value, false))
+    const gridPathMajor = computed(() => buildGridPath(worldBox.value, true))
+
+    function buildGridPath(box, majorOnly) {
+        const step = majorOnly ? GRID_SIZE * GRID_MAJOR_EVERY : GRID_SIZE
+        const left = Math.floor(box.left / step) * step - step
+        const top = Math.floor(box.top / step) * step - step
+        const right = Math.ceil((box.left + box.width) / step) * step + step
+        const bottom = Math.ceil((box.top + box.height) / step) * step + step
+        if (!box.width || !box.height) return ''
+        const segs = []
+        for (let x = left; x <= right; x += step) {
+            segs.push(`M ${x} ${top} V ${bottom}`)
+        }
+        for (let y = top; y <= bottom; y += step) {
+            segs.push(`M ${left} ${y} H ${right}`)
+        }
+        return segs.join(' ')
+    }
 
     const previewPathD = computed(() => {
         if (!props.drawingConnection?.active) return ''

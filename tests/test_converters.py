@@ -26,7 +26,8 @@ class TestNodeConverter:
         assert node.delay_before == 0
         assert node.loop_count == 1
         assert node.enabled is True
-        assert node.canvas_ids == ['workflow']
+        assert node.position is None
+        assert node.size is None
 
     def test_node_to_dict_roundtrip(self):
         node = Node(node_id='n1', node_name='测试', node_type='click', params={'x': 1})
@@ -65,12 +66,13 @@ class TestProjectConverter:
             'tasks': [{'task_id': 't1', 'task_name': '任务1', 'nodes': []}],
             'variables': {'x': 1},
             'edges': [],
-            'topology': {'nodes': [], 'edges': []},
+            'topology': {'tasks': [], 'edges': []},
         }
         project = blueprint_dict_to_project(bp)
         assert project.project_name == 'test'
         assert 't1' in project.tasks
         assert project.variables == {'x': 1}
+        assert project.topology.tasks == []
 
     def test_project_to_blueprint_dict(self):
         project = Project(project_name='test')
@@ -80,3 +82,4 @@ class TestProjectConverter:
         assert bp['project_name'] == 'test'
         assert isinstance(bp['tasks'], list)
         assert bp['tasks'][0]['task_id'] == 't1'
+        assert bp['topology'] == {'tasks': [], 'edges': []}

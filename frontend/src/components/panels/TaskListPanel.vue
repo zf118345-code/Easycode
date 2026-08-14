@@ -156,21 +156,10 @@ link
         computed: {
             sortedTasks: {
                 get() {
-                    const order = this.store.taskOrder || []
-                    if (order.length) {
-                        const tasksCopy = [...this.store.tasks]
-                        tasksCopy.sort((a, b) => {
-                            const idxA = order.indexOf(a.task_id)
-                            const idxB = order.indexOf(b.task_id)
-                            return (idxA === -1 ? 999 : idxA) - (idxB === -1 ? 999 : idxB)
-                        })
-                        return tasksCopy
-                    }
                     return this.store.tasks || []
                 },
                 set(value) {
                     this.store.tasks.splice(0, this.store.tasks.length, ...value)
-                    this.store.taskOrder = value.map(t => t.task_id)
                 }
             }
         },
@@ -316,9 +305,12 @@ link
                 }
             },
             async onDragEnd() {
-                const order = this.store.tasks.map(t => t.task_id)
-                await this.store.saveTaskOrder(order)
-                ElMessage.success('任务顺序已保存')
+                try {
+                    await this.store.saveWorkflowImmediately()
+                    ElMessage.success('任务顺序已保存')
+                } catch (err) {
+                    ElMessage.error('保存任务顺序失败')
+                }
             }
         }
     }

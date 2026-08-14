@@ -3,6 +3,7 @@
 import { ref, computed } from 'vue'
 import { logger } from '@/utils/logger'
 import { useProjectStore } from '@/stores/projectStore'
+import { useTopologyStore } from '@/stores/topologyStore'
 
 const MAX_HISTORY = 50
 
@@ -146,28 +147,43 @@ export function useUndoRedo(options = {}) {
 }
 
 /**
- * 创建与 Pinia projectStore 集成的 Undo/Redo 实例
+ * 创建按画布模式集成 Pinia 的 Undo/Redo 实例
+ *   mode='workflow'：快照 projectStore.workflowData（tasks + edges），恢复后 saveWorkflowImmediately
+ *   mode='topology'：快照 topologyStore.topologyBlueprint（扁平结构），恢复后 saveTopologyDebounced
  * 使用方式：
- *   const undoRedo = createPiniaUndoRedo()
+ *   const undoRedo = createCanvasUndoRedo('workflow')
  *   undoRedo.commit()  // 修改前调用
- *   // ... 修改蓝图 ...
+ *   // ... 修改数据 ...
  *   undoRedo.undo()    // 撤销
  *
- * 注意：useProjectStore() 仅在 getState/setState 运行时被调用
- * （此时 Pinia 已安装），因此顶层静态导入是安全的，不会产生循环依赖问题。
+ * 注意：useProjectStore()/useTopologyStore() 仅在 getState/setState 运行时被调用
+ * （此时 Pinia 已安装），因此顶层静态导入是安全的。
  */
-export function createPiniaUndoRedo() {
+export function createCanvasUndoRedo(mode = 'workflow') {
+    if (mode === 'topology') {
+        function getState() {
+            const topo = useTopologyStore()
+            return JSON.parse(JSON.stringify(topo.topologyBlueprint))
+        }
+        function setState(snapshot) {
+            const topo = useTopologyStore()
+            topo.topologyBlueprint = JSON.parse(JSON.stringify(snapshot || { nodes: [], edges: [] }))
+            useProjectStore().saveTopologyDebounced()
+        }
+        return useUndoRedo({ getState, setState })
+    }
+
+    // workflow 默认
     function getState() {
         const store = useProjectStore()
-        // 深拷贝蓝图数据
-        return JSON.parse(JSON.stringify(store.blueprint))
+        const blueprint = store.blueprint || {}
+        return JSON.parse(JSON.stringify({ tasks: blueprint.tasks || [], edges: blueprint.edges || [] }))
     }
-
     function setState(snapshot) {
         const store = useProjectStore()
-        store.blueprint = JSON.parse(JSON.stringify(snapshot))
-        store.saveBlueprintDebounced()
+        store.blueprint.tasks = JSON.parse(JSON.stringify(snapshot?.tasks || []))
+        store.blueprint.edges = JSON.parse(JSON.stringify(snapshot?.edges || []))
+        store.saveWorkflowImmediately()
     }
-
     return useUndoRedo({ getState, setState })
 }

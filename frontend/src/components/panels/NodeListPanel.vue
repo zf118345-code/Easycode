@@ -248,8 +248,6 @@
                     delay_before: 0,
                     loop_count: 1,
                     enabled: true,
-                    on_success: { type: 'next', target: null, target_node: null, return_on_complete: false },
-                    on_failure: { type: 'next', target: null, target_node: null, return_on_complete: false },
                     position: null
                 }
                 const nodeDefaults = this.store.params[nodeType]?.params || {}

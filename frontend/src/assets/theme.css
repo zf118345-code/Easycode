@@ -32,6 +32,21 @@
     --app-radius-sm: 4px;
     --app-radius-md: 8px;
     --app-radius-lg: 12px;
+    /* ⚡ 节点卡片与端口 Design Tokens（Step 4 网格化端口布局） */
+    --node-card-bg: rgba(30, 32, 50, 0.92);
+    --node-card-border: rgba(255, 255, 255, 0.08);
+    --node-card-radius: 10px;
+    --node-card-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+    --node-card-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.55);
+    --node-content-bg: rgba(0, 0, 0, 0.15);
+    --node-footer-bg: rgba(0, 0, 0, 0.1);
+    --port-ring: #12131e;
+    --port-entry: #4a4d62;
+    --port-entry-border: #6b7090;
+    --port-success: #4ed19c;
+    --port-success-border: #2a8565;
+    --port-failure: #f56c6c;
+    --port-failure-border: #a03838;
 }
 
 /* --------------------------------------------------------------------------

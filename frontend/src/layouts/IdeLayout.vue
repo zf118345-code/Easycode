@@ -71,57 +71,14 @@ v-if="store.uiState.rightPanelExpanded && currentRightPanel"
                          class="splitter-v"
                          @mousedown="startRightResize" />
 
-                    <!-- 右侧展开面板：拓扑模式下显示拓扑节点编辑器 -->
+                    <!-- 右侧展开面板：统一属性检查器（按 canvasMode 自动切换数据源） -->
                     <ToolWindow
-v-if="store.uiState.rightPanelExpanded && currentRightPanel"
-                                :title="rightPanelTitle"
-                                :width="store.uiState.rightPanelWidth + 'px'"
-                                class="ide-card-panel"
-                                @close="store.updateUiState('rightPanelExpanded', false)">
-                        <!-- 拓扑模式：内联拓扑节点编辑器 -->
-                        <div v-if="store.canvasMode === 'topology'" class="topo-inspector-inline">
-                            <template v-if="store.currentTopologyNode">
-                                <div class="topo-insp-section">
-                                    <div class="topo-insp-label">节点 ID</div>
-                                    <div class="topo-insp-value">{{ store.currentTopologyNode.node_id }}</div>
-                                </div>
-                                <div class="topo-insp-section">
-                                    <div class="topo-insp-label">节点名称</div>
-                                    <div class="topo-insp-value">{{ store.currentTopologyNode.label }}</div>
-                                </div>
-                                <div class="topo-insp-section">
-                                    <div class="topo-insp-label">节点类型</div>
-                                    <div class="topo-insp-value">{{ store.currentTopologyNode.type }}</div>
-                                </div>
-                                <div class="topo-insp-section">
-                                    <div class="topo-insp-label">出口数量</div>
-                                    <div class="topo-insp-value">{{ (store.currentTopologyNode.exits || []).length }}</div>
-                                </div>
-                                <div class="topo-insp-section">
-                                    <div class="topo-insp-label">关联连线</div>
-                                    <div class="topo-insp-value">{{ topologyRelatedEdgeCount }}</div>
-                                </div>
-                                <div class="topo-insp-actions">
-                                    <el-button size="small" type="primary" plain @click="topoInspectorAction('editParams')">
-                                        编辑参数
-                                    </el-button>
-                                    <el-button size="small" type="success" plain @click="topoInspectorAction('addExit')">
-                                        新增出口
-                                    </el-button>
-                                    <el-button size="small" type="warning" plain @click="topoInspectorAction('editCondition')">
-                                        编辑条件
-                                    </el-button>
-                                    <el-button size="small" type="danger" plain @click="topoInspectorAction('delete')">
-                                        删除节点
-                                    </el-button>
-                                </div>
-                            </template>
-                            <div v-else class="topo-insp-empty">
-                                请在画布中选中一个拓扑节点以查看属性
-                            </div>
-                        </div>
-                        <!-- 业务流程模式：原有检查器组件 -->
-                        <component v-else :is="currentRightPanel.component" />
+                        v-if="store.uiState.rightPanelExpanded && currentRightPanel"
+                        :title="rightPanelTitle"
+                        :width="store.uiState.rightPanelWidth + 'px'"
+                        class="ide-card-panel"
+                        @close="store.updateUiState('rightPanelExpanded', false)">
+                        <component :is="currentRightPanel.component" />
                     </ToolWindow>
                 </div>
 
@@ -200,39 +157,21 @@ position="right"
         return store.canvasMode === 'topology' ? TopologyCanvas : WorkflowCanvas
     })
 
-    // ⚡ 拓扑模式下，右侧面板标题替换为拓扑节点编辑器（组件通过内联模板渲染）
+    // ⚡ 右侧面板：统一属性检查器（InspectorPanel 按 canvasMode 自动切换数据源）
     const rightActive = ref('inspector')
     const currentRightPanel = computed(() => {
-        // 拓扑模式下复用右侧面板挂载点，内容由内联模板渲染
-        if (store.canvasMode === 'topology') {
-            return rightPanelsConfig.find(p => p.id === 'inspector') || rightPanelsConfig[0]
-        }
         return rightPanelsConfig.find(p => p.id === rightActive.value)
     })
 
     const rightPanelTitle = computed(() => {
-        return store.canvasMode === 'topology' ? '拓扑节点编辑器' : (currentRightPanel.value?.title || '属性面板')
+        if (store.canvasMode === 'topology') return '拓扑节点编辑器'
+        return currentRightPanel.value?.title || '属性面板'
     })
 
     // ⚡ 状态栏画布模式文案
     const canvasModeLabel = computed(() => {
         return store.canvasMode === 'topology' ? '页面拓扑' : '业务流程'
     })
-
-    // ⚡ 当前选中拓扑节点的关联连线数
-    const topologyRelatedEdgeCount = computed(() => {
-        const node = store.currentTopologyNode
-        if (!node) return 0
-        return store.topologyEdges.filter(e => e.source === node.node_id || e.target === node.node_id).length
-    })
-
-    // ⚡ 拓扑节点编辑器快捷操作（通过自定义事件与画布通信）
-    const emit = defineEmits(['topoInspectorAction'])
-    const topoInspectorAction = (action) => {
-        // 派发事件供 TopologyCanvas 监听，或直接提示
-        emit('topoInspectorAction', { action, nodeId: store.selectedTopologyNodeId })
-        ElMessage.info(`拓扑节点操作: ${action}（请在画布中完成编辑）`)
-    }
 
     // 左侧面板选项与切换（状态联动 store.uiState）
     const leftActive = ref('explorer')
@@ -522,45 +461,5 @@ position="right"
 
     .status-divider {
         color: var(--el-border-color-light);
-    }
-
-    /* ⚡ 内联拓扑节点编辑器样式 */
-    .topo-inspector-inline {
-        padding: 12px;
-        font-size: 12px;
-        color: var(--el-text-color-regular);
-    }
-
-    .topo-insp-section {
-        margin-bottom: 10px;
-    }
-
-    .topo-insp-label {
-        font-size: 11px;
-        color: var(--el-text-color-secondary);
-        margin-bottom: 2px;
-    }
-
-    .topo-insp-value {
-        font-size: 12px;
-        color: var(--el-text-color-primary);
-        word-break: break-all;
-        background: var(--el-fill-color-light);
-        padding: 4px 8px;
-        border-radius: 4px;
-    }
-
-    .topo-insp-actions {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        margin-top: 14px;
-    }
-
-    .topo-insp-empty {
-        text-align: center;
-        color: var(--el-text-color-placeholder);
-        font-size: 12px;
-        padding: 40px 12px;
     }
 </style>

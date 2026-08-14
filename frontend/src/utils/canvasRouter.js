@@ -23,11 +23,9 @@ function selectStrategy(sourcePort, srcPt, tgtPt) {
     const dx = tgtPt.x - srcPt.x
     const dy = tgtPt.y - srcPt.y
 
-    let srcDir = 'down'
-    if (sourcePort === 'failure' || sourcePort === 'fail') srcDir = 'right'
-    else if (sourcePort === 'entry') srcDir = 'up'
-    else if (sourcePort === 'success' || sourcePort === 'succ' || sourcePort === 'exit' ||
-             sourcePort.startsWith('exit_') || sourcePort.startsWith('branch_')) srcDir = 'down'
+    // Step 4 网格化端口：success/exit_*/branch_*/failure 均位于节点右缘，从右侧引出
+    let srcDir = 'right'
+    if (sourcePort === 'entry') srcDir = 'up'
 
     const tgtToRight = dx >= 0
     const tgtBelow = dy >= 0
@@ -229,9 +227,9 @@ export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
         return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
     }
 
-    let srcDir = 'down'
-    if (sourcePort === 'failure' || sourcePort === 'fail') srcDir = 'right'
-    else if (sourcePort === 'entry') srcDir = 'up'
+    // Step 4 网格化端口：success/动态/failure 均从右缘引出；entry 向上
+    let srcDir = 'right'
+    if (sourcePort === 'entry') srcDir = 'up'
 
     const offset = 40
     let points

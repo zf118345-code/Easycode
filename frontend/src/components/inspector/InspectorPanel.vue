@@ -1,41 +1,59 @@
-<!-- frontend/src/components/inspector/WorkflowInspector.vue -->
+<!-- frontend/src/components/inspector/InspectorPanel.vue
+  统一属性检查器（Step 3）：按 canvasMode 操作对应数据源。
+    workflow -> uiStore 选中（NodeInspectorPanel / BatchInspectorPanel / GroupInspectorPanel）
+    topology -> topologyStore 选中（NodeInspectorPanel，节点转换为文件形态编辑）
+-->
 <template>
     <div class="workflow-inspector-embedded">
-        <!-- 1. 单节点面板 -->
-        <NodeInspectorPanel
-v-if="targetType === 'node' && currentNode"
-                            :node="currentNode"
-                            @save="triggerSave" />
+        <!-- workflow 模式 -->
+        <template v-if="store.canvasMode === 'workflow'">
+            <NodeInspectorPanel
+                v-if="targetType === 'node' && currentNode"
+                :node="currentNode"
+                @save="triggerSave" />
 
-        <!-- 2. 多选批量编辑面板 -->
-        <BatchInspectorPanel
-v-else-if="targetType === 'batch' && selectedNodes.length > 1"
-                             :nodes="selectedNodes"
-                             @save="triggerSave" />
+            <BatchInspectorPanel
+                v-else-if="targetType === 'batch' && selectedNodes.length > 1"
+                :nodes="selectedNodes"
+                @save="triggerSave" />
 
-        <!-- 3. 任务组配置面板 -->
-        <GroupInspectorPanel
-v-else-if="targetType === 'group' && targetData"
-                             :group="targetData"
-                             @save="triggerSave" />
+            <GroupInspectorPanel
+                v-else-if="targetType === 'group' && targetData"
+                :group="targetData"
+                mode="workflow"
+                @save="triggerSave" />
 
-        <!-- 4. 空状态提示 -->
-        <div v-else class="inspector-empty-tip">
-            <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
-        </div>
+            <div v-else class="inspector-empty-tip">
+                <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
+            </div>
+        </template>
+
+        <!-- topology 模式 -->
+        <template v-else>
+            <NodeInspectorPanel
+                v-if="topologyNode"
+                :node="topologyNode"
+                @save="triggerTopologySave" />
+            <div v-else class="inspector-empty-tip">
+                <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在拓扑画布中选中一个节点以查看属性</span>
+            </div>
+        </template>
     </div>
 </template>
 
 <script setup>
     import { ref, computed, watch } from 'vue'
-    import { useMainStore } from '@/stores'
-    import { blueprintApi } from '@/api/blueprintApi'
+    import { useMainStore, useTopologyStore } from '@/stores'
     import { MousePointerClick } from 'lucide-vue-next'
+    import { fileNodeToFlat, flatNodeToFile, pruneTopologyEdgesForNode } from '@/utils/topologyModel'
     import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
     import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
     import GroupInspectorPanel from './panels/GroupInspectorPanel.vue'
 
     const store = useMainStore()
+    const topoStore = useTopologyStore()
+
+    // ===== workflow 模式状态 =====
     const currentNode = ref(null)
     const targetType = ref('node')
     const targetData = ref(null)
@@ -117,9 +135,41 @@ v-else-if="targetType === 'group' && targetData"
                     groupTask.loop_interval = targetData.value.loopInterval
                 }
             }
-            await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
+            await store.saveWorkflowImmediately()
         } catch (err) {
             console.error('保存节点配置失败:', err)
+        }
+    }
+
+    // ===== topology 模式状态 =====
+    const topologyNode = ref(null)
+
+    // 仅监听选中 id（不深度监听节点数据，避免画布拖拽位置保存时覆盖编辑中的字段）
+    watch(() => topoStore.selectedTopologyNodeId, () => {
+        const selectedId = topoStore.selectedTopologyNodeId
+        if (!selectedId) {
+            topologyNode.value = null
+            return
+        }
+        const flat = (topoStore.topologyNodes || []).find(n => n.node_id === selectedId)
+        if (!flat) {
+            topologyNode.value = null
+            return
+        }
+        // 转文件形态供 NodeInspectorPanel 编辑（params 内 page_id/features/feature_mode/exits）
+        topologyNode.value = JSON.parse(JSON.stringify(flatNodeToFile(flat)))
+    }, { immediate: true })
+
+    const triggerTopologySave = async () => {
+        try {
+            if (!topologyNode.value || !topoStore.selectedTopologyNodeId) return
+            const nodeId = topoStore.selectedTopologyNodeId
+            const editedFlat = fileNodeToFlat(JSON.parse(JSON.stringify(topologyNode.value)))
+            topoStore.updateTopologyNode(nodeId, editedFlat)
+            // D3：exits 删除后修剪索引越界的 exit 连线
+            topoStore.pruneEdgesForNode(nodeId, (editedFlat.exits || []).length)
+        } catch (err) {
+            console.error('保存拓扑节点配置失败:', err)
         }
     }
 </script>

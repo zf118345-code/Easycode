@@ -92,7 +92,7 @@ class GraphExecutor:
         try:
             self._graph_cache = GraphBuilder.build_from_project(self.project)
             topology = getattr(self.project, 'topology', None)
-            if topology and topology.nodes:
+            if topology and topology.tasks:
                 self._topology_graph = GraphBuilder.build_topology_graph(topology)
         except Exception as e:
             logger.warning(f'邻接表构建失败，降级为线性执行: {e}')
@@ -237,13 +237,15 @@ class GraphExecutor:
             jump = None
             is_success = result.get('success', True)
 
-            # 优先级：执行器返回的 jump > node.on_failure > node.on_success
+            # 优先级：执行器返回的 jump > params.on_failure > params.on_success
+            node_failure_jump = Jump.from_dict((node.params or {}).get('on_failure'))
+            node_success_jump = Jump.from_dict((node.params or {}).get('on_success'))
             if 'jump' in result and result['jump']:
                 jump = Jump.from_dict(result['jump'])
-            elif not is_success and node.on_failure:
-                jump = node.on_failure
-            elif is_success and node.on_success:
-                jump = node.on_success
+            elif not is_success and node_failure_jump:
+                jump = node_failure_jump
+            elif is_success and node_success_jump:
+                jump = node_success_jump
 
             # 处理跳转
             should_return = self._handle_jump(jump, node_id_to_index)
@@ -258,7 +260,8 @@ class GraphExecutor:
             return self._execute_node(node)
         except Exception as err:
             self.log(f'💥 [Sandbox 异常捕获] 节点 [{node.node_name}] 执行崩溃: {str(err)}', level='error')
-            return {'success': False, 'error': str(err), 'jump': node.on_failure.to_dict() if node.on_failure else None}
+            failure_jump = Jump.from_dict((node.params or {}).get('on_failure'))
+            return {'success': False, 'error': str(err), 'jump': failure_jump.to_dict() if failure_jump else None}
 
     def _execute_node(self, node):
         """执行单个节点"""

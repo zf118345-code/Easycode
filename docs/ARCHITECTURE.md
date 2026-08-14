@@ -505,7 +505,7 @@ assets.ebp
 ├── [IV 16 bytes] 随机头部
 └── [AES-256-CBC 加密数据]
         └── ZIP 压缩（ZIP_DEFLATED）
-             ├── blueprint.json       （重命名：project_blueprint.json → blueprint.json）
+             ├── blueprint.json       （三文件蓝图合并视图：project.json + workflow.json + topology.json）
              ├── form_schema.json     （动态表单 Schema）
              ├── context.json         （如果存在）
              ├── regions.json         （区域坐标，如果存在）
@@ -518,7 +518,10 @@ assets.ebp
 - 按 `target` 前缀分发：`$var.xxx` → `vars.xxx`；`$ctx.xxx` → `ctx.xxx`；`$env.xxx` → `env.xxx`
 - 提取 `default` 值填充初始配置
 
-路径兼容：优先寻找 `project_blueprint.json`，不存在回退 `blueprint.json`（工业级迁移兼容）。
+蓝图存储：项目目录下的三文件结构（旧版单文件 `project_blueprint.json` 在首次访问时由 `core/services/migration.py` 自动迁移拆分，旧文件备份为 `.bak`）：
+- `project.json`：`project_name` / `variables` / `ui_state`
+- `workflow.json`：`{ tasks, edges }`（流程画布）
+- `topology.json`：`{ tasks, edges }`（拓扑地图，任务组内为 page_state 等拓扑节点，页面数据存于节点 params）
 
 ---
 

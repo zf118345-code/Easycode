@@ -8,12 +8,23 @@
 export const GRID_SIZE = 20
 export const NODE_GRID_W = 8
 export const NODE_WIDTH = NODE_GRID_W * GRID_SIZE
-export const NODE_MIN_HEIGHT = 72
+export const NODE_MIN_HEIGHT = 100   // 最小高度 5 格（Step 4 网格化）
 export const PORT_RADIUS = 7
 export const EDGE_STROKE_WIDTH = 2
 export const EDGE_HOVER_STROKE_WIDTH = 4
 export const EDGE_FLOW_DASH = '8 12'
 export const EDGE_FLOW_DURATION = '0.8s'
+
+// ========== 端口网格布局常量（Step 4：一切以网格为单位） ==========
+
+export const PORT_GRID_TOP = 1        // entry / success 距顶格数
+export const PORT_GRID_BOTTOM = 1     // failure 距底格数
+export const PORT_GRID_STEP = 1       // 动态出口间距格数
+export const PORT_DIAMETER = 14       // 端口直径 (px)
+export const PORT_MAX_VISIBLE = 10    // 高度增长封顶的动态端口数（超出后 body 内部滚动）
+export const NODE_HEADER_H = 32       // 头部高度 (px)
+export const NODE_FOOTER_H = 24       // Footer 高度 (px)
+export const NODE_BODY_MIN_H = 40     // 内容区最小高度 2 格
 
 // ========== 节点类型配置 ==========
 
@@ -52,44 +63,69 @@ export function snapPositionToGrid(x, y, grid = GRID_SIZE) {
     return { x: snapToGrid(x, grid), y: snapToGrid(y, grid) }
 }
 
-// ========== 端口位置计算 ==========
+// ========== 端口位置计算（Step 4：网格坐标系） ==========
 
 /**
- * Compute the absolute pixel position of a given port on a node.
- * Layout model (industry standard):
- *   - entry (target) — left-middle: connection lands on the left side of node
- *   - success        — bottom-center: primary exit
- *   - failure        — right-middle: failure exit
- *   - exit_N / branch_N — right side, stacked by index
+ * 读取节点动态端口列表（由 CanvasView 注入 node.ports.dynamic）
+ */
+export function getNodeDynamicPorts(node) {
+    return node?.ports?.dynamic || []
+}
+
+/**
+ * 端口中心距节点顶部的像素偏移（网格坐标）
+ *   - entry   : 距顶 1 格
+ *   - success : 距顶 1 格
+ *   - failure : 距底 1 格
+ *   - branch_N / exit_N：success 下方每隔 1 格一个（第 k 个 = (k+2) 格），
+ *     向上不超过 failure（越界时向底部 clamp，保证端口留在卡片边缘）
+ */
+export function getNodePortTop(node, portType) {
+    const h = node?.h || node?.size?.h || NODE_MIN_HEIGHT
+
+    if (portType === 'entry') return PORT_GRID_TOP * GRID_SIZE
+    if (portType === 'success' || portType === 'succ') return PORT_GRID_TOP * GRID_SIZE
+    if (portType === 'failure' || portType === 'fail') return h - PORT_GRID_BOTTOM * GRID_SIZE
+    if (portType === 'exit' || portType === 'exit_0') {
+        return (PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE
+    }
+    const m = typeof portType === 'string' ? portType.match(/^(?:branch|exit)_(\d+)$/) : null
+    if (m) {
+        const idx = parseInt(m[1], 10) || 0
+        const rawTop = (PORT_GRID_TOP + PORT_GRID_STEP * (idx + 1)) * GRID_SIZE
+        return Math.min(rawTop, h - PORT_GRID_BOTTOM * GRID_SIZE)
+    }
+    // 未知端口类型：右侧中部兜底
+    return h / 2
+}
+
+/**
+ * 计算节点的绝对端口坐标
+ *   entry 在左缘，其余端口在右缘；纵向全部落在网格线上
  */
 export function getPortPosition(node, portType, _options = {}) {
     const x = node.position?.x || 0
     const y = node.position?.y || 0
-    const w = node.size?.w || NODE_WIDTH
-    const h = node.size?.h || NODE_MIN_HEIGHT
+    const w = node.w || node.size?.w || NODE_WIDTH
+    const top = getNodePortTop(node, portType)
 
-    switch (portType) {
-        case 'entry':
-            return { x, y: y + h / 2 }
-        case 'success':
-        case 'succ':
-            return { x: x + w / 2, y: y + h }
-        case 'failure':
-        case 'fail':
-            return { x: x + w, y: y + h / 2 }
-        case 'exit':
-        case 'exit_0':
-            return { x: x + w, y: y + h / 2 }
-        default: {
-            if (portType.startsWith('branch_') || portType.startsWith('exit_')) {
-                const idx = parseInt(portType.split('_')[1]) || 0
-                const rowY = y + 42 + idx * 28
-                const clampedY = Math.min(rowY, y + h - 16)
-                return { x: x + w, y: clampedY }
-            }
-            return { x: x + w / 2, y: y + h }
-        }
+    if (portType === 'entry') {
+        return { x, y: y + top }
     }
+    return { x: x + w, y: y + top }
+}
+
+/**
+ * 节点高度计算（C1 网格化公式）
+ * 总高度 = ceil(max(头部 + 内容区 + Footer + min(动态端口数, 上限) × 1 格, 100) / 格) × 格
+ * @param {number} contentHeight 内容区估算高度(px)
+ * @param {number} dynamicCount  动态端口数量
+ */
+export function computeCanvasNodeHeight(contentHeight, dynamicCount) {
+    const count = Math.max(0, dynamicCount || 0)
+    const capped = Math.min(count, PORT_MAX_VISIBLE)
+    const raw = NODE_HEADER_H + Math.max(contentHeight || NODE_BODY_MIN_H, NODE_BODY_MIN_H) + NODE_FOOTER_H + capped * GRID_SIZE
+    return Math.ceil(Math.max(raw, NODE_MIN_HEIGHT) / GRID_SIZE) * GRID_SIZE
 }
 
 // ========== 箭头方向 ==========
@@ -175,12 +211,8 @@ export function resolveCollisionsAndPushOthers(nodes, draggedNode, maxIterations
 export const SHARED_EDGE_CSS = `
 .canvas-edges-layer {
     position: absolute;
-    top: 0;
-    left: 0;
     overflow: visible;
     pointer-events: none;
-    width: 100%;
-    height: 100%;
     z-index: 1;
 }
 .canvas-edges-layer g {
@@ -378,7 +410,9 @@ export const SHARED_NODE_CSS = `
     width: 100%;
     height: 100%;
     position: relative;
+    /* clip：连程序化滚动一并禁止（防止 scrollIntoView 等悄悄滚动画布导致坐标系偏移） */
     overflow: hidden;
+    overflow: clip;
     user-select: none;
     background: #1a1b2e;
 }
@@ -395,33 +429,31 @@ export const SHARED_NODE_CSS = `
     left: 0;
     width: 100%;
     height: 100%;
-    will-change: transform;
 }
 
-/* Grid background */
-.grid-background {
-    background-image:
-        linear-gradient(rgba(255, 255, 255, 0.035) 1px, transparent 1px),
-        linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
-    background-size: ${GRID_SIZE}px ${GRID_SIZE}px;
-    background-position: -1px -1px;
+/* 矢量网格线（由世界图层 SVG 绘制） */
+.canvas-grid-line {
+    fill: none;
+    stroke: rgba(255, 255, 255, 0.04);
+    stroke-width: 1;
+    pointer-events: none;
+}
+.canvas-grid-line-major {
+    stroke: rgba(255, 255, 255, 0.07);
 }
 
 /* ---------- Node Card ---------- */
 .canvas-node-card {
     --node-accent: #409eff;
     position: absolute;
-    background: #1e2038;
-    border: 1.5px solid rgba(255, 255, 255, 0.08);
-    border-radius: 12px;
+    background: var(--node-card-bg, rgba(30, 32, 50, 0.92));
+    border: 1px solid var(--node-card-border, rgba(255, 255, 255, 0.08));
+    border-radius: var(--node-card-radius, 10px);
     overflow: visible;
     cursor: grab;
     user-select: none;
     transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.05s ease;
-    box-shadow:
-        0 4px 16px rgba(0, 0, 0, 0.4),
-        0 0 0 1px rgba(0, 0, 0, 0.3),
-        inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    box-shadow: var(--node-card-shadow, 0 4px 20px rgba(0, 0, 0, 0.5));
     display: flex;
     flex-direction: column;
     z-index: 2;
@@ -431,16 +463,13 @@ export const SHARED_NODE_CSS = `
 }
 .canvas-node-card:hover {
     border-color: rgba(78, 209, 156, 0.5);
-    box-shadow:
-        0 8px 28px rgba(0, 0, 0, 0.5),
-        0 0 0 1px rgba(78, 209, 156, 0.3),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    box-shadow: var(--node-card-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.55));
 }
 .canvas-node-card.is-selected {
     border: 2px solid #4ed19c;
     box-shadow:
-        0 0 0 3px rgba(78, 209, 156, 0.3),
-        0 8px 28px rgba(0, 0, 0, 0.45);
+        0 0 0 3px rgba(78, 209, 156, 0.25),
+        0 4px 20px rgba(0, 0, 0, 0.5);
 }
 .canvas-node-card.is-active-debug {
     border: 2px solid #ffb020 !important;
@@ -460,27 +489,30 @@ export const SHARED_NODE_CSS = `
     display: flex;
     align-items: center;
     gap: 6px;
-    padding: 8px 14px;
-    border-radius: 12px 12px 0 0;
+    height: 32px;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    border-radius: 10px 10px 0 0;
     font-size: 12px;
     font-weight: 600;
     color: #fff;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    background: linear-gradient(135deg, var(--node-accent) 0%, rgba(0, 0, 0, 0.35) 100%);
-    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+    background: transparent;
     position: relative;
     flex-shrink: 0;
 }
-.node-header::after {
+/* 左侧 3px 类型颜色条 */
+.node-header::before {
     content: '';
     position: absolute;
     left: 0;
-    right: 0;
-    bottom: 0;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(0, 0, 0, 0.4), transparent);
+    top: 7px;
+    bottom: 7px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--node-accent);
 }
 .node-header-left {
     display: flex;
@@ -488,6 +520,7 @@ export const SHARED_NODE_CSS = `
     gap: 6px;
     flex: 1;
     min-width: 0;
+    padding-left: 4px;
 }
 .node-type-icon {
     width: 15px;
@@ -508,7 +541,7 @@ export const SHARED_NODE_CSS = `
 
 /* ---------- Node Body ---------- */
 .node-body {
-    padding: 10px 14px;
+    padding: 8px 12px;
     font-size: 11px;
     color: #c4c9d4;
     flex: 1;
@@ -516,8 +549,14 @@ export const SHARED_NODE_CSS = `
     flex-direction: column;
     justify-content: center;
     overflow: visible;
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.015), rgba(0, 0, 0, 0.2));
+    background: var(--node-content-bg, rgba(0, 0, 0, 0.15));
     gap: 4px;
+}
+.node-body.is-scrollable {
+    max-height: 280px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    justify-content: flex-start;
 }
 .node-info { line-height: 18px; }
 .info-label { color: #7a8296; margin-right: 4px; }
@@ -532,31 +571,29 @@ export const SHARED_NODE_CSS = `
     padding: 6px 12px;
     margin-top: auto;
     flex-shrink: 0;
-    background: rgba(0, 0, 0, 0.2);
-    border-radius: 0 0 12px 12px;
+    background: var(--node-footer-bg, rgba(0, 0, 0, 0.1));
+    border-radius: 0 0 10px 10px;
 }
 .footer-tag {
     font-size: 10px;
     color: #8b93a7;
-    background: rgba(255, 255, 255, 0.05);
-    padding: 2px 7px;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.04);
     font-weight: 500;
 }
 
 /* ---------- Ports / Handles ---------- */
 .node-handle {
     position: absolute;
-    width: 14px;
-    height: 14px;
+    width: ${PORT_DIAMETER}px;
+    height: ${PORT_DIAMETER}px;
     border-radius: 50%;
     cursor: crosshair;
     z-index: 8;
-    border: 2px solid #12131e;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    border: 2px solid var(--port-ring, #12131e);
     box-sizing: border-box;
-    background: #3a3d52;
+    background: var(--port-color, #3a3d52);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    transform: translateY(-50%);
+    transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
 .node-handle::after {
     content: '';
@@ -569,75 +606,58 @@ export const SHARED_NODE_CSS = `
     border-radius: 50%;
 }
 .node-handle:hover {
-    transform: scale(1.4);
-    box-shadow: 0 0 12px rgba(78, 209, 156, 0.8);
-    border-color: #ffffff;
+    transform: translateY(-50%) scale(1.3);
+    box-shadow: 0 0 10px var(--port-glow, rgba(78, 209, 156, 0.8));
     z-index: 10;
 }
 
-/* Entry port (left side) - gray, indicates where edges land */
+/* 空心状态：定义存在但未连线，提示可拖出连线 */
+.node-handle.is-unconnected {
+    background: transparent;
+    border-style: dashed;
+    opacity: 0.55;
+    box-shadow: none;
+}
+.node-handle.is-unconnected:hover {
+    opacity: 1;
+    box-shadow: 0 0 10px var(--port-glow, rgba(78, 209, 156, 0.8));
+}
+
+/* Entry port (left, 1 grid from top) - gray, where edges land */
 .entry-handle {
     left: -7px;
-    top: 50%;
-    transform: translateY(-50%);
     cursor: default;
-    background: #4a4d62;
-    border: 2px solid #6b7090;
+    --port-color: var(--port-entry, #4a4d62);
+    border-color: var(--port-entry-border, #6b7090);
     z-index: 5;
 }
 .entry-handle:hover {
-    transform: translateY(-50%) scale(1.15);
     box-shadow: 0 0 0 transparent;
-    border-color: #6b7090;
-    cursor: default;
+    transform: translateY(-50%) scale(1.15);
 }
 
-/* Success port (bottom) - green, primary exit */
+/* Success port (right, 1 grid from top) - green, primary exit */
 .succ-handle {
-    bottom: -7px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #4ed19c;
-    border-color: #2a8565;
-    box-shadow: 0 0 0 1px rgba(78, 209, 156, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-.succ-handle:hover {
-    background: #5de0a9;
-    box-shadow: 0 0 12px rgba(78, 209, 156, 0.9);
+    right: -7px;
+    --port-color: var(--port-success, #4ed19c);
+    --port-glow: rgba(78, 209, 156, 0.8);
+    border-color: var(--port-success-border, #2a8565);
 }
 
-/* Failure port (right) - red, failure exit */
+/* Failure port (right, 1 grid from bottom) - red, failure exit */
 .fail-handle {
     right: -7px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: #f56c6c;
-    border-color: #a03838;
-    box-shadow: 0 0 0 1px rgba(245, 108, 108, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-.fail-handle:hover {
-    background: #ff7878;
-    box-shadow: 0 0 12px rgba(245, 108, 108, 0.9);
+    --port-color: var(--port-failure, #f56c6c);
+    --port-glow: rgba(245, 108, 108, 0.8);
+    border-color: var(--port-failure-border, #a03838);
 }
 
-/* Exit ports (right side, stacked) - green */
-.exit-handle {
+/* Dynamic ports (right, 1 grid step, stacked between success and failure) - green */
+.dyn-handle {
     right: -7px;
-    transform: translateY(-50%);
-    background: #4ed19c;
-    border-color: #2a8565;
-    box-shadow: 0 0 0 1px rgba(78, 209, 156, 0.4), 0 2px 4px rgba(0, 0, 0, 0.3);
-}
-.exit-handle:hover {
-    background: #5de0a9;
-    box-shadow: 0 0 12px rgba(78, 209, 156, 0.9);
-}
-
-/* Branch node: failure port repositions to avoid overlap with branch exits */
-.canvas-node-card:has(.branch-candidates-list) .fail-handle {
-    top: auto !important;
-    bottom: 12px !important;
-    transform: none !important;
+    --port-color: var(--port-success, #4ed19c);
+    --port-glow: rgba(78, 209, 156, 0.8);
+    border-color: var(--port-success-border, #2a8565);
 }
 
 /* ---------- Breakpoint / Debug ---------- */
@@ -656,6 +676,14 @@ export const SHARED_NODE_CSS = `
 }
 .node-breakpoint-gutter:hover {
     background: rgba(255, 255, 255, 0.15);
+}
+/* 拓扑模式等宽占位：与流程模式头部图标/标题起始位置像素级一致 */
+.node-breakpoint-gutter.is-placeholder {
+    cursor: default;
+    pointer-events: none;
+}
+.node-breakpoint-gutter.is-placeholder:hover {
+    background: transparent;
 }
 .node-breakpoint-gutter .bp-dot {
     width: 11px;
@@ -718,13 +746,6 @@ export const SHARED_NODE_CSS = `
     color: #c4c9d4;
     flex: 1;
     min-width: 0;
-}
-.branch-handle {
-    right: -18px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: #4ed19c;
-    z-index: 10;
 }
 .empty-cand-placeholder {
     font-size: 11px;
@@ -874,7 +895,7 @@ export const SHARED_NODE_CSS = `
 .canvas-toolbar {
     position: absolute;
     bottom: 16px;
-    right: 16px;
+    left: 16px;
     display: flex;
     align-items: center;
     gap: 4px;

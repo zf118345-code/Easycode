@@ -42,7 +42,7 @@ class EdgeSchema(BaseModel):
 
 
 class NodeSchema(BaseModel):
-    """节点 Schema，positions 容错为 float 兼容前端坐标"""
+    """节点 Schema，position 容错为 float 兼容前端坐标"""
 
     model_config = {'extra': 'allow'}
 
@@ -53,12 +53,8 @@ class NodeSchema(BaseModel):
     delay_before: int = Field(default=0, ge=0, description='执行前延迟 (ms)')
     loop_count: int = Field(default=1, description='循环次数')
     enabled: bool = Field(default=True, description='是否启用')
-    on_success: dict[str, Any] | None = Field(default=None, description='成功跳转（兼容旧版，存于 params）')
-    on_failure: dict[str, Any] | None = Field(default=None, description='失败跳转（兼容旧版，存于 params）')
     position: dict[str, Any] | None = Field(default=None, description='画布坐标')
-    positions: dict[str, Any] = Field(default_factory=dict, description='多画布坐标')
     size: dict[str, Any] | None = Field(default=None, description='节点尺寸')
-    canvas_ids: list[str] = Field(default_factory=lambda: ['workflow'], description='所属画布列表')
 
 
 class TaskSchema(BaseModel):
@@ -75,49 +71,12 @@ class TaskSchema(BaseModel):
     nodes: list[NodeSchema] = Field(default_factory=list, description='包含节点列表')
 
 
-class TopologyNodeSchema(BaseModel):
-    """拓扑页面状态节点，字段名与前端对齐"""
-
-    model_config = {'extra': 'allow'}
-
-    node_id: str = Field(default='', description='节点唯一标识')
-    node_name: str = Field(default='', description='节点显示名称')
-    name: str | None = Field(default=None, description='节点名称（前端兼容字段）')
-    label: str | None = Field(default=None, description='节点标签（前端兼容字段）')
-    type: str | None = Field(default='page_state', description='节点类型')
-    page_id: str = Field(default='', description='页面唯一标识')
-    features: list[dict[str, Any]] = Field(default_factory=list, description='复合特征列表')
-    feature_mode: str = Field(default='and', description='特征组合模式')
-    position: dict[str, Any] | None = Field(default=None, description='画布坐标')
-    exits: list[dict[str, Any]] = Field(default_factory=list, description='出口列表')
-    params: dict[str, Any] = Field(default_factory=dict, description='节点参数')
-    condition: dict[str, Any] | None = Field(default=None, description='节点条件')
-
-
-class TopologyEdgeSchema(BaseModel):
-    """拓扑连线，字段名与前端对齐"""
-
-    model_config = {'extra': 'allow'}
-
-    edge_id: str = Field(default='', description='连线唯一标识')
-    source_page: str = Field(default='', description='源页面 ID')
-    target_page: str = Field(default='', description='目标页面 ID')
-    # 兼容前端使用的 source/target
-    source: str | None = Field(default=None, description='源节点/页面 ID（前端兼容字段）')
-    target: str | None = Field(default=None, description='目标节点/页面 ID（前端兼容字段）')
-    source_exit: str | None = Field(default=None, description='源出口标识')
-    action: str = Field(default='', description='过图动作')
-    conditions: list[dict[str, Any]] = Field(default_factory=list, description='过图条件')
-    condition: dict[str, Any] | None = Field(default=None, description='连线条件（前端兼容字段）')
-    label: str = Field(default='', description='连线标签')
-
-
 class TopologyMapSchema(BaseModel):
-    """拓扑地图蓝图"""
+    """拓扑地图蓝图：任务组化结构（tasks 内含拓扑节点，edges 为拓扑连线）"""
 
     model_config = {'extra': 'allow'}
 
-    nodes: list[dict[str, Any]] = Field(default_factory=list, description='拓扑节点列表')
+    tasks: list[dict[str, Any]] = Field(default_factory=list, description='拓扑任务组列表（节点存于 tasks[].nodes）')
     edges: list[dict[str, Any]] = Field(default_factory=list, description='拓扑连线列表')
 
 
@@ -136,7 +95,6 @@ class BlueprintSchema(BaseModel):
     ui_state: dict[str, Any] | None = Field(default_factory=dict, description='UI布局')
     edges: list[dict[str, Any]] = Field(default_factory=list, description='全局连线列表')
     topology: dict[str, Any] | None = Field(default=None, description='拓扑地图蓝图')
-    task_order: list[str] | None = Field(default=None, description='任务排序')
 
 
 # ===== 请求 Payload 模型 =====
@@ -158,13 +116,6 @@ class SaveTaskRequestSchema(BaseModel):
     task_data: TaskSchema
 
 
-class TaskOrderRequestSchema(BaseModel):
-    model_config = {'extra': 'allow'}
-
-    project_path: str
-    order: list[str]
-
-
 class SaveBlueprintRequestSchema(BaseModel):
     """
     保存蓝图请求
@@ -176,6 +127,24 @@ class SaveBlueprintRequestSchema(BaseModel):
 
     project_path: str
     blueprint_data: dict[str, Any] = Field(..., description='蓝图原始数据，直接落盘不经 Pydantic 校验')
+
+
+class WorkflowSaveRequestSchema(BaseModel):
+    """保存流程画布（workflow.json）请求"""
+
+    model_config = {'extra': 'allow'}
+
+    project_path: str
+    workflow_data: dict[str, Any] = Field(..., description='流程画布数据 {tasks, edges}，直接落盘不经 Pydantic 校验')
+
+
+class TopologySaveRequestSchema(BaseModel):
+    """保存拓扑地图（topology.json）请求"""
+
+    model_config = {'extra': 'allow'}
+
+    project_path: str
+    topology_data: dict[str, Any] = Field(..., description='拓扑地图数据 {tasks, edges}，直接落盘不经 Pydantic 校验')
 
 
 class CropScreenshotRequestSchema(BaseModel):

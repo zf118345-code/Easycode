@@ -28,7 +28,7 @@ export const rightPanelsConfig = [
         id: 'inspector',
         title: '节点属性检查器',
         icon: Sliders,
-        component: defineAsyncComponent(() => import('@/components/inspector/WorkflowInspector.vue'))
+        component: defineAsyncComponent(() => import('@/components/inspector/InspectorPanel.vue'))
     },
     {
         id: 'variable-inspector',

@@ -1,6 +1,6 @@
 # core/converters.py
 # Schema ↔ Model 双向转换层，统一前后端数据格式
-from core.models import Edge, Jump, Node, Project, Task, TopologyMap
+from core.models import Edge, Node, Project, Task, TopologyMap
 from core.schemas import NodeSchema, TaskSchema
 
 # ====== Node 转换 ======
@@ -16,12 +16,8 @@ def node_to_dict(node: Node) -> dict:
         'delay_before': node.delay_before,
         'loop_count': node.loop_count,
         'enabled': node.enabled,
-        'on_success': node.on_success.to_dict() if node.on_success else None,
-        'on_failure': node.on_failure.to_dict() if node.on_failure else None,
         'position': node.position,
-        'positions': node.positions,
         'size': node.size,
-        'canvas_ids': node.canvas_ids,
     }
 
 
@@ -35,12 +31,8 @@ def dict_to_node(d: dict) -> Node:
         delay_before=d.get('delay_before', 0),
         loop_count=d.get('loop_count', 1),
         enabled=d.get('enabled', True),
-        on_success=Jump.from_dict(d.get('on_success')) if d.get('on_success') else None,
-        on_failure=Jump.from_dict(d.get('on_failure')) if d.get('on_failure') else None,
         position=d.get('position'),
-        positions=d.get('positions', {}),
         size=d.get('size'),
-        canvas_ids=d.get('canvas_ids', ['workflow']),
     )
 
 
@@ -105,7 +97,7 @@ def project_to_dict(project: Project) -> dict:
         'tasks': {tid: task_to_dict(t) for tid, t in project.tasks.items()},
         'variables': project.variables,
         'edges': [edge_to_dict(e) for e in project.edges],
-        'topology': project.topology.to_dict() if project.topology else {'nodes': [], 'edges': []},
+        'topology': project.topology.to_dict() if project.topology else {'tasks': [], 'edges': []},
         'ui_state': project.ui_state,
     }
 
@@ -155,6 +147,6 @@ def project_to_blueprint_dict(project: Project) -> dict:
         'tasks': [task_to_dict(t) for t in project.tasks.values()],
         'variables': project.variables,
         'edges': [edge_to_dict(e) for e in project.edges],
-        'topology': project.topology.to_dict() if project.topology else {'nodes': [], 'edges': []},
+        'topology': project.topology.to_dict() if project.topology else {'tasks': [], 'edges': []},
         'ui_state': project.ui_state,
     }

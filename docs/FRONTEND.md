@@ -147,7 +147,7 @@ frontend/src/
 |---------|------|
 | `currentProjectPath` | 当前打开的项目路径（持久化到 localStorage） |
 | `currentProjectName` | 项目名称 |
-| `blueprint` | 蓝图根对象：`project_name / tasks / variables / ui_state / edges / topology` |
+| `blueprint` | 内存合并视图：`project_name / tasks / variables / ui_state / edges / topology`（由 project.json + workflow.json + topology.json 三份文件 GET 合并） |
 | `paramsDefinitions` | 节点参数 Schema 定义（从后端拉取） |
 | `currentTaskId` | 当前选中的任务 ID |
 | `recentProjects` | 最近 5 个打开的项目（localStorage） |
@@ -155,9 +155,12 @@ frontend/src/
 
 **关键方法**:
 - `loadProjectByPath(path)` — 打开项目、验证、写入最近项目
-- `loadProjectData()` — 拉取蓝图 JSON，同步初始化 topologyStore
-- `saveBlueprintDebounced()` — 防抖 400ms 保存（日常编辑用）
-- `saveBlueprintImmediately()` — 立即保存（运行任务前、手动保存用）
+- `loadProjectData()` — 并行拉取 project/workflow/topology 三份数据并合并，同步初始化 topologyStore
+- `saveProjectMeta()` / `saveProjectMetaDebounced()` — 保存项目元数据（POST /api/blueprint/save）
+- `saveWorkflowImmediately()` — 保存流程画布（POST /api/workflow/save）
+- `saveTopologyData()` / `saveTopologyDebounced()` — 保存拓扑地图（POST /api/topology/save）
+- `saveBlueprintDebounced()` — 防抖 400ms 三路保存（日常编辑用）
+- `saveBlueprintImmediately()` — 立即三路保存（运行任务前、手动保存用）
 - `loadParams()` — 加载节点参数定义 Schema
 - `createNewTask(taskName)` — 新建任务
 - `updateUiState(key, value)` — 更新 UI 布局状态并持久化
@@ -223,17 +226,17 @@ frontend/src/
 
 **文件**: `frontend/src/stores/topologyStore.js`
 
-**职责**: 拓扑（页面状态机）画布的节点与连线。独立于工作流画布，但持久化到同一个 blueprint.topology 字段。
+**职责**: 拓扑（页面状态机）画布的节点与连线。独立于工作流画布；文件层持久化为任务组结构 `{tasks, edges}`（topology.json），store 内部保持扁平 `{nodes, edges}`，加载/保存时自动折叠/展开。
 
 | 关键字段 | 说明 |
 |---------|------|
-| `topologyBlueprint` | `{ nodes: [], edges: [] }` — 拓扑图数据 |
+| `topologyBlueprint` | `{ nodes: [], edges: [] }` — 拓扑图数据（内部扁平结构） |
 | `selectedTopologyNodeId` | 当前选中的拓扑节点 |
 
 **关键方法**:
-- `loadTopologyFromBlueprint(bp)` — 从蓝图反序列化（防覆盖本地未保存数据）
-- `syncTopologyToBlueprint()` — 序列化为蓝图可存的快照
-- `saveTopologyToBlueprint()` — 写入 projectStore 并触发防抖保存
+- `loadTopologyFromBlueprint(bp)` — 从蓝图反序列化（任务组展开为扁平节点；防覆盖本地未保存数据）
+- `syncTopologyToBlueprint()` — 序列化为 topology.json 文件结构 `{tasks, edges}` 快照
+- `saveTopologyToBlueprint()` — 写入 projectStore 并触发防抖保存（POST /api/topology/save）
 - `addTopologyNode / updateTopologyNode / removeTopologyNode` — 节点 CRUD
 - `addTopologyEdge / removeTopologyEdge` — 连线 CRUD（去重同源同端口）
 
@@ -283,7 +286,7 @@ Easycode 包含两套自研画布：**WorkflowCanvas 工作流画布** 和 **Top
 **与 WorkflowCanvas 的区别**:
 | 维度 | WorkflowCanvas | TopologyCanvas |
 |------|---------------|----------------|
-| 数据来源 | projectStore.blueprint.tasks[].nodes / edges | topologyStore.topologyBlueprint |
+| 数据来源 | projectStore.blueprint.tasks[].nodes / edges（workflow.json） | topologyStore.topologyBlueprint（topology.json，任务组结构在 store 内展开为扁平） |
 | 节点语义 | 动作节点（点击/OCR/脚本...） | 页面状态（page_state）或跳转动作 |
 | 连线语义 | 执行流向：成功/失败端口 | 页面跳转：带条件 + 跳转动作 |
 | 节点特性 | delay_before / timeout 等参数 | features（页面特征列表）/ feature_mode（and/or） |

@@ -29,12 +29,11 @@
             :style="headerStyle"
             :data-node-id="node.node_id">
             <span
-                v-if="mode !== 'topology'"
                 class="node-breakpoint-gutter"
-                :class="{ active: hasBreakpoint }"
-                title="点击切换断点"
-                @click.stop="$emit('toggle-breakpoint', node.node_id)">
-                <span v-if="hasBreakpoint" class="bp-dot" />
+                :class="{ active: hasBreakpoint && mode !== 'topology', 'is-placeholder': mode === 'topology' }"
+                :title="mode !== 'topology' ? '点击切换断点' : ''"
+                @click.stop="mode !== 'topology' && $emit('toggle-breakpoint', node.node_id)">
+                <span v-if="hasBreakpoint && mode !== 'topology'" class="bp-dot" />
             </span>
             <div class="node-header-left" :data-node-id="node.node_id">
                 <component :is="nodeIcon" class="node-type-icon" />
@@ -46,7 +45,10 @@
         </div>
 
         <!-- 2. Body — mode-specific content -->
-        <div class="node-body" :data-node-id="node.node_id">
+        <div
+            class="node-body"
+            :class="{ 'is-scrollable': (node.ports?.dynamic?.length || 0) > 10 }"
+            :data-node-id="node.node_id">
             <!-- Topology mode body -->
             <template v-if="mode === 'topology'">
                 <div v-if="node.node_type === 'page_state' && node.page_id" class="node-info">
@@ -90,10 +92,6 @@
                     <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
                         {{ formatCondDesc(cand.condition || cand) }}
                     </span>
-                    <div
-                        class="node-handle source-handle branch-handle"
-                        :title="`分支 ${cIdx + 1} 成立时流向出口`"
-                        @mousedown.stop="$emit('start-connection', $event, node.node_id, `branch_${cIdx}`)" />
                 </div>
                 <div v-if="!node.params?.candidates?.length" class="empty-cand-placeholder">
                     未配置分流条件
@@ -126,45 +124,40 @@
             <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
         </div>
 
-        <!-- 4. Ports / handles (shared between modes) -->
-        <!-- Entry target on the left (always visible) -->
-        <div class="node-handle entry-handle" title="入口 (entry)" />
-
-        <!-- Success exit — bottom center -->
+        <!-- 4. Ports / handles（网格布局：左缘入口、右缘成功/失败/动态出口） -->
+        <!-- Entry target on the left, 1 grid from top (always visible) -->
         <div
-            v-if="showSuccessPort"
+            class="node-handle entry-handle"
+            :style="{ top: portTop('entry') }"
+            title="入口 (entry)" />
+
+        <!-- Success exit — right, 1 grid from top -->
+        <div
+            v-if="node.ports?.success?.visible !== false"
             class="node-handle source-handle succ-handle"
+            :class="{ 'is-unconnected': !node.ports?.success?.connected }"
+            :style="{ top: portTop('success') }"
             :title="mode === 'topology' ? '主出口 (success)' : '成功出口 (success)'"
             @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')" />
 
-        <!-- Failure exit — right middle -->
+        <!-- Failure exit — right, 1 grid from bottom (conditional) -->
         <div
-            v-if="showFailPort"
+            v-if="node.ports?.failure?.visible"
             class="node-handle source-handle fail-handle"
+            :class="{ 'is-unconnected': !node.ports?.failure?.connected }"
+            :style="{ top: portTop('failure') }"
             :title="node.node_type === 'branch' ? 'Else 兜底出口' : '失败出口 (failure)'"
             @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')" />
 
-        <!-- Topology mode: dynamic stacked exits on the right -->
-        <template v-if="mode === 'topology'">
-            <div
-                v-for="(exit, idx) in (node.exits || [])"
-                :key="`exit_${idx}`"
-                class="node-handle source-handle exit-handle"
-                :style="{ top: `${42 + idx * 28}px` }"
-                :title="exit.label || `出口${idx + 1}`"
-                @mousedown.stop="$emit('start-connection', $event, node.node_id, `exit_${idx}`)" />
-        </template>
-
-        <!-- Workflow mode: stacked branch exits -->
-        <template v-if="mode !== 'topology' && node.node_type === 'branch'">
-            <div
-                v-for="(cand, idx) in (node.params?.candidates || [])"
-                :key="`branch_${idx}`"
-                class="node-handle source-handle exit-handle"
-                :style="{ top: `${82 + idx * 28}px` }"
-                :title="`分支 ${idx + 1}`"
-                @mousedown.stop="$emit('start-connection', $event, node.node_id, `branch_${idx}`)" />
-        </template>
+        <!-- Dynamic exits — right, 1 grid step between success and failure -->
+        <div
+            v-for="port in (node.ports?.dynamic || [])"
+            :key="port.name"
+            class="node-handle source-handle dyn-handle"
+            :class="{ 'is-unconnected': !port.connected }"
+            :style="{ top: portTop(port.name) }"
+            :title="port.label"
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, port.name)" />
     </div>
 </template>
 
@@ -192,7 +185,7 @@
         Target,
         Clock
     } from 'lucide-vue-next'
-    import { getNodeConfig } from '@/utils/canvasShared'
+    import { getNodeConfig, getNodePortTop } from '@/utils/canvasShared'
 
     const props = defineProps({
         node:              { type: Object,  required: true },
@@ -226,19 +219,8 @@
         height: props.node.h + 'px'
     }))
 
-    const showSuccessPort = computed(() => {
-        if (props.mode === 'topology') {
-            return true
-        }
-        return props.node.node_type !== 'branch'
-    })
-
-    const showFailPort = computed(() => {
-        if (props.mode === 'topology') {
-            return ['page_state', 'image_recognition', 'ocr_recognition', 'smart_jump'].includes(props.node.node_type)
-        }
-        return !!props.node.showFailPort
-    })
+    // 端口距卡片顶部的像素偏移（网格坐标，与 getPortPosition 共用同一公式）
+    const portTop = (portType) => `${getNodePortTop(props.node, portType)}px`
 
     const _iconRegistry = {
         MousePointerClick, Timer, ScrollText, Image: ImageIcon, Type, GitBranch,

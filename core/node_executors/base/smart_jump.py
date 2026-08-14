@@ -62,7 +62,9 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
         # 校验：至少指定一种目标
         if not target_page_id and not target_node_id:
             context.log('[smart_jump] 未指定 target_page_id 或 target_node_id', 'error')
-            return self.build_jump_result(success=False, jump_conf=node.on_failure, error='未指定跳转目标')
+            return self.build_jump_result(
+                success=False, jump_conf=(node.params or {}).get('on_failure'), error='未指定跳转目标'
+            )
 
         deadline = time.time() + timeout
         attempt = 0
@@ -98,7 +100,7 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
                 # 简化版：仅记录路径，实际逐节点执行由后续迭代完成
                 return self.build_jump_result(
                     success=True,
-                    jump_conf=node.on_success,
+                    jump_conf=(node.params or {}).get('on_success'),
                     extra={'path': path_result.path, 'path_edges': path_result.edges, 'strategy': path_strategy},
                 )
 
@@ -118,7 +120,7 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
         context.log(f'[smart_jump] 智能跳转失败，已达最大重试次数 | 原因: {last_reason}', 'error')
         return self.build_jump_result(
             success=False,
-            jump_conf=node.on_failure,
+            jump_conf=(node.params or {}).get('on_failure'),
             error=f'寻路失败: {last_reason}',
             extra={'attempts': attempt, 'target_page_id': target_page_id, 'target_node_id': target_node_id},
         )

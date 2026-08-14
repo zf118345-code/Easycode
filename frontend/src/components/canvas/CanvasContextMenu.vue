@@ -29,24 +29,26 @@
         @mousedown.stop
         @click.stop>
         <template v-if="contextMenu.targetType === 'node'">
-            <div class="menu-item" @click="$emit('run-from-node')">
-                <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
-                <span>从此节点开始运行</span>
-            </div>
-            <div class="menu-divider" />
-            <div class="menu-item" @click="$emit('toggle-breakpoint', contextMenu.targetId)">
-                <span class="menu-item-icon bp-dot-inline" />
-                <span>{{ hasBreakpoint ? '移除断点' : '设置断点' }}</span>
-            </div>
-            <div class="menu-item" @click="$emit('add-breakpoint-and-run', contextMenu.targetId)">
-                <span class="menu-item-icon">🎯</span>
-                <span>设断点并运行到此处</span>
-            </div>
-            <template v-if="isPaused">
+            <template v-if="showDebugItems">
+                <div class="menu-item" @click="$emit('run-from-node')">
+                    <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
+                    <span>从此节点开始运行</span>
+                </div>
                 <div class="menu-divider" />
-                <div class="menu-item" @click="$emit('resume-execution')">继续执行 (F5)</div>
-                <div class="menu-item" @click="$emit('step-over')">单步跳过 (F10)</div>
-                <div class="menu-item" @click="$emit('step-into')">单步进入 (F11)</div>
+                <div class="menu-item" @click="$emit('toggle-breakpoint', contextMenu.targetId)">
+                    <span class="menu-item-icon bp-dot-inline" />
+                    <span>{{ hasBreakpoint ? '移除断点' : '设置断点' }}</span>
+                </div>
+                <div class="menu-item" @click="$emit('add-breakpoint-and-run', contextMenu.targetId)">
+                    <span class="menu-item-icon">🎯</span>
+                    <span>设断点并运行到此处</span>
+                </div>
+                <template v-if="isPaused">
+                    <div class="menu-divider" />
+                    <div class="menu-item" @click="$emit('resume-execution')">继续执行 (F5)</div>
+                    <div class="menu-item" @click="$emit('step-over')">单步跳过 (F10)</div>
+                    <div class="menu-item" @click="$emit('step-into')">单步进入 (F11)</div>
+                </template>
             </template>
             <div class="menu-divider" />
             <div class="menu-item danger" @click="$emit('delete-node')">
@@ -73,9 +75,9 @@
 
         <template v-else-if="contextMenu.targetType === 'canvas_public'">
             <div class="menu-item" @click="$emit('canvas-new-node')">
-                在新建组中新建节点
+                {{ hasGroups ? '在新建组中新建节点' : '新建节点' }}
             </div>
-            <div class="menu-item" @click="$emit('canvas-new-group')">
+            <div v-if="hasGroups" class="menu-item" @click="$emit('canvas-new-group')">
                 新建任务组
             </div>
         </template>
@@ -100,7 +102,10 @@
         menuZIndex: { type: Number, default: 1000 },
         availableNodeTypes: { type: Object, default: () => ({}) },
         hasBreakpoint: { type: Boolean, default: false },
-        isPaused: { type: Boolean, default: false }
+        isPaused: { type: Boolean, default: false },
+        // 拓扑模式隐藏运行/断点/单步调试项与任务组项
+        showDebugItems: { type: Boolean, default: true },
+        hasGroups: { type: Boolean, default: true }
     })
 
     defineEmits([
