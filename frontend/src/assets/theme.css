@@ -1,4 +1,4 @@
-﻿/* frontend/src/assets/theme.css */
+/* frontend/src/assets/theme.css */
 /* ==========================================================================
    ⚡ Easycode 全局暗黑主题样式表 (Deep Indigo Theme & Design Tokens)
    ========================================================================== */
@@ -171,4 +171,218 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
     color: var(--el-text-color-primary) !important;
     font-weight: 600;
     font-size: 16px;
+}
+
+/* ==========================================================================
+   ⚡ Phase 2: 扩展 Design Tokens & .app-panel-* 通用样式体系
+   ========================================================================== */
+:root {
+    /* 间距 Token */
+    --app-spacing-xs: 4px;
+    --app-spacing-sm: 8px;
+    --app-spacing-md: 16px;
+    --app-spacing-lg: 24px;
+    --app-spacing-xl: 32px;
+
+    /* 字号 Token */
+    --app-font-xs: 10px;
+    --app-font-sm: 12px;
+    --app-font-md: 14px;
+    --app-font-lg: 16px;
+    --app-font-xl: 20px;
+    --app-font-2xl: 24px;
+
+    /* Z-index 层级 Token */
+    --app-z-base: 1;
+    --app-z-dropdown: 1000;
+    --app-z-sticky: 1100;
+    --app-z-modal: 2000;
+    --app-z-toast: 3000;
+
+    /* 过渡动画 Token */
+    --app-transition-fast: 0.15s ease;
+    --app-transition-normal: 0.25s ease;
+    --app-transition-slow: 0.4s ease;
+
+    /* 阴影 Token */
+    --app-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
+    --app-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
+    --app-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
+    --app-shadow-glow: 0 0 12px rgba(78, 209, 156, 0.3);
+
+    /* 状态色 Token */
+    --app-color-success: #4ed19c;
+    --app-color-warning: #e6a23c;
+    --app-color-danger: #f56c6c;
+    --app-color-info: #909399;
+    --app-color-primary: #4ed19c;
+    --app-color-primary-dim: rgba(78, 209, 156, 0.15);
+
+    /* 面板色系 Token */
+    --app-panel-bg: #1d1e30;
+    --app-panel-header-bg: #26283d;
+    --app-panel-border: #313352;
+    --app-panel-hover-bg: #2a2c45;
+}
+
+/* --------------------------------------------------------------------------
+   【.app-panel-* 通用面板样式体系】
+   -------------------------------------------------------------------------- */
+
+/* 基础面板容器 */
+.app-panel {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: var(--app-panel-bg);
+    border-radius: var(--app-radius-md);
+    overflow: hidden;
+}
+
+/* 面板头部 */
+.app-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--app-spacing-sm) var(--app-spacing-md);
+    background: var(--app-panel-header-bg);
+    border-bottom: 1px solid var(--app-panel-border);
+    font-size: var(--app-font-sm);
+    font-weight: 600;
+    color: var(--el-text-color-primary);
+    user-select: none;
+    min-height: 36px;
+    flex-shrink: 0;
+}
+
+    .app-panel-header .app-panel-title {
+        display: flex;
+        align-items: center;
+        gap: var(--app-spacing-xs);
+    }
+
+    .app-panel-header .app-panel-actions {
+        display: flex;
+        align-items: center;
+        gap: var(--app-spacing-xs);
+    }
+
+/* 面板内容区 */
+.app-panel-body {
+    flex: 1;
+    overflow: auto;
+    padding: var(--app-spacing-md);
+}
+
+/* 可折叠面板 */
+.app-panel-collapsible .app-panel-header {
+    cursor: pointer;
+    transition: background var(--app-transition-fast);
+}
+
+    .app-panel-collapsible .app-panel-header:hover {
+        background: var(--app-panel-hover-bg);
+    }
+
+/* 面板工具栏 */
+.app-panel-toolbar {
+    display: flex;
+    align-items: center;
+    gap: var(--app-spacing-sm);
+    padding: var(--app-spacing-xs) var(--app-spacing-sm);
+    background: var(--app-fill-color);
+    border-bottom: 1px solid var(--app-panel-border);
+    min-height: 32px;
+    flex-shrink: 0;
+}
+
+/* 面板底部状态栏 */
+.app-panel-footer {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--app-spacing-sm);
+    padding: var(--app-spacing-xs) var(--app-spacing-md);
+    background: var(--app-panel-header-bg);
+    border-top: 1px solid var(--app-panel-border);
+    min-height: 32px;
+    flex-shrink: 0;
+}
+
+/* 空状态提示 */
+.app-panel-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    color: var(--el-text-color-secondary);
+    font-size: var(--app-font-sm);
+    gap: var(--app-spacing-sm);
+    user-select: none;
+}
+
+/* 面板分割线 */
+.app-panel-divider {
+    height: 1px;
+    background: var(--app-panel-border);
+    margin: var(--app-spacing-sm) 0;
+    flex-shrink: 0;
+}
+
+/* 面板列表项 */
+.app-panel-list-item {
+    display: flex;
+    align-items: center;
+    gap: var(--app-spacing-sm);
+    padding: var(--app-spacing-sm) var(--app-spacing-md);
+    border-radius: var(--app-radius-sm);
+    cursor: pointer;
+    transition: background var(--app-transition-fast);
+    user-select: none;
+}
+
+    .app-panel-list-item:hover {
+        background: var(--app-panel-hover-bg);
+    }
+
+    .app-panel-list-item.is-active {
+        background: var(--app-color-primary-dim);
+        border-left: 2px solid var(--app-color-primary);
+    }
+
+    .app-panel-list-item.is-disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+/* 标签徽章 */
+.app-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: var(--app-font-xs);
+    font-weight: 500;
+    line-height: 1.4;
+}
+
+.app-badge-success {
+    background: rgba(78, 209, 156, 0.15);
+    color: var(--app-color-success);
+}
+
+.app-badge-warning {
+    background: rgba(230, 162, 60, 0.15);
+    color: var(--app-color-warning);
+}
+
+.app-badge-danger {
+    background: rgba(245, 108, 108, 0.15);
+    color: var(--app-color-danger);
+}
+
+.app-badge-info {
+    background: rgba(144, 147, 153, 0.15);
+    color: var(--app-color-info);
 }
