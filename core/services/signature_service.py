@@ -4,13 +4,12 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 from typing import Any
+
+from core.config import SecurityConfig
 
 logger = logging.getLogger(__name__)
 
-# 签名密钥（生产环境应从环境变量或安全存储中获取）
-_DEFAULT_SECRET = b'easycode_blueprint_signature_v1'
 _SIGNATURE_FIELD = '_signature'
 _SIGNATURE_VERSION = 'v1'
 
@@ -20,8 +19,13 @@ class SignatureService:
 
     @staticmethod
     def _get_secret() -> bytes:
-        """获取签名密钥"""
-        return os.environ.get('EASYCODE_SIGN_SECRET', '').encode('utf-8') or _DEFAULT_SECRET
+        """获取签名密钥
+
+        密钥来源统一委托给 SecurityConfig，避免硬编码：
+        - 生产环境必须通过 EASYCODE_SIGN_SECRET 环境变量注入
+        - 开发环境允许使用兜底密钥以便本地调试
+        """
+        return SecurityConfig.get_sign_secret()
 
     @staticmethod
     def _compute_signature(data: dict[str, Any], secret: bytes) -> str:

@@ -16,6 +16,26 @@ import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import Response  # noqa: E402
+
+# 安全配置（统一从环境变量读取，避免硬编码密钥/CORS 来源）
+from core.config import SecurityConfig  # noqa: E402
+
+# 速率限制（slowapi 可选，缺失时降级为无限制）
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler  # noqa: E402
+    from slowapi.errors import RateLimitExceeded  # noqa: E402
+    from slowapi.util import get_remote_address  # noqa: E402
+
+    _limiter = Limiter(key_func=get_remote_address, default_limits=[SecurityConfig.get_rate_limit()])
+    _HAS_SLOWAPI = True
+except ImportError:  # pragma: no cover - slowapi 未安装时降级
+    _limiter = None
+    _HAS_SLOWAPI = False
+    logging.getLogger(__name__).warning(
+        'slowapi 未安装，速率限制功能已禁用。生产环境建议安装: pip install slowapi'
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -89,23 +109,39 @@ def create_app():
     """创建 FastAPI 应用并注册所有路由"""
     app = FastAPI(title='节点自动化后端', version='2.4')
 
-    # CORS：根据 APP_ENV 环境变量控制
-    app_env = os.environ.get('APP_ENV', 'dev')
-    if app_env == 'prod':
-        allow_origins = ['http://127.0.0.1:8000', 'http://localhost:8000']
-    else:
-        allow_origins = ['*']
+    # ====== 速率限制中间件（slowapi 可选） ======
+    if _HAS_SLOWAPI:
+        app.state.limiter = _limiter
+
+        @app.exception_handler(RateLimitExceeded)
+        async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+            logger.warning(f'速率限制触发 [{request.client.host if request.client else "?"}] {request.url.path}')
+            return _rate_limit_exceeded_handler(request, exc)
+
+    # ====== 安全响应头中间件 ======
+    security_headers = SecurityConfig.get_security_headers()
+
+    @app.middleware('http')
+    async def add_security_headers_middleware(request: Request, call_next):
+        response: Response = await call_next(request)
+        for header, value in security_headers.items():
+            response.headers[header] = value
+        return response
+
+    # ====== CORS：来源统一委托给 SecurityConfig 读取 ======
+    allow_origins = SecurityConfig.get_cors_origins()
+    logger.info(f'CORS 允许来源: {allow_origins} (env={SecurityConfig.APP_ENV})')
 
     app.add_middleware(
         CORSMiddleware,
         allow_origins=allow_origins,
         allow_credentials=False,
-        allow_methods=['*'],
-        allow_headers=['*'],
+        # 仅允许实际使用到的 HTTP 方法，避免过度放开
+        allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+        allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
     )
 
     # ====== 全局异常处理 ======
-    from fastapi import Request
     from fastapi.exceptions import RequestValidationError
 
     from core.error_codes import ErrorCode

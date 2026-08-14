@@ -6,13 +6,21 @@ from cryptography.hazmat.primitives import hashes, padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
+from core.config import SecurityConfig
+
 
 class SecureAssetCrypto:
     """
     高级 AES-256 动态加解密与 PBKDF2 密钥派生引擎
     """
 
-    MASTER_SALT = b'EasycodeDRMSalt2026SecureStorage'
+    # 开发环境兜底 Salt（生产环境由 SecurityConfig 从环境变量读取）
+    _DEV_FALLBACK_SALT = b'EasycodeDRMSalt2026SecureStorage'
+
+    @classmethod
+    def _get_salt(cls) -> bytes:
+        """获取 PBKDF2 Salt，统一委托给 SecurityConfig 管理以避免硬编码"""
+        return SecurityConfig.get_master_salt()
 
     @classmethod
     def derive_key_from_machine(cls, master_key: bytes, machine_code: str) -> bytes:
@@ -22,7 +30,7 @@ class SecureAssetCrypto:
         """
         combined_seed = master_key + machine_code.encode('utf-8')
         kdf_engine = PBKDF2HMAC(
-            algorithm=hashes.SHA256(), length=32, salt=cls.MASTER_SALT, iterations=100000, backend=default_backend()
+            algorithm=hashes.SHA256(), length=32, salt=cls._get_salt(), iterations=100000, backend=default_backend()
         )
         return kdf_engine.derive(combined_seed)
 

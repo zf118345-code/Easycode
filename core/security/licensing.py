@@ -28,21 +28,25 @@ class LicenseManager:
         system_name = platform.system()
         if system_name == 'Windows':
             try:
-                # 提取 CPU 序列号
-                cmd_cpu = 'wmic cpu get processorid'
-                cpu_out = subprocess.check_output(cmd_cpu, shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+                # 提取 CPU 序列号（使用 list 形式参数避免 shell=True 带来的命令注入风险）
+                cpu_out = subprocess.check_output(
+                    ['wmic', 'cpu', 'get', 'processorid'], stderr=subprocess.DEVNULL
+                ).decode('utf-8')
                 cpu_id = ''.join(cpu_out.split()[1:]) if len(cpu_out.split()) > 1 else ''
                 raw_hwids.append(cpu_id)
 
                 # 提取主板 UUID
-                cmd_board = 'wmic csproduct get uuid'
-                board_out = subprocess.check_output(cmd_board, shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+                board_out = subprocess.check_output(
+                    ['wmic', 'csproduct', 'get', 'uuid'], stderr=subprocess.DEVNULL
+                ).decode('utf-8')
                 board_uuid = ''.join(board_out.split()[1:]) if len(board_out.split()) > 1 else ''
                 raw_hwids.append(board_uuid)
 
                 # 提取 C 盘卷标序列号
-                cmd_disk = "wmic volume where DriveLetter='C:' get SerialNumber"
-                disk_out = subprocess.check_output(cmd_disk, shell=True, stderr=subprocess.DEVNULL).decode('utf-8')
+                disk_out = subprocess.check_output(
+                    ['wmic', 'volume', 'where', 'DriveLetter=C:', 'get', 'SerialNumber'],
+                    stderr=subprocess.DEVNULL,
+                ).decode('utf-8')
                 disk_sn = ''.join(disk_out.split()[1:]) if len(disk_out.split()) > 1 else ''
                 raw_hwids.append(disk_sn)
             except Exception:
