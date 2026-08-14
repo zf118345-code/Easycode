@@ -11,7 +11,7 @@ def _service_unavailable(name):
     raise HTTPException(status_code=503, detail=f'服务不可用: {name} 模块未加载')
 
 
-def create_execution_router(execution_service):
+def create_execution_router(execution_service, debug_service):
     router = APIRouter(tags=["执行引擎"])
 
     @router.post('/api/run')
