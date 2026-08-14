@@ -462,5 +462,3 @@ class="canvas-viewport grid-background"
         })
     }, { deep: true })
 </script>
-
-
