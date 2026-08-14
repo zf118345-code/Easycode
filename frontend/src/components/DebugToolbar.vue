@@ -112,7 +112,8 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
         <div class="dbg-sep" />
 
         <!-- ▶ 运行（停止/就绪时可用） -->
-        <button class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
+        <button
+class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
                 @click="runSelectedTask" title="运行选中任务 (F5)">
             <Play class="dbg-icon" :size="16" />
             <span class="dbg-hint">F5</span>

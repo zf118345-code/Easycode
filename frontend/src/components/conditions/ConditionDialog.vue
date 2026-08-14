@@ -1,6 +1,7 @@
 <!-- frontend/src/components/conditions/ConditionDialog.vue -->
 <template>
-    <el-dialog v-model="dialogVisible"
+    <el-dialog
+v-model="dialogVisible"
                :title="isBranch ? '⚙️ 设置分流条件分支' : '➕ 设置判定条件'"
                width="560px"
                append-to-body
@@ -11,7 +12,8 @@
             <!-- 1. 条件类别切换 (5大判定场景) -->
             <div class="type-selector-item">
                 <span class="selector-label">条件判定类型</span>
-                <el-select v-model="activeConditionType"
+                <el-select
+v-model="activeConditionType"
                            placeholder="请选择条件类型"
                            style="width: 100%"
                            @change="handleTypeChange">
@@ -27,13 +29,15 @@
             <div class="schema-rendered-container">
                 <template v-for="(config, paramName) in currentParamsSchema" :key="paramName">
                     <!-- 灰度阈值滑块定制优化 -->
-                    <div v-if="paramName === 'gray_threshold' && conditionPayload.gray_scale"
+                    <div
+v-if="paramName === 'gray_threshold' && conditionPayload.gray_scale"
                          class="param-item-wrapper slider-box">
                         <div class="slider-header">
                             <span>二值化灰度阈值: <strong>{{ conditionPayload.gray_threshold ?? 127 }}</strong></span>
                             <span class="slider-tip">(向左增强浅色，向右过滤背景)</span>
                         </div>
-                        <el-slider v-model="conditionPayload.gray_threshold"
+                        <el-slider
+v-model="conditionPayload.gray_threshold"
                                    :min="0"
                                    :max="255"
                                    :step="1"
@@ -42,7 +46,8 @@
 
                     <!-- 统一原子控件渲染 -->
                     <div v-else-if="paramName !== 'gray_threshold'" class="param-item-wrapper">
-                        <ParamRenderer :config="config"
+                        <ParamRenderer
+:config="config"
                                        :value="conditionPayload[paramName]"
                                        :label="config.label || paramName"
                                        :context="conditionPayload"

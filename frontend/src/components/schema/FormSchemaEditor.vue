@@ -1,6 +1,7 @@
 ﻿<!-- frontend/src/components/schema/FormSchemaEditor.vue -->
 <template>
-    <el-dialog v-model="dialogVisible"
+    <el-dialog
+v-model="dialogVisible"
                title="🛠️ 配置暴露给客户的动态表单面板 (Schema Editor)"
                width="850px"
                append-to-body

@@ -1,10 +1,12 @@
 <!-- frontend/src/components/controls/ControlSelect.vue -->
 <template>
-    <el-select :model-value="modelValue"
+    <el-select
+:model-value="modelValue"
                :placeholder="config.label ? `请选择${config.label}` : '请选择...'"
                style="width: 100%;"
                @update:model-value="val => $emit('update:modelValue', val)">
-        <el-option v-for="opt in resolvedOptions"
+        <el-option
+v-for="opt in resolvedOptions"
                    :key="opt.value"
                    :label="opt.label"
                    :value="opt.value" />

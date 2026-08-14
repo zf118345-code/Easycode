@@ -1,8 +1,9 @@
 # core/security/__init__.py
-import os
 import json
-from core.security.licensing import LicenseManager
+import os
+
 from core.security.crypto import SecureAssetCrypto
+from core.security.licensing import LicenseManager
 
 
 def atomic_write_json(file_path: str, data: dict) -> None:
@@ -18,9 +19,7 @@ def atomic_write_json(file_path: str, data: dict) -> None:
     def clean_transient_fields(obj):
         if isinstance(obj, dict):
             return {
-                k: clean_transient_fields(v)
-                for k, v in obj.items()
-                if not (isinstance(k, str) and k.startswith("_"))
+                k: clean_transient_fields(v) for k, v in obj.items() if not (isinstance(k, str) and k.startswith('_'))
             }
         elif isinstance(obj, list):
             return [clean_transient_fields(item) for item in obj]
@@ -28,8 +27,8 @@ def atomic_write_json(file_path: str, data: dict) -> None:
 
     cleaned_data = clean_transient_fields(data)
 
-    temp_path = f"{file_path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as f:
+    temp_path = f'{file_path}.tmp'
+    with open(temp_path, 'w', encoding='utf-8') as f:
         json.dump(cleaned_data, f, ensure_ascii=False, indent=2)
 
     if os.path.exists(file_path):
@@ -48,14 +47,9 @@ def assert_safe_path(base_dir: str, target_path: str) -> str:
 
     # 检查目标路径是否以基准路径为前缀
     if not abs_target.startswith(abs_base):
-        raise ValueError(f"安全违规：非法的越权文件路径访问 -> {target_path}")
+        raise ValueError(f'安全违规：非法的越权文件路径访问 -> {target_path}')
 
     return abs_target
 
 
-__all__ = [
-    "LicenseManager",
-    "SecureAssetCrypto",
-    "atomic_write_json",
-    "assert_safe_path"
-]
+__all__ = ['LicenseManager', 'SecureAssetCrypto', 'atomic_write_json', 'assert_safe_path']

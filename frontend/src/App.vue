@@ -23,7 +23,8 @@
                 </div>
 
                 <div class="open-section">
-                    <el-input v-model="projectPathInput"
+                    <el-input
+v-model="projectPathInput"
                               placeholder="输入项目绝对路径，如 D:/MyProjects/demo"
                               style="width: 500px;"
                               clearable
@@ -37,7 +38,8 @@
 
                 <div v-if="store.recentProjects?.length" class="recent">
                     <span>最近打开：</span>
-                    <el-link v-for="p in (store.recentProjects || [])"
+                    <el-link
+v-for="p in (store.recentProjects || [])"
                              :key="p.path"
                              style="margin: 0 8px;"
                              @click="handleOpenRecent(p.path)">

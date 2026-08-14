@@ -1,6 +1,7 @@
 <!-- frontend/src/components/PanelSettingsDialog.vue -->
 <template>
-    <el-dialog v-model="dialogVisible"
+    <el-dialog
+v-model="dialogVisible"
                title="工作面板设置"
                width="520px"
                append-to-body
@@ -18,14 +19,16 @@
             <!-- 2. 指定窗口模式下的参数 -->
             <template v-if="localContext.workMode === 'window'">
                 <el-form-item label="窗口标题">
-                    <el-select v-model="localContext.windowTitle"
+                    <el-select
+v-model="localContext.windowTitle"
                                filterable
                                allow-create
                                default-first-option
                                placeholder="下拉选择或手动输入窗口标题"
                                style="width: 100%;"
                                @focus="fetchWindows">
-                        <el-option v-for="w in windowList"
+                        <el-option
+v-for="w in windowList"
                                    :key="w.hwnd"
                                    :label="w.title"
                                    :value="w.title" />

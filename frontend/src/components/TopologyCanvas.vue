@@ -5,20 +5,23 @@
   统一碰撞推挤算法、20px 网格吸附、方向感知箭头
 -->
 <template>
-    <div ref="containerRef"
+    <div
+ref="containerRef"
          class="topology-canvas-container"
          @mousedown="onContainerMouseDown"
          @wheel.prevent="onWheel"
          @contextmenu.prevent="onContextMenu">
         <!-- SVG 连线层 + 网格背景 -->
-        <div class="canvas-viewport grid-background"
+        <div
+class="canvas-viewport grid-background"
              :style="{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: '0 0' }">
             <svg class="canvas-edges-layer" :width="svgWidth" :height="svgHeight">
                 <defs v-html="ARROW_MARKERS_SVG"></defs>
 
                 <!-- 已有连线 -->
                 <template v-for="edge in renderedEdges" :key="edge.edge_id">
-                    <path :d="edge.pathD"
+                    <path
+:d="edge.pathD"
                           class="edge-path"
                           :class="{
               'is-success': edge.source_port !== 'failure',
@@ -28,11 +31,13 @@
                           :marker-end="`url(#${edge.markerId})`"
                           @click.stop="onEdgeClick(edge)" />
                     <!-- 流光动画 -->
-                    <path :d="edge.pathD"
+                    <path
+:d="edge.pathD"
                           class="edge-flow-path"
                           v-if="edge.edge_id !== selectedEdgeId" />
                     <!-- 连线标签 -->
-                    <text v-if="edge.label"
+                    <text
+v-if="edge.label"
                           :x="edge.labelX"
                           :y="edge.labelY"
                           class="edge-label"
@@ -40,7 +45,8 @@
                 </template>
 
                 <!-- 实时拉线预览 -->
-                <path v-if="drawingConnection.active"
+                <path
+v-if="drawingConnection.active"
                       :d="previewPathD"
                       class="edge-path is-success"
                       stroke-dasharray="6 4"
@@ -48,7 +54,8 @@
             </svg>
 
             <!-- 节点卡片层 -->
-            <div v-for="node in topologyNodes"
+            <div
+v-for="node in topologyNodes"
                  :key="node.node_id"
                  class="canvas-node-card"
                  :class="{
@@ -78,26 +85,30 @@
                 </div>
 
                 <!-- 入口端口（左侧） -->
-                <div class="node-port port-entry"
+                <div
+class="node-port port-entry"
                      style="left: -6px; top: 50%; transform: translateY(-50%);"
                      title="入口"></div>
 
                 <!-- 成功出口端口（底部中心） -->
-                <div v-if="node.type === 'page_state' || node.type === 'smart_jump'"
+                <div
+v-if="node.type === 'page_state' || node.type === 'smart_jump'"
                      class="node-port port-success"
                      style="left: 50%; bottom: -6px; transform: translateX(-50%);"
                      title="成功出口"
                      @mousedown.stop="startConnection($event, node, 'success')"></div>
 
                 <!-- 失败出口端口（右侧底部） -->
-                <div v-if="node.type === 'page_state' || node.type === 'image_recognition' || node.type === 'ocr_recognition'"
+                <div
+v-if="node.type === 'page_state' || node.type === 'image_recognition' || node.type === 'ocr_recognition'"
                      class="node-port port-failure"
                      style="right: -6px; bottom: 12px;"
                      title="失败出口"
                      @mousedown.stop="startConnection($event, node, 'failure')"></div>
 
                 <!-- 动态多出口端口（右侧） -->
-                <div v-for="(exit, idx) in (node.exits || [])"
+                <div
+v-for="(exit, idx) in (node.exits || [])"
                      :key="`exit_${idx}`"
                      class="node-port port-exit"
                      :style="{ right: '-6px', top: `${42 + idx * 28}px` }"
@@ -121,7 +132,8 @@
         </div>
 
         <!-- 右键菜单 -->
-        <div v-if="contextMenu.visible"
+        <div
+v-if="contextMenu.visible"
              class="canvas-context-menu"
              :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
             <template v-if="contextMenu.type === 'canvas'">
@@ -141,7 +153,8 @@
         </div>
 
         <!-- 条件编辑器 -->
-        <ConditionDialog v-if="conditionDialog.visible"
+        <ConditionDialog
+v-if="conditionDialog.visible"
                          :visible="conditionDialog.visible"
                          :initial-data="conditionDialog.data"
                          :show-jump-config="false"

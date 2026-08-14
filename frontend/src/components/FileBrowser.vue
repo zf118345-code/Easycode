@@ -17,7 +17,8 @@
             </div>
 
             <div class="tree-wrapper">
-                <el-tree ref="treeRef"
+                <el-tree
+ref="treeRef"
                          :data="treeData"
                          :props="defaultProps"
                          node-key="id"
@@ -29,7 +30,8 @@
                         <div class="custom-tree-node">
                             <template v-if="data.isCreating">
                                 <span class="node-icon">📁</span>
-                                <input ref="inlineInputRef"
+                                <input
+ref="inlineInputRef"
                                        v-model="data.creatingName"
                                        class="inline-folder-input"
                                        @keyup.enter="submitInlineFolder(data)"
@@ -41,7 +43,8 @@
                                     <span v-if="data.isTopologyRoot" class="topo-badge">拓扑</span>
                                     📁 {{ node.label }}
                                 </span>
-                                <el-button class="node-mkdir-btn"
+                                <el-button
+class="node-mkdir-btn"
                                            type="primary"
                                            link
                                            size="small"
@@ -65,7 +68,8 @@
 
             <!-- 图片网格查看 -->
             <div class="image-grid">
-                <div v-for="img in imageList"
+                <div
+v-for="img in imageList"
                      :key="img.name"
                      class="image-card"
                      :class="{ selected: selectedImage === img.name }"
@@ -85,7 +89,8 @@
             <div v-if="mode === 'save'" class="action-footer">
                 <div class="input-group">
                     <span class="input-label">图片名称:</span>
-                    <el-input v-model="saveFileName"
+                    <el-input
+v-model="saveFileName"
                               placeholder="点击图片复制名，或输入新名称"
                               clearable
                               style="width: 300px;"

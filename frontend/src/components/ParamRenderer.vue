@@ -8,7 +8,8 @@
 
         <!-- 动态控件分发映射 -->
         <div class="param-control">
-            <component :is="activeControl"
+            <component
+:is="activeControl"
                        :config="config"
                        :model-value="modelValue"
                        :label="displayLabel"
@@ -22,14 +23,16 @@
         </div>
 
         <!-- 挂载对话框与交互挂件 -->
-        <el-dialog v-model="browserVisible"
+        <el-dialog
+v-model="browserVisible"
                    :title="fileBrowserMode === 'save' ? '选择保存目录并输入图片名称' : '选择模板图片'"
                    width="80%"
                    top="5vh"
                    append-to-body
                    :close-on-click-modal="false"
                    @close="handleBrowserClose">
-            <FileBrowser ref="fileBrowserRef"
+            <FileBrowser
+ref="fileBrowserRef"
                          :project-path="projectPath"
                          :mode="fileBrowserMode"
                          :initial-path="browserInitialPath"
@@ -38,12 +41,14 @@
                          @close="browserVisible = false" />
         </el-dialog>
 
-        <ScreenshotTool ref="screenshotToolRef"
+        <ScreenshotTool
+ref="screenshotToolRef"
                         @template-crop-selected="onTemplateCropSelected"
                         @point-selected="onPointSelected"
                         @region-selected="onRegionSelected" />
 
-        <ConditionDialog v-model:visible="condDialogVisible"
+        <ConditionDialog
+v-model:visible="condDialogVisible"
                          :show-jump-config="isBranchMode"
                          :initial-data="editingCondData"
                          @open-browser="mode => openBrowser(mode || 'select')"

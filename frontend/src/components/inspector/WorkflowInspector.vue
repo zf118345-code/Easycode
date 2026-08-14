@@ -2,17 +2,20 @@
 <template>
     <div class="workflow-inspector-embedded">
         <!-- 1. 单节点面板 -->
-        <NodeInspectorPanel v-if="targetType === 'node' && currentNode"
+        <NodeInspectorPanel
+v-if="targetType === 'node' && currentNode"
                             :node="currentNode"
                             @save="triggerSave" />
 
         <!-- 2. 多选批量编辑面板 -->
-        <BatchInspectorPanel v-else-if="targetType === 'batch' && selectedNodes.length > 1"
+        <BatchInspectorPanel
+v-else-if="targetType === 'batch' && selectedNodes.length > 1"
                              :nodes="selectedNodes"
                              @save="triggerSave" />
 
         <!-- 3. 任务组配置面板 -->
-        <GroupInspectorPanel v-else-if="targetType === 'group' && targetData"
+        <GroupInspectorPanel
+v-else-if="targetType === 'group' && targetData"
                              :group="targetData"
                              @save="triggerSave" />
 

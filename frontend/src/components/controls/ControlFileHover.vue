@@ -1,12 +1,14 @@
 <!-- frontend/src/components/controls/ControlFileHover.vue -->
 <template>
-    <div class="file-hover-card aspect-ratio-box"
+    <div
+class="file-hover-card aspect-ratio-box"
          :class="{ 'is-binary': isGrayScale }"
          :title="modelValue ? `当前图片: ${modelValue}${isGrayScale ? ' (二值化视图)' : ''}` : '未选择图片'">
         <div class="card-preview-area">
             <template v-if="modelValue">
                 <!-- 只有当有有效 URL 且未报错时才渲染图片 -->
-                <img v-if="currentDisplayUrl && !hasError"
+                <img
+v-if="currentDisplayUrl && !hasError"
                      :src="currentDisplayUrl"
                      class="preview-image-full"
                      alt="模板预览"

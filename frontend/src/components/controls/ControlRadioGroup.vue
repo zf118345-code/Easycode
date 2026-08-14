@@ -1,9 +1,11 @@
 <!-- frontend/src/components/controls/ControlRadioGroup.vue -->
 <template>
-    <el-radio-group :model-value="modelValue"
+    <el-radio-group
+:model-value="modelValue"
                     class="custom-segmented-radio"
                     @update:model-value="val => $emit('update:modelValue', val)">
-        <el-radio-button v-for="opt in resolvedOptions"
+        <el-radio-button
+v-for="opt in resolvedOptions"
                          :key="opt.value"
                          :value="opt.value">
             {{ opt.label }}

@@ -6,7 +6,8 @@
             <el-button type="info" link size="small" @click="clearLogs">🗑️ 清空日志</el-button>
         </div>
         <div class="log-container" ref="logContainerRef">
-            <div v-for="(item, idx) in logs"
+            <div
+v-for="(item, idx) in logs"
                  :key="idx"
                  class="log-line"
                  :class="getLogLevelClass(item)">

@@ -1,10 +1,11 @@
 <!-- frontend/src/components/controls/ControlTextarea.vue -->
 <template>
-    <el-input :model-value="modelValue"
+    <el-input
+:model-value="modelValue"
               type="textarea"
               :rows="config.rows || 3"
               :autosize="config.autosize !== undefined ? config.autosize : { minRows: 2, maxRows: 6 }"
-              :placeholder="config.placeholder || config.label || 'ÇëÊäÈëÄÚÈÝ...'"
+              :placeholder="config.placeholder || config.label || 'ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½...'"
               class="custom-textarea-control"
               @update:model-value="val => $emit('update:modelValue', val)" />
 </template>

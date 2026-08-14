@@ -1,14 +1,14 @@
 <!-- frontend/src/components/WorkflowCanvas.vue -->
 <template>
-    <div ref="containerRef"
+    <div
+ref="containerRef"
          class="custom-canvas-container"
          @mousedown="onCanvasMouseDown"
          @wheel="onCanvasWheel"
          @contextmenu="onContextMenu">
         <!-- 视口变换层 -->
         <div class="canvas-viewport" :style="viewportStyle">
-
-            <!-- SVG 连线层 -->
+<!-- SVG 连线层 -->
             <svg class="canvas-edges-layer">
                 <defs>
                     <pattern id="grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
@@ -50,11 +50,13 @@
 
                 <!-- 纯净流光连线层 -->
                 <g v-for="edge in computedEdges" :key="edge.id">
-                    <path :d="edge.path"
+                    <path
+:d="edge.path"
                           :class="['edge-path', { 'is-selected': edge.selected, 'is-danger': edge.isFail }]"
                           :marker-end="edge.markerUrl"
                           @click.stop="onEdgeClick(edge)" />
-                    <path :d="edge.path"
+                    <path
+:d="edge.path"
                           :class="['edge-flow-path', { 'is-danger': edge.isFail }]"
                           pointer-events="none" />
                 </g>
@@ -63,7 +65,8 @@
             </svg>
 
             <!-- 任务组包围框 -->
-            <div v-for="group in dynamicGroups"
+            <div
+v-for="group in dynamicGroups"
                  :key="group.groupId"
                  :data-group-id="group.groupId"
                  :class="['canvas-group-box', { 'is-focused': activeFocusedGroupId === group.groupId }]"
@@ -83,7 +86,8 @@
             </div>
 
             <!-- 节点拖拽预览框 -->
-            <div v-if="draggingNodeId && dragPreviewBox.visible"
+            <div
+v-if="draggingNodeId && dragPreviewBox.visible"
                  class="node-drag-preview-box"
                  :class="{ 'is-danger': dragPreviewBox.hasCollision }"
                  :style="{
@@ -98,7 +102,8 @@
             </div>
 
             <!-- 节点卡片层 -->
-            <div v-for="node in renderNodes"
+            <div
+v-for="node in renderNodes"
                  :key="node.node_id"
                  :data-node-id="node.node_id"
                  :class="['canvas-node-card', { 'is-selected': node.selected, 'is-active-debug': store.currentActiveNodeId === node.node_id }]"
@@ -110,7 +115,8 @@
                 <!-- 1. 卡片头部：左侧图标 + 名称 + 右上角断点红点 -->
                 <div class="node-header" :data-node-id="node.node_id">
                     <!-- 断点红点（点击切换） -->
-                    <span class="node-breakpoint-gutter"
+                    <span
+class="node-breakpoint-gutter"
                           :class="{ active: uiStore.hasBreakpoint(node.node_id) }"
                           title="点击切换断点"
                           @click.stop="handleToggleBreakpoint(node.node_id)">
@@ -129,10 +135,12 @@
                 <!-- 2. 卡片中间主体区 -->
                 <div class="node-body" :data-node-id="node.node_id">
                     <!-- 图像识别节点预览 -->
-                    <div v-if="node.node_type === 'image_recognition'"
+                    <div
+v-if="node.node_type === 'image_recognition'"
                          class="node-image-embedded"
                          :style="node.params?.image_source ? { '--bg-image-url': `url(${getImageThumbnailUrl(node.params.image_source)})` } : {}">
-                        <img v-if="node.params?.image_source"
+                        <img
+v-if="node.params?.image_source"
                              :src="getImageThumbnailUrl(node.params.image_source)"
                              :class="['embedded-template-img', { 'is-contain': isSpecialTallImage(node.node_id) }]"
                              alt="模板"
@@ -146,13 +154,15 @@
 
                     <!-- ⚡ 分支选择 Branch 节点: 行级条件与专属出口锚点 -->
                     <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
-                        <div v-for="(cand, cIdx) in (node.params?.candidates || [])"
+                        <div
+v-for="(cand, cIdx) in (node.params?.candidates || [])"
                              :key="cIdx"
                              class="branch-candidate-item">
                             <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
                                 {{ formatCondDesc(cand.condition || cand) }}
                             </span>
-                            <div class="node-handle source-handle branch-handle"
+                            <div
+class="node-handle source-handle branch-handle"
                                  :title="`分支 ${cIdx + 1} 成立时流向出口`"
                                  @mousedown.stop="startConnection($event, node.node_id, `branch_${cIdx}`)" />
                         </div>
@@ -173,8 +183,7 @@
                 <div v-if="node.node_type !== 'branch'" class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="startConnection($event, node.node_id, 'succ')" />
                 <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" :title="node.node_type === 'branch' ? 'Else 兜底分支出口' : '失败分支出口'" @mousedown.stop="startConnection($event, node.node_id, 'fail')" />
             </div>
-
-        </div>
+</div>
 
         <!-- 全景缩略图导航面板 -->
         <div class="minimap-container" v-show="store.minimapExpanded">
@@ -185,7 +194,8 @@
         <div v-if="selectionBox.visible" class="selection-box" :style="selectionBoxStyle" />
 
         <!-- 节点类型选择菜单 -->
-        <div v-if="spawnMenu.visible"
+        <div
+v-if="spawnMenu.visible"
              class="spawn-menu"
              :style="{ left: spawnMenu.x + 'px', top: spawnMenu.y + 'px', zIndex: menuZIndex }"
              @mousedown.stop
@@ -201,7 +211,8 @@
         </div>
 
         <!-- 画布空白处右键菜单 -->
-        <div v-if="customContextMenu.visible"
+        <div
+v-if="customContextMenu.visible"
              class="custom-context-menu"
              :style="{ left: customContextMenu.x + 'px', top: customContextMenu.y + 'px', zIndex: menuZIndex }"
              @mousedown.stop
@@ -759,7 +770,7 @@
         customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
         customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
         menuZIndex.value = getNextZIndex()
-        closeSpawnMenu()
+        spawnMenu.value.visible = false
     }
 
     // ===== 调试：切换节点断点 =====

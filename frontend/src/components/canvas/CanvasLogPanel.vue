@@ -3,7 +3,8 @@
     <div class="canvas-log-panel-embedded">
         <div ref="logBodyRef" class="log-panel-body">
             <div v-if="!logs.length" class="log-placeholder-text">暂无最新运行日志输出...</div>
-            <div v-for="(item, idx) in logs"
+            <div
+v-for="(item, idx) in logs"
                  :key="idx"
                  class="log-line"
                  :class="getLogLevelClass(item)">

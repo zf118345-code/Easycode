@@ -34,7 +34,8 @@
 
                             <!-- 3. 数字微调 number -->
                             <template v-else-if="field.ui_type === 'number'">
-                                <el-input-number v-model="formModel[field.target]"
+                                <el-input-number
+v-model="formModel[field.target]"
                                                  :min="field.min !== undefined ? field.min : 0"
                                                  :max="field.max !== undefined ? field.max : 99999"
                                                  size="small"
@@ -46,7 +47,8 @@
                             <!-- 4. 滑块 slider -->
                             <template v-else-if="field.ui_type === 'slider'">
                                 <div class="slider-wrapper">
-                                    <el-slider v-model="formModel[field.target]"
+                                    <el-slider
+v-model="formModel[field.target]"
                                                :min="field.min !== undefined ? field.min : 0"
                                                :max="field.max !== undefined ? field.max : 100"
                                                size="small"

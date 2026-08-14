@@ -4,7 +4,8 @@
         <div class="input-grid">
             <div v-for="(item, idx) in fields" :key="item.key" class="field-item">
                 <span class="field-label">{{ item.label }}</span>
-                <el-input-number v-model="getValues[idx]"
+                <el-input-number
+v-model="getValues[idx]"
                                  :controls="false"
                                  size="small"
                                  class="compact-num-input"

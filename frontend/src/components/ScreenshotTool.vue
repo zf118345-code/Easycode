@@ -1,7 +1,8 @@
 <!-- frontend/src/components/ScreenshotTool.vue -->
 <template>
     <teleport to="body">
-        <div v-if="visible"
+        <div
+v-if="visible"
              ref="overlayRef"
              class="screenshot-overlay"
              :style="{ zIndex: overlayZIndex }"
@@ -11,7 +12,8 @@
             <div class="main-layout" @click.stop>
                 <!-- 左侧：工作区 Canvas 画面 -->
                 <div ref="containerRef" class="canvas-wrapper">
-                    <canvas ref="canvasRef"
+                    <canvas
+ref="canvasRef"
                             @mousedown="onMouseDown"
                             @mousemove="onMouseMove"
                             @mouseup="onMouseUp" />

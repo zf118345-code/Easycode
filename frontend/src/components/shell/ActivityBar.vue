@@ -1,14 +1,16 @@
 ﻿<!-- frontend/src/components/shell/ActivityBar.vue -->
 <template>
     <div class="activity-bar" :class="position">
-        <el-tooltip v-for="item in items"
+        <el-tooltip
+v-for="item in items"
                     :key="item.id"
                     effect="dark"
                     :content="item.title"
                     placement="right"
                     :show-after="300"
                     popper-class="ide-sidebar-tooltip">
-            <div class="activity-icon-item"
+            <div
+class="activity-icon-item"
                  :class="{ 'is-active': activeId === item.id }"
                  @click="$emit('select', item.id)">
                 <component :is="item.icon" class="act-svg" />

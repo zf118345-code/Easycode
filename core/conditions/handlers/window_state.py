@@ -1,17 +1,19 @@
 # core/conditions/handlers/window_state.py
-import win32gui
+import contextlib
 from typing import Any
+
+import win32gui
+
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
 from core.utils import resolve_template_string
 
 
-@ConditionRegistry.register("window_state")
+@ConditionRegistry.register('window_state')
 class WindowStateEvaluator(BaseConditionEvaluator):
-
     @classmethod
     def evaluate(cls, params: dict, context: Any) -> bool:
-        raw_title = str(params.get("window_title", "")).strip()
-        state = str(params.get("state_check") or params.get("state", "exists"))
+        raw_title = str(params.get('window_title', '')).strip()
+        state = str(params.get('state_check') or params.get('state', 'exists'))
 
         if not raw_title:
             return False
@@ -30,16 +32,14 @@ class WindowStateEvaluator(BaseConditionEvaluator):
                     return False
             return True
 
-        try:
+        with contextlib.suppress(Exception):
             win32gui.EnumWindows(enum_windows_callback, None)
-        except Exception:
-            pass
 
-        if state == "exists":
+        if state == 'exists':
             return found_hwnd != 0
-        elif state in ("closed", "not_exists"):
+        elif state in ('closed', 'not_exists'):
             return found_hwnd == 0
-        elif state == "active":
+        elif state == 'active':
             if found_hwnd == 0:
                 return False
             foreground_hwnd = win32gui.GetForegroundWindow()

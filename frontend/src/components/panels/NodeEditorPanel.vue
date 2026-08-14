@@ -11,10 +11,12 @@
                 <!-- 1. 通用字段渲染 -->
                 <template v-for="(config, paramName) in allParams" :key="paramName">
                     <!-- 区域坐标显隐 -->
-                    <div v-if="paramName === 'region_value'"
+                    <div
+v-if="paramName === 'region_value'"
                          v-show="shouldShowRegionValue"
                          class="param-item">
-                        <ParamRenderer :key="paramName + store.selectedNodeId"
+                        <ParamRenderer
+:key="paramName + store.selectedNodeId"
                                        :config="config"
                                        :value="store.selectedNode.params.region_value"
                                        :label="config.label || paramName"
@@ -23,13 +25,15 @@
                     </div>
 
                     <!-- 灰度滑块（处于开启状态时） -->
-                    <div v-else-if="paramName === 'gray_threshold' && store.selectedNode.params.gray_scale"
+                    <div
+v-else-if="paramName === 'gray_threshold' && store.selectedNode.params.gray_scale"
                          class="param-item slider-box">
                         <div class="slider-header">
                             <span>二值化灰度阈值: <strong>{{ store.selectedNode.params.gray_threshold ?? 127 }}</strong></span>
                             <span class="slider-tip">(向左增强浅色，向右过滤背景)</span>
                         </div>
-                        <el-slider v-model="store.selectedNode.params.gray_threshold"
+                        <el-slider
+v-model="store.selectedNode.params.gray_threshold"
                                    :min="0"
                                    :max="255"
                                    :step="1"
@@ -37,9 +41,11 @@
                     </div>
 
                     <!-- 其他通用组件（排除跳转和候选列表，由下方独立接管） -->
-                    <div v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'candidates'].includes(paramName)"
+                    <div
+v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'candidates'].includes(paramName)"
                          class="param-item">
-                        <ParamRenderer :key="paramName + store.selectedNodeId"
+                        <ParamRenderer
+:key="paramName + store.selectedNodeId"
                                        :config="config"
                                        :value="store.selectedNode.params[paramName]"
                                        :label="config.label || paramName"
@@ -50,7 +56,8 @@
 
                 <!-- ⭐⭐⭐ 2. 特别针对 branch 节点的 candidates 候选条件列表独立渲染 -->
                 <div v-if="store.selectedNode.node_type === 'branch' && allParams.candidates" class="param-item">
-                    <ParamRenderer :key="'candidates_' + store.selectedNodeId"
+                    <ParamRenderer
+:key="'candidates_' + store.selectedNodeId"
                                    :config="allParams.candidates"
                                    :value="store.selectedNode.params.candidates"
                                    :label="allParams.candidates.label || '多分支判定列表'"
@@ -116,7 +123,8 @@
                         </el-divider>
                         <div class="jump-config">
                             <div class="param-item">
-                                <ParamRenderer :config="jumpTypeConfig"
+                                <ParamRenderer
+:config="jumpTypeConfig"
                                                :value="store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type || 'next'"
                                                label="跳转类型"
                                                :context="store.selectedNode.params"
@@ -124,7 +132,8 @@
                             </div>
                             <!-- 动态目标任务 -->
                             <div v-if="['task'].includes(store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type)" class="param-item">
-                                <ParamRenderer :config="getTargetConfig(jumpKey)"
+                                <ParamRenderer
+:config="getTargetConfig(jumpKey)"
                                                :value="store.selectedNode.params[jumpKey]?.target_task || store.selectedNode.params[jumpKey]?.target || ''"
                                                label="目标任务"
                                                :context="store.selectedNode.params"
@@ -132,7 +141,8 @@
                             </div>
                             <!-- 动态目标节点 -->
                             <div v-if="['node', 'task'].includes(store.selectedNode.params[jumpKey]?.jump_type || store.selectedNode.params[jumpKey]?.type)" class="param-item">
-                                <ParamRenderer :config="getTargetNodeConfig(jumpKey)"
+                                <ParamRenderer
+:config="getTargetNodeConfig(jumpKey)"
                                                :value="store.selectedNode.params[jumpKey]?.target_node || ''"
                                                label="目标节点"
                                                :context="store.selectedNode.params"

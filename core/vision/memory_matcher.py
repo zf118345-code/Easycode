@@ -1,7 +1,7 @@
 # core/vision/memory_matcher.py
-import cv2
+
 import numpy as np
-from typing import Tuple, Optional
+
 from core.utils import match_template_cv
 
 
@@ -16,9 +16,9 @@ class MemoryTemplateMatcher:
         cls,
         screen_bgr: np.ndarray,
         template_bgr: np.ndarray,
-        region_type: str = "fullwindow",
-        region_value: list = None
-    ) -> Tuple[float, Optional[Tuple[int, int]]]:
+        region_type: str = 'fullwindow',
+        region_value: list = None,
+    ) -> tuple[float, tuple[int, int] | None]:
         """
         对内存中的图像矩阵进行区域裁切与 OpenCV 模板匹配
         :param screen_bgr: 全屏或工作区截取的 BGR 矩阵
@@ -36,7 +36,7 @@ class MemoryTemplateMatcher:
         target_roi = screen_bgr
 
         # 执行智能区域裁剪与外扩 Margin 保护
-        if region_type in ("recorded", "custom") and isinstance(region_value, (list, tuple)) and len(region_value) >= 4:
+        if region_type in ('recorded', 'custom') and isinstance(region_value, (list, tuple)) and len(region_value) >= 4:
             rx, ry, rw, rh = [int(v) for v in region_value[:4]]
 
             # 区域微小时按模板尺寸自动外扩

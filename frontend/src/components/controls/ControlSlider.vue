@@ -1,7 +1,8 @@
 <!-- frontend/src/components/controls/ControlSlider.vue -->
 <template>
     <div class="control-slider-container">
-        <el-slider :model-value="Number(modelValue)"
+        <el-slider
+:model-value="Number(modelValue)"
                    :min="config.min !== undefined ? config.min : 0"
                    :max="config.max !== undefined ? config.max : 100"
                    :step="config.step || 1"

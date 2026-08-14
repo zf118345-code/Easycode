@@ -62,7 +62,8 @@
 
         <!-- ⚡ 双画布模式切换 Tab：业务流程 / 页面拓扑 -->
         <div class="canvas-mode-switcher">
-            <div v-for="opt in canvasModeOptions"
+            <div
+v-for="opt in canvasModeOptions"
                  :key="opt.value"
                  class="canvas-mode-tab"
                  :class="{ active: store.canvasMode === opt.value }"

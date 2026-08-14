@@ -1,21 +1,22 @@
 # core/node_executors/base/click.py
-import pyautogui
 import subprocess
-from core.registry import NodeExecutorRegistry
+
+import pyautogui
+
 from core.node_executors.base_class import BaseNodeExecutor
+from core.registry import NodeExecutorRegistry
 
 
-@NodeExecutorRegistry.register("click")
+@NodeExecutorRegistry.register('click')
 class ClickNodeExecutor(BaseNodeExecutor):
-
     def execute(self, node, context):
         params = node.params
 
-        pos = params.get("position", [0, 0])
+        pos = params.get('position', [0, 0])
         if isinstance(pos, list) and len(pos) >= 2:
             x, y = pos[0], pos[1]
         elif isinstance(pos, dict):
-            x, y = pos.get("x", 0), pos.get("y", 0)
+            x, y = pos.get('x', 0), pos.get('y', 0)
         else:
             x, y = 0, 0
 
@@ -42,27 +43,29 @@ class ClickNodeExecutor(BaseNodeExecutor):
                 android_x = int((x / win_w) * real_a_w)
                 android_y = int((y / win_h) * real_a_h)
 
-                context.log(f"📱 ADB 静默点击 [横竖屏已矫正]: 窗口相对({x},{y}) -> Android物理({android_x},{android_y})")
+                context.log(
+                    f'📱 ADB 静默点击 [横竖屏已矫正]: 窗口相对({x},{y}) -> Android物理({android_x},{android_y})'
+                )
                 res = self._adb_click(context.device_id, android_x, android_y, context)
-                success = res.get("success", True)
+                success = res.get('success', True)
             else:
-                context.log("⚠️ Android 分辨率未获取，回退为 PC 物理点击", "warning")
+                context.log('⚠️ Android 分辨率未获取，回退为 PC 物理点击', 'warning')
                 pyautogui.click(wx + x, wy + y)
         else:
-            context.log(f"🖱️ PC 物理鼠标点击: 屏幕绝对坐标({wx + x}, {wy + y})")
+            context.log(f'🖱️ PC 物理鼠标点击: 屏幕绝对坐标({wx + x}, {wy + y})')
             pyautogui.click(wx + x, wy + y)
 
         # ⭐ 支持通过 on_success 灵活控制跳转
-        return self.build_jump_result(success, params.get("on_success", {}))
+        return self.build_jump_result(success, params.get('on_success', {}))
 
     def _adb_click(self, device_id, x, y, context):
         try:
-            cmd = ["adb", "-s", device_id, "shell", "input", "tap", str(x), str(y)]
+            cmd = ['adb', '-s', device_id, 'shell', 'input', 'tap', str(x), str(y)]
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=3)
             if result.returncode != 0:
-                context.log(f"❌ ADB 点击指令失败: {result.stderr}", "error")
-                return {"success": False}
-            return {"success": True}
+                context.log(f'❌ ADB 点击指令失败: {result.stderr}', 'error')
+                return {'success': False}
+            return {'success': True}
         except Exception as e:
-            context.log(f"❌ ADB 点击触发异常: {e}", "error")
-            return {"success": False}
+            context.log(f'❌ ADB 点击触发异常: {e}', 'error')
+            return {'success': False}

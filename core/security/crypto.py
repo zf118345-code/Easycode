@@ -1,11 +1,10 @@
 # core/security/crypto.py
 import os
-import hashlib
-from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from cryptography.hazmat.primitives import padding, kdf
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
-from cryptography.hazmat.primitives import hashes
+
 from cryptography.hazmat.backends import default_backend
+from cryptography.hazmat.primitives import hashes, padding
+from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 class SecureAssetCrypto:
@@ -13,7 +12,7 @@ class SecureAssetCrypto:
     高级 AES-256 动态加解密与 PBKDF2 密钥派生引擎
     """
 
-    MASTER_SALT = b"EasycodeDRMSalt2026SecureStorage"
+    MASTER_SALT = b'EasycodeDRMSalt2026SecureStorage'
 
     @classmethod
     def derive_key_from_machine(cls, master_key: bytes, machine_code: str) -> bytes:
@@ -21,13 +20,9 @@ class SecureAssetCrypto:
         将 MasterKey 与本机 MachineCode 结合，通过 PBKDF2 派生本机专属解密 Key
         确保将 .ebp 密包拷贝到其他机器上也无法直接用通用 Key 解密
         """
-        combined_seed = master_key + machine_code.encode("utf-8")
+        combined_seed = master_key + machine_code.encode('utf-8')
         kdf_engine = PBKDF2HMAC(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=cls.MASTER_SALT,
-            iterations=100000,
-            backend=default_backend()
+            algorithm=hashes.SHA256(), length=32, salt=cls.MASTER_SALT, iterations=100000, backend=default_backend()
         )
         return kdf_engine.derive(combined_seed)
 
@@ -48,7 +43,7 @@ class SecureAssetCrypto:
     def decrypt_ebp_stream(cls, encrypted_bytes: bytes, key: bytes) -> bytes:
         """解密 AES-256-CBC 加密数据并去除 PKCS7 填充"""
         if len(encrypted_bytes) < 16:
-            raise ValueError("加密字节流无效或长度不足")
+            raise ValueError('加密字节流无效或长度不足')
 
         iv = encrypted_bytes[:16]
         cipher_data = encrypted_bytes[16:]

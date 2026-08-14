@@ -1,12 +1,14 @@
 # core/services/debug_service.py
 # 断点执行 + 单步调试 + 变量运行时检查器
-import os
 import json
-import time
-import threading
 import logging
-from typing import Dict, Any, List, Optional, Set
-from fastapi import HTTPException, BackgroundTasks
+import os
+import threading
+import time
+from typing import Any
+
+from fastapi import BackgroundTasks, HTTPException
+
 from core.executor import GraphExecutor
 from core.project_loader import load_project
 from core.services.blueprint_service import BlueprintService
@@ -24,7 +26,7 @@ class DebugSession:
         self.start_node_id = start_node_id
 
         # 断点集合
-        self.breakpoints: Set[str] = set()
+        self.breakpoints: set[str] = set()
 
         # 调试控制事件
         self._pause_event = threading.Event()
@@ -50,20 +52,20 @@ class DebugSession:
         """添加断点"""
         with self._lock:
             self.breakpoints.add(node_id)
-            logger.info(f"调试 [{self.session_id}]: 添加断点 {node_id}")
+            logger.info(f'调试 [{self.session_id}]: 添加断点 {node_id}')
 
     def remove_breakpoint(self, node_id: str):
         """移除断点"""
         with self._lock:
             self.breakpoints.discard(node_id)
-            logger.info(f"调试 [{self.session_id}]: 移除断点 {node_id}")
+            logger.info(f'调试 [{self.session_id}]: 移除断点 {node_id}')
 
     def clear_breakpoints(self):
         """清空所有断点"""
         with self._lock:
             self.breakpoints.clear()
 
-    def get_breakpoints(self) -> List[str]:
+    def get_breakpoints(self) -> list[str]:
         """获取所有断点"""
         with self._lock:
             return list(self.breakpoints)
@@ -103,7 +105,7 @@ class DebugSession:
         with self._lock:
             self._is_paused = True
             self._variable_snapshot = dict(self.executor.variables) if self.executor.variables else {}
-            logger.info(f"调试 [{self.session_id}]: 暂停在节点 {self._current_node_id} (原因: {self._pause_reason})")
+            logger.info(f'调试 [{self.session_id}]: 暂停在节点 {self._current_node_id} (原因: {self._pause_reason})')
 
         # 等待恢复信号
         self._resume_event.clear()
@@ -117,28 +119,28 @@ class DebugSession:
     def resume(self):
         """恢复执行"""
         self._resume_event.set()
-        logger.info(f"调试 [{self.session_id}]: 恢复执行")
+        logger.info(f'调试 [{self.session_id}]: 恢复执行')
 
     def step(self):
         """单步执行（执行一个节点后暂停）"""
         self._step_event.set()
         self.resume()
 
-    def get_state(self) -> Dict[str, Any]:
+    def get_state(self) -> dict[str, Any]:
         """获取当前调试状态"""
         with self._lock:
             return {
-                "session_id": self.session_id,
-                "is_paused": self._is_paused,
-                "is_running": self._is_running,
-                "current_node_id": self._current_node_id,
-                "current_task_id": self._current_task_id,
-                "pause_reason": self._pause_reason,
-                "breakpoints": list(self.breakpoints),
-                "variables": dict(self._variable_snapshot) if self._is_paused else {},
-                "executor_variables": dict(self.executor.variables) if self.executor.variables else {},
-                "call_stack": getattr(self.executor, '_call_stack', []),
-                "visited_count": dict(getattr(self.executor, '_visited_count', {})),
+                'session_id': self.session_id,
+                'is_paused': self._is_paused,
+                'is_running': self._is_running,
+                'current_node_id': self._current_node_id,
+                'current_task_id': self._current_task_id,
+                'pause_reason': self._pause_reason,
+                'breakpoints': list(self.breakpoints),
+                'variables': dict(self._variable_snapshot) if self._is_paused else {},
+                'executor_variables': dict(self.executor.variables) if self.executor.variables else {},
+                'call_stack': getattr(self.executor, '_call_stack', []),
+                'visited_count': dict(getattr(self.executor, '_visited_count', {})),
             }
 
     def stop(self):
@@ -152,17 +154,21 @@ class DebugSession:
 class DebugService:
     """调试服务：管理多个调试会话"""
 
-    _sessions: Dict[str, DebugSession] = {}
+    _sessions: dict[str, DebugSession] = {}
     _lock = threading.Lock()
 
     @staticmethod
-    def start_debug_session(project_path: str, task_id: str, start_node_id: str = None,
-                            breakpoints: List[str] = None,
-                            blueprint_data: dict = None,
-                            background_tasks: BackgroundTasks = None) -> dict:
+    def start_debug_session(
+        project_path: str,
+        task_id: str,
+        start_node_id: str = None,
+        breakpoints: list[str] = None,
+        blueprint_data: dict = None,
+        background_tasks: BackgroundTasks = None,
+    ) -> dict:
         """启动调试会话"""
         if not os.path.exists(project_path):
-            raise HTTPException(status_code=404, detail="项目不存在")
+            raise HTTPException(status_code=404, detail='项目不存在')
 
         # 保存蓝图
         if blueprint_data:
@@ -170,14 +176,15 @@ class DebugService:
 
         # 加载项目
         import pyautogui
-        context_path = os.path.join(project_path, "context.json")
+
+        context_path = os.path.join(project_path, 'context.json')
         saved_context = {}
         if os.path.exists(context_path):
-            with open(context_path, "r", encoding="utf-8") as f:
+            with open(context_path, encoding='utf-8') as f:
                 saved_context = json.load(f)
 
         project = load_project(project_path)
-        session_id = f"debug_{task_id}_{int(time.time() * 1000)}"
+        session_id = f'debug_{task_id}_{int(time.time() * 1000)}'
 
         original_failsafe = pyautogui.FAILSAFE
         pyautogui.FAILSAFE = False
@@ -187,7 +194,7 @@ class DebugService:
             project_dir=project_path,
             text_log_enabled=True,
             image_log_enabled=True,
-            initial_context=saved_context
+            initial_context=saved_context,
         )
 
         session = DebugSession(session_id, executor, task_id, start_node_id)
@@ -205,7 +212,7 @@ class DebugService:
                 session._is_running = True
                 executor.run(task_id, start_node_id)
             except Exception as e:
-                logger.error(f"调试会话异常: {e}", exc_info=True)
+                logger.error(f'调试会话异常: {e}', exc_info=True)
             finally:
                 session._is_running = False
                 pyautogui.FAILSAFE = original_failsafe
@@ -218,7 +225,7 @@ class DebugService:
             thread = threading.Thread(target=run_debug_background, daemon=True)
             thread.start()
 
-        return {"session_id": session_id, "status": "started", "breakpoints": session.get_breakpoints()}
+        return {'session_id': session_id, 'status': 'started', 'breakpoints': session.get_breakpoints()}
 
     @staticmethod
     def get_session_state(session_id: str) -> dict:
@@ -226,7 +233,7 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         return session.get_state()
 
     @staticmethod
@@ -235,9 +242,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.add_breakpoint(node_id)
-        return {"status": "success", "breakpoints": session.get_breakpoints()}
+        return {'status': 'success', 'breakpoints': session.get_breakpoints()}
 
     @staticmethod
     def remove_breakpoint(session_id: str, node_id: str) -> dict:
@@ -245,9 +252,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.remove_breakpoint(node_id)
-        return {"status": "success", "breakpoints": session.get_breakpoints()}
+        return {'status': 'success', 'breakpoints': session.get_breakpoints()}
 
     @staticmethod
     def resume_session(session_id: str) -> dict:
@@ -255,9 +262,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.resume()
-        return {"status": "resumed"}
+        return {'status': 'resumed'}
 
     @staticmethod
     def step_session(session_id: str) -> dict:
@@ -265,9 +272,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.step()
-        return {"status": "stepping"}
+        return {'status': 'stepping'}
 
     @staticmethod
     def pause_session(session_id: str) -> dict:
@@ -275,9 +282,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.pause()
-        return {"status": "paused"}
+        return {'status': 'paused'}
 
     @staticmethod
     def stop_session(session_id: str) -> dict:
@@ -285,9 +292,9 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         session.stop()
-        return {"status": "stopped"}
+        return {'status': 'stopped'}
 
     @staticmethod
     def get_variables(session_id: str) -> dict:
@@ -295,15 +302,15 @@ class DebugService:
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
-            raise HTTPException(status_code=404, detail="调试会话不存在")
+            raise HTTPException(status_code=404, detail='调试会话不存在')
         state = session.get_state()
-        return {"variables": state.get("executor_variables", {})}
+        return {'variables': state.get('executor_variables', {})}
 
     @staticmethod
     def list_sessions() -> list:
         """列出所有活跃调试会话"""
         with DebugService._lock:
             return [
-                {"session_id": sid, "task_id": s.task_id, "is_running": s._is_running}
+                {'session_id': sid, 'task_id': s.task_id, 'is_running': s._is_running}
                 for sid, s in DebugService._sessions.items()
             ]
