@@ -286,14 +286,16 @@ v-if="customContextMenu.visible"
     import { useMainStore, useUiStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
     import { blueprintApi } from '@/api/blueprintApi'
-    import { router } from '@/utils/gridRouter'
-    import { getRoundedPathString } from '@/utils/pathSmooth'
+    import { computeEdgePath, getSimpleOrthoPath, getRoundedPathString as canvasRoundedPath } from '@/utils/canvasRouter'
+    import {
+        normalizePortType, normalizeNodeList,
+        getPortPosition, getArrowDirection
+    } from '@/utils/nodeModel'
     import { getNextZIndex } from '@/utils/zIndexManager'
 
     // ===== 画布增强 Composables（快捷键/撤销重做/连线标签） =====
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { createPiniaUndoRedo } from '@/composables/useUndoRedo'
-    import { useEdgeLabels } from '@/composables/useEdgeLabels'
 
     import {
         MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
@@ -486,12 +488,6 @@ v-if="customContextMenu.visible"
         return null
     })
 
-    // ⚡ 计算 Branch 行级出口相对 Y 轴中心位置
-    const getBranchPortCenterY = (node, cIdx) => {
-        // 卡片顶边距 8 + 头部 16 + 容器边距 4 + 列表边距 2 + 单项中心 12 = 42px，单项高度加间距步长为 28px
-        return 42 + cIdx * 28
-    }
-
     const renderNodes = computed(() => {
         const tasks = store.blueprint?.tasks || []
         let allNodesList = []
@@ -520,11 +516,13 @@ v-if="customContextMenu.visible"
                 const gridCount = Math.ceil(exactGrids)
                 const finalHeight = gridCount * GRID_SIZE
 
+                const w = NODE_GRID_W * GRID_SIZE
                 allNodesList.push({
                     ...node,
                     position: { x: gridX, y: gridY },
-                    w: NODE_GRID_W * GRID_SIZE,
+                    w,
                     h: finalHeight,
+                    size: { w, h: finalHeight },
                     showFailPort: hasFailurePort(node.node_type),
                     selected: isSel
                 })
@@ -883,76 +881,92 @@ v-if="customContextMenu.visible"
         }
     }
 
-    const getArrowDirection = (points) => {
-        if (!points || points.length < 2) return 'down'
-        let p1 = points[points.length - 2]
-        let p2 = points[points.length - 1]
-
-        for (let i = points.length - 1; i > 0; i--) {
-            if (points[i].x !== points[i - 1].x || points[i].y !== points[i - 1].y) {
-                p2 = points[i]
-                p1 = points[i - 1]
-                break
-            }
-        }
-
-        const dx = p2.x - p1.x
-        const dy = p2.y - p1.y
-
-        let dir = 'down'
-        if (Math.abs(dx) >= Math.abs(dy)) {
-            dir = dx > 0 ? 'right' : 'left'
-        } else {
-            dir = dy > 0 ? 'down' : 'up'
-        }
-        return dir
-    }
-
     // ⚡ 核心连线计算：支持常规成功、行级分支（branch_i）与 Else/失败兜底出口
+    // 使用 canvasRouter 统一 BFS 寻路（移除 pathfinding 依赖 + gridRouter + pathSmooth）
     const computedEdges = computed(() => {
         let edges = []
         const allNodes = renderNodes.value
         const activeDraggingId = draggingNodeId.value
         const isActuallyMoving = hasMoved.value
 
+        // 构建供 canvasRouter 使用的归一化节点列表（已有 size 字段，但显式过一遍更安全）
+        const routerNodes = normalizeNodeList(allNodes)
+
+        const pushEdge = ({ sourceNode, targetNode, legacyPort, edgeIdBase, isFailFlag, extra = {} }) => {
+            const standardPort = normalizePortType(legacyPort)
+            const isThisEdgeDragging = activeDraggingId && isActuallyMoving &&
+                (sourceNode.node_id === activeDraggingId || targetNode.node_id === activeDraggingId)
+
+            let path = ''
+            let arrowDir = 'down'
+            let startPt = null
+            let endPt = null
+            let rawPixelPoints = []
+
+            if (isThisEdgeDragging) {
+                // 拖拽中：使用简单正交折线 + 圆角，避免每帧 BFS 开销
+                const sPt = getPortPosition(sourceNode, legacyPort)
+                const ePt = getPortPosition(targetNode, 'entry')
+                startPt = sPt
+                endPt = ePt
+                path = getSimpleOrthoPath(sPt, ePt, standardPort)
+                // 把 path string 转 points 给箭头方向用
+                rawPixelPoints = [sPt, ePt]
+                arrowDir = getArrowDirection(rawPixelPoints)
+            } else {
+                // 静态：canvasRouter BFS 寻路
+                try {
+                    const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort, {})
+                    path = result.pathD
+                    arrowDir = result.arrowDir
+                    rawPixelPoints = result.points || []
+                    if (rawPixelPoints.length) {
+                        startPt = rawPixelPoints[0]
+                        endPt = rawPixelPoints[rawPixelPoints.length - 1]
+                    }
+                } catch (e) {
+                    console.warn('[WorkflowCanvas] computeEdgePath 失败，使用兜底路径:', e)
+                    const sPt = getPortPosition(sourceNode, legacyPort)
+                    const ePt = getPortPosition(targetNode, 'entry')
+                    startPt = sPt
+                    endPt = ePt
+                    path = getSimpleOrthoPath(sPt, ePt, standardPort)
+                    rawPixelPoints = [sPt, ePt]
+                    arrowDir = getArrowDirection(rawPixelPoints)
+                }
+            }
+
+            const isFail = !!isFailFlag
+            const markerPrefix = isFail ? 'fail' : 'succ'
+
+            const edgeId = edgeIdBase
+            edges.push({
+                id: edgeId,
+                sourceNodeId: sourceNode.node_id,
+                targetNodeId: targetNode.node_id,
+                typeFlag: legacyPort === 'succ' ? 'succ' : (legacyPort === 'fail' ? 'fail' : 'branch'),
+                ...extra,
+                path,
+                isFail,
+                markerUrl: `url(#arrow-${markerPrefix}-${arrowDir})`,
+                selected: selectedEdgeId.value === edgeId,
+                labelX: startPt && endPt ? (startPt.x + endPt.x) / 2 : 0,
+                labelY: startPt && endPt ? (startPt.y + endPt.y) / 2 - 10 : 0,
+                rawPixelPoints
+            })
+        }
+
         allNodes.forEach(node => {
             // 1. 普通节点常规成功出口
             if (node.node_type !== 'branch' && node.params?.on_success?.target_node) {
                 const target = allNodes.find(n => n.node_id === node.params.on_success.target_node)
                 if (target) {
-                    let smoothPathStr = ''
-                    let arrowDir = 'down'
-                    let routeResult = null
-
-                    const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
-
-                    if (isThisEdgeDragging) {
-                        const startPt = { x: node.position.x + node.w / 2, y: node.position.y + node.h }
-                        const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
-                        const simplePoints = [startPt, { x: startPt.x, y: (startPt.y + endPt.y) / 2 }, { x: endPt.x, y: (startPt.y + endPt.y) / 2 }, endPt]
-                        smoothPathStr = getRoundedPathString(simplePoints, 10)
-                        arrowDir = getArrowDirection(simplePoints)
-                        routeResult = { startPt, endPt }
-                    } else {
-                        const rr = router.route(node, target, allNodes, 'succ', true)
-                        routeResult = rr
-                        smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
-                        arrowDir = getArrowDirection(rr.rawPixelPoints)
-                    }
-
-                    const edgeId = `e_${node.node_id}_succ_${target.node_id}`
-                    edges.push({
-                        id: edgeId,
-                        sourceNodeId: node.node_id,
-                        targetNodeId: target.node_id,
-                        typeFlag: 'succ',
-                        path: smoothPathStr,
-                        isFail: false,
-                        markerUrl: `url(#arrow-succ-${arrowDir})`,
-                        selected: selectedEdgeId.value === edgeId,
-                        labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
-                        labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
-                        rawPixelPoints: routeResult.rawPixelPoints || []
+                    pushEdge({
+                        sourceNode: node,
+                        targetNode: target,
+                        legacyPort: 'succ',
+                        edgeIdBase: `e_${node.node_id}_succ_${target.node_id}`,
+                        isFailFlag: false
                     })
                 }
             }
@@ -963,41 +977,14 @@ v-if="customContextMenu.visible"
                     if (cand?.on_success?.target_node) {
                         const target = allNodes.find(n => n.node_id === cand.on_success.target_node)
                         if (target) {
-                            let smoothPathStr = ''
-                            let arrowDir = 'right'
-                            let routeResult = null
                             const portType = `branch_${cIdx}`
-
-                            const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
-
-                            if (isThisEdgeDragging) {
-                                const startPt = { x: node.position.x + node.w, y: node.position.y + getBranchPortCenterY(node, cIdx) }
-                                const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
-                                const simplePoints = [startPt, { x: startPt.x + 20, y: startPt.y }, { x: endPt.x, y: (startPt.y + endPt.y) / 2 }, endPt]
-                                smoothPathStr = getRoundedPathString(simplePoints, 10)
-                                arrowDir = getArrowDirection(simplePoints)
-                                routeResult = { startPt, endPt }
-                            } else {
-                                const rr = router.route(node, target, allNodes, portType, true)
-                                routeResult = rr
-                                smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
-                                arrowDir = getArrowDirection(rr.rawPixelPoints)
-                            }
-
-                            const edgeId = `e_${node.node_id}_branch_${cIdx}_${target.node_id}`
-                            edges.push({
-                                id: edgeId,
-                                sourceNodeId: node.node_id,
-                                targetNodeId: target.node_id,
-                                typeFlag: 'branch',
-                                candIndex: cIdx,
-                                path: smoothPathStr,
-                                isFail: false,
-                                markerUrl: `url(#arrow-succ-${arrowDir})`,
-                                selected: selectedEdgeId.value === edgeId,
-                                labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
-                                labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
-                                rawPixelPoints: routeResult.rawPixelPoints || []
+                            pushEdge({
+                                sourceNode: node,
+                                targetNode: target,
+                                legacyPort: portType,
+                                edgeIdBase: `e_${node.node_id}_branch_${cIdx}_${target.node_id}`,
+                                isFailFlag: false,
+                                extra: { candIndex: cIdx }
                             })
                         }
                     }
@@ -1008,67 +995,27 @@ v-if="customContextMenu.visible"
             if (node.params?.on_failure?.target_node) {
                 const target = allNodes.find(n => n.node_id === node.params.on_failure.target_node)
                 if (target) {
-                    let smoothPathStr = ''
-                    let arrowDir = 'down'
-                    let routeResult = null
-
-                    const isThisEdgeDragging = activeDraggingId && isActuallyMoving && (node.node_id === activeDraggingId || target.node_id === activeDraggingId)
-
-                    if (isThisEdgeDragging) {
-                        // ⚡ Branch 节点 Else 兜底红点在右下方
-                        const startOffsetY = node.node_type === 'branch' ? (node.h - 18) : (node.h / 2)
-                        const startPt = { x: node.position.x + node.w, y: node.position.y + startOffsetY }
-                        const endPt = { x: target.position.x + target.w / 2, y: target.position.y }
-                        const simplePoints = [startPt, { x: (startPt.x + endPt.x) / 2, y: startPt.y }, { x: (startPt.x + endPt.x) / 2, y: endPt.y }, endPt]
-                        smoothPathStr = getRoundedPathString(simplePoints, 10)
-                        arrowDir = getArrowDirection(simplePoints)
-                        routeResult = { startPt, endPt }
-                    } else {
-                        const rr = router.route(node, target, allNodes, 'fail')
-                        routeResult = rr
-                        smoothPathStr = getRoundedPathString(rr.rawPixelPoints, 10)
-                        arrowDir = getArrowDirection(rr.rawPixelPoints)
-                    }
-
-                    const edgeId = `e_${node.node_id}_fail_${target.node_id}`
-                    edges.push({
-                        id: edgeId,
-                        sourceNodeId: node.node_id,
-                        targetNodeId: target.node_id,
-                        typeFlag: 'fail',
-                        path: smoothPathStr,
-                        isFail: true,
-                        markerUrl: `url(#arrow-fail-${arrowDir})`,
-                        selected: selectedEdgeId.value === edgeId,
-                        labelX: (routeResult.startPt.x + routeResult.endPt.x) / 2,
-                        labelY: (routeResult.startPt.y + routeResult.endPt.y) / 2 - 10,
-                        rawPixelPoints: routeResult.rawPixelPoints || []
+                    pushEdge({
+                        sourceNode: node,
+                        targetNode: target,
+                        legacyPort: 'fail',
+                        edgeIdBase: `e_${node.node_id}_fail_${target.node_id}`,
+                        isFailFlag: true
                     })
                 }
             }
         })
 
-        // 4. 用户实时拉线预览
+        // 4. 用户实时拉线预览（使用统一端口位置计算 + 圆角路径）
         if (drawingConnection.value.active) {
             const sourceNode = allNodes.find(n => n.node_id === drawingConnection.value.sourceNodeId)
             if (sourceNode) {
-                let startPt = { x: 0, y: 0 }
                 const portType = drawingConnection.value.portType
-
-                if (portType === 'succ') {
-                    startPt = { x: sourceNode.position.x + sourceNode.w / 2, y: sourceNode.position.y + sourceNode.h }
-                } else if (portType.startsWith('branch_')) {
-                    const cIdx = parseInt(portType.split('_')[1]) || 0
-                    startPt = { x: sourceNode.position.x + sourceNode.w, y: sourceNode.position.y + getBranchPortCenterY(sourceNode, cIdx) }
-                } else {
-                    const startOffsetY = sourceNode.node_type === 'branch' ? (sourceNode.h - 18) : (sourceNode.h / 2)
-                    startPt = { x: sourceNode.position.x + sourceNode.w, y: sourceNode.position.y + startOffsetY }
-                }
-
+                const startPt = getPortPosition(sourceNode, portType)
                 const mousePt = { x: drawingConnection.value.currentX, y: drawingConnection.value.currentY }
 
                 let safeStartY = startPt.y
-                if (portType === 'succ') {
+                if (normalizePortType(portType) === 'success') {
                     safeStartY = Math.max(startPt.y + 20, mousePt.y)
                 }
 
@@ -1079,9 +1026,10 @@ v-if="customContextMenu.visible"
                     mousePt
                 ]
 
-                const pathStr = getRoundedPathString(rawPoints, 10)
+                const pathStr = canvasRoundedPath(rawPoints, 10)
                 const arrowDir = getArrowDirection(rawPoints)
-                drawingConnection.value.previewMarkerUrl = `url(#arrow-${portType === 'fail' ? 'fail' : 'succ'}-${arrowDir})`
+                const markerPrefix = portType === 'fail' ? 'fail' : 'succ'
+                drawingConnection.value.previewMarkerUrl = `url(#arrow-${markerPrefix}-${arrowDir})`
 
                 edges.push({
                     id: 'temp_drawing',
