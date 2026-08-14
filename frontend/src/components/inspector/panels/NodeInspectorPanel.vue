@@ -86,6 +86,7 @@ v-model="node.params.gray_threshold"
         MousePointerClick, Clock, Image, ScanText, GitBranch,
         SearchCheck, Binary, ListOrdered, FileCode, RefreshCcw
     } from 'lucide-vue-next'
+    import { NODE_TYPE_CONFIG } from '@/utils/canvasShared'
 
     const props = defineProps({
         node: { type: Object, required: true }
@@ -100,18 +101,15 @@ v-model="node.params.gray_threshold"
     let isSyncingRecorded = false
     let ocrTimer = null
 
-    const nodeIconComponentMap = {
-        click: MousePointerClick,
-        wait: Clock,
-        image_recognition: Image,
-        ocr_recognition: ScanText,
-        branch: GitBranch,
-        logic_check: SearchCheck,
-        variable_op: Binary,
-        log: ListOrdered,
-        script_call: FileCode
+    // 图标映射统一从 canvasShared.NODE_TYPE_CONFIG 获取
+    const _iconComponentCache = {
+        MousePointerClick, Clock, Image, ScanText, GitBranch,
+        SearchCheck, Binary, ListOrdered, FileCode
     }
-    const getNodeIcon = (type) => nodeIconComponentMap[type] || FileCode
+    const getNodeIcon = (type) => {
+        const config = NODE_TYPE_CONFIG[type]
+        return (config && _iconComponentCache[config.icon]) || FileCode
+    }
 
     const nodeTypeLabel = computed(() => store.paramsDefinitions[props.node?.node_type]?.label || props.node?.node_type)
     const allParams = computed(() => store.paramsDefinitions[props.node?.node_type]?.params || {})

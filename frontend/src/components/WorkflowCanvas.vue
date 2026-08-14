@@ -166,8 +166,10 @@ v-if="draggingNodeId && dragPreviewBox.visible"
     const containerRef = ref(null)
     const minimapCanvasRef = ref(null)
 
+    // 网格常量（供 useNodeDrag 和节点尺寸计算使用）
     const GRID_SIZE = 20
     const NODE_GRID_W = 8
+
 
     // ===== 从 P2 Composables 获取状态与方法 =====
     const { viewport, isPanning, panStart, viewportStyle } = useViewport()
@@ -201,16 +203,16 @@ v-if="draggingNodeId && dragPreviewBox.visible"
     const nodeInitialPos = ref({ x: 0, y: 0 })
 
     const availableNodeTypes = {
-        click: '🖱️ 鼠标点击',
-        wait: '⏳ 等待',
-        image_recognition: '🎯 图像识别',
-        ocr_recognition: '👁️ 文字识别 (OCR)',
-        branch: '🔀 分支选择',
-        logic_check: '🔍 逻辑判断',
-        variable_op: '🔢 变量操作',
-        log: '📝 日志输出',
-        script_call: '📜 调用脚本',
-        smart_jump: '🧭 智能跳转' // ⚡ 新增智能跳转节点
+        click: '鼠标点击',
+        wait: '等待',
+        image_recognition: '图像识别',
+        ocr_recognition: '文字识别 (OCR)',
+        branch: '分支选择',
+        logic_check: '逻辑判断',
+        variable_op: '变量操作',
+        log: '日志输出',
+        script_call: '调用脚本',
+        smart_jump: '智能跳转'
     }
 
     const getNodeShortLabel = (nodeType) => {
