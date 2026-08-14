@@ -34,7 +34,7 @@ v-for="w in windowList"
                                    :value="w.title" />
                     </el-select>
                     <div class="setting-tip">
-                        💡 提示：已被最小化的窗口不会列出，请先还原窗口。
+                        <Lightbulb :size="12" style="vertical-align: middle;" /> 提示：已被最小化的窗口不会列出，请先还原窗口。
                     </div>
                 </el-form-item>
 
@@ -77,6 +77,7 @@ v-for="w in windowList"
     import { ref, watch, computed } from 'vue'
     import { useMainStore } from '@/stores'
     import { workspaceApi } from '@/api/workspaceApi'
+    import { Lightbulb } from 'lucide-vue-next'
 
     const props = defineProps({
         visible: { type: Boolean, default: false }

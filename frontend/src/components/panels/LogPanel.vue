@@ -1,9 +1,9 @@
-﻿<!-- frontend/src/components/panels/LogPanel.vue -->
+<!-- frontend/src/components/panels/LogPanel.vue -->
 <template>
     <div class="log-panel">
         <div class="log-toolbar">
             <span class="log-count">共 {{ logs.length }} 条日志 ({{ runStatus }})</span>
-            <el-button type="info" link size="small" @click="clearLogs">🗑️ 清空日志</el-button>
+            <el-button type="info" link size="small" @click="clearLogs"><Trash2 :size="14" style="vertical-align: middle;" /> 清空日志</el-button>
         </div>
         <div class="log-container" ref="logContainerRef">
             <div
@@ -18,10 +18,10 @@ v-for="(item, idx) in logs"
                 <template v-if="item.image">
                     <el-popover placement="left" :width="350" trigger="hover" append-to-body>
                         <template #reference>
-                            <el-tag size="small" type="success" class="img-badge">🖼️ 查看调试截图</el-tag>
+                            <el-tag size="small" type="success" class="img-badge"><Image :size="14" style="vertical-align: middle;" /> 查看调试截图</el-tag>
                         </template>
                         <div class="img-preview-card">
-                            <div class="preview-title">🎯 实际框选识别区域图像</div>
+                            <div class="preview-title"><Target :size="14" style="vertical-align: middle;" /> 实际框选识别区域图像</div>
                             <img :src="item.image" style="width: 100%; border-radius: 4px; border: 1px solid #67C23A;" />
                         </div>
                     </el-popover>
@@ -37,6 +37,7 @@ v-for="(item, idx) in logs"
 <script setup>
     import { ref, watch, nextTick, onUnmounted } from 'vue'
     import { useMainStore } from '@/stores'
+    import { Trash2, Image, Target } from 'lucide-vue-next'
 
     const store = useMainStore()
     const logContainerRef = ref(null)

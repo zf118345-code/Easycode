@@ -1,19 +1,19 @@
-﻿<!-- frontend/src/views/PlayerView.vue -->
+<!-- frontend/src/views/PlayerView.vue -->
 <template>
     <div class="player-container">
         <!-- 顶部状态栏 -->
         <div class="player-header">
             <div class="title-area">
-                <span class="logo">🤖</span>
+                <span class="logo"><Bot :size="20" /></span>
                 <span class="title">{{ formTitle || 'Easycode 自动化运行助手' }}</span>
                 <el-tag size="small" type="success" effect="plain">Player 客户端</el-tag>
             </div>
             <div class="action-btns">
                 <el-button type="success" size="default" :icon="Position" @click="handleRun" :loading="isRunning">
-                    🚀 开始运行自动化
+                    <Rocket :size="16" style="vertical-align: middle;" /> 开始运行自动化
                 </el-button>
                 <el-button type="danger" size="default" :icon="CircleClose" @click="handleStop" plain>
-                    ⏹ 停止
+                    <Square :size="16" style="vertical-align: middle;" /> 停止
                 </el-button>
             </div>
         </div>
@@ -22,7 +22,7 @@
         <div class="player-main">
             <!-- 左侧：根据 Schema 渲染的动态表单 -->
             <div class="form-panel">
-                <div class="panel-title">📋 运行参数配置</div>
+                <div class="panel-title"><ClipboardList :size="16" style="vertical-align: middle;" /> 运行参数配置</div>
                 <el-form label-position="right" label-width="140px" size="default" class="config-form">
                     <div v-for="(group, gIdx) in formSchema.groups" :key="gIdx" class="group-box">
                         <div class="group-name">{{ group.group_title }}</div>
@@ -56,7 +56,7 @@
 
             <!-- 右侧：控制台实时日志输出 -->
             <div class="log-panel">
-                <div class="panel-title">💻 实时运行控制台</div>
+                <div class="panel-title"><Monitor :size="16" style="vertical-align: middle;" /> 实时运行控制台</div>
                 <div class="log-box" ref="logBoxRef">
                     <div v-for="(log, idx) in executionLogs" :key="idx" class="log-item">
                         <span class="log-time">[{{ log.time }}]</span>
@@ -73,6 +73,7 @@
     import { ref, reactive, onMounted, nextTick } from 'vue'
     import { ElMessage } from 'element-plus'
     import { Position, CircleClose } from '@element-plus/icons-vue'
+    import { Bot, Rocket, ClipboardList, Monitor, Square } from 'lucide-vue-next'
     import client from '@/api/client'
 
     const formTitle = ref('Easycode 客户端运行面板')

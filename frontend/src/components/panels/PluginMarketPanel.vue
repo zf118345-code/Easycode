@@ -1,7 +1,7 @@
 <!-- frontend/src/components/panels/PluginMarketPanel.vue -->
 <template>
     <div class="panel-container">
-        <div class="panel-section-title">🧩 扩展插件中心</div>
+        <div class="panel-section-title"><Puzzle :size="16" style="vertical-align: middle;" /> 扩展插件中心</div>
         <div class="panel-body">
             <div class="plugin-item" v-for="p in plugins" :key="p.name">
                 <div class="p-info">
@@ -16,6 +16,7 @@
 
 <script setup>
 import { ref } from 'vue'
+import { Puzzle } from 'lucide-vue-next'
 const plugins = ref([
   { name: 'OCR 增强插件', desc: '提供高精度离线文字识别支持' },
   { name: 'ADB 远程控制', desc: '支持安卓模拟器多开同步点击' }

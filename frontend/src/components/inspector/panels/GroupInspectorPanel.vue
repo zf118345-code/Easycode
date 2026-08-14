@@ -1,4 +1,4 @@
-﻿<!-- frontend/src/components/inspector/panels/GroupInspectorPanel.vue -->
+<!-- frontend/src/components/inspector/panels/GroupInspectorPanel.vue -->
 <template>
     <div class="panel-layout-root">
         <!-- 1. 顶部 Folder 图标 + 组名称 -->
@@ -14,7 +14,7 @@
         <!-- 2. 中间提示占位 -->
         <div class="inspector-scrollable-body">
             <div class="inspector-empty-tip">
-                <span>📁 当前配置适用于任务组 [{{ group.groupName }}]</span>
+                <span><Folder :size="14" style="vertical-align: middle;" /> 当前配置适用于任务组 [{{ group.groupName }}]</span>
             </div>
         </div>
 

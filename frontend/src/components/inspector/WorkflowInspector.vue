@@ -1,4 +1,4 @@
-﻿<!-- frontend/src/components/inspector/WorkflowInspector.vue -->
+<!-- frontend/src/components/inspector/WorkflowInspector.vue -->
 <template>
     <div class="workflow-inspector-embedded">
         <!-- 1. 单节点面板 -->
@@ -21,7 +21,7 @@ v-else-if="targetType === 'group' && targetData"
 
         <!-- 4. 空状态提示 -->
         <div v-else class="inspector-empty-tip">
-            <span>👆 请在画布中点击节点或任务组以查看/编辑属性</span>
+            <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
         </div>
     </div>
 </template>
@@ -30,6 +30,7 @@ v-else-if="targetType === 'group' && targetData"
     import { ref, computed, watch } from 'vue'
     import { useMainStore } from '@/stores'
     import { blueprintApi } from '@/api/blueprintApi'
+    import { MousePointerClick } from 'lucide-vue-next'
     import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
     import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
     import GroupInspectorPanel from './panels/GroupInspectorPanel.vue'

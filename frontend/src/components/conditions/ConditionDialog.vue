@@ -2,12 +2,16 @@
 <template>
     <el-dialog
 v-model="dialogVisible"
-               :title="isBranch ? '⚙️ 设置分流条件分支' : '➕ 设置判定条件'"
                width="560px"
                append-to-body
                destroy-on-close
                :close-on-click-modal="false"
                custom-class="condition-dialog-custom">
+        <template #title>
+            <Settings v-if="isBranch" :size="16" style="vertical-align: middle;" />
+            <Plus v-else :size="16" style="vertical-align: middle;" />
+            {{ isBranch ? '设置分流条件分支' : '设置判定条件' }}
+        </template>
         <div class="condition-form-body">
             <!-- 1. 条件类别切换 (5大判定场景) -->
             <div class="type-selector-item">
@@ -17,11 +21,11 @@ v-model="activeConditionType"
                            placeholder="请选择条件类型"
                            style="width: 100%"
                            @change="handleTypeChange">
-                    <el-option label="🖼️ 屏幕/区域存在指定图片" value="image_exists" />
-                    <el-option label="🔤 屏幕/区域包含指定文本 (OCR)" value="text_contains" />
-                    <el-option label="🔢 变量数值/逻辑比较" value="variable_check" />
-                    <el-option label="🪟 指定窗口状态 (存在/激活/关闭)" value="window_state" />
-                    <el-option label="📂 本地文件/文件夹是否存在" value="file_exists" />
+                    <el-option label="屏幕/区域存在指定图片" value="image_exists" />
+                    <el-option label="屏幕/区域包含指定文本 (OCR)" value="text_contains" />
+                    <el-option label="变量数值/逻辑比较" value="variable_check" />
+                    <el-option label="指定窗口状态 (存在/激活/关闭)" value="window_state" />
+                    <el-option label="本地文件/文件夹是否存在" value="file_exists" />
                 </el-select>
             </div>
 
@@ -75,6 +79,7 @@ v-model="conditionPayload.gray_threshold"
     import { useMainStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
     import { ElMessage } from 'element-plus'
+    import { Settings, Plus } from 'lucide-vue-next'
 
     const props = defineProps({
         visible: { type: Boolean, default: false },

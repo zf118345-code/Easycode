@@ -23,7 +23,7 @@
             <el-checkbox :model-value="selectAll" @change="store.selectAllNodes()">全选</el-checkbox>
             <span class="batch-info">已选 {{ store.selectedNodeIds.length }} 个节点</span>
             <el-button size="small" @click="showBatchDelayDialog">⏱ 批量延迟</el-button>
-            <el-button size="small" type="danger" @click="store.batchDeleteNodes()">🗑 批量删除</el-button>
+            <el-button size="small" type="danger" @click="store.batchDeleteNodes()"><Trash2 :size="14" style="vertical-align: middle;" /> 批量删除</el-button>
         </div>
 
         <draggable v-model="store.nodes" item-key="node_id" class="node-list" handle=".drag-handle" @end="onDragEnd">
@@ -65,7 +65,7 @@
                                     <el-dropdown-menu>
                                         <el-dropdown-item command="run">▶ 从当前节点执行</el-dropdown-item>
                                         <el-dropdown-item command="disable">{{ node.enabled ? '⏸ 禁用节点' : '▶ 启用节点' }}</el-dropdown-item>
-                                        <el-dropdown-item divided command="delete">🗑 删除节点</el-dropdown-item>
+                                        <el-dropdown-item divided command="delete"><Trash2 :size="14" style="vertical-align: middle;" /> 删除节点</el-dropdown-item>
                                     </el-dropdown-menu>
                                 </template>
                             </el-dropdown>
@@ -95,9 +95,10 @@
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
     import { Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting, Reading, Operation } from '@element-plus/icons-vue'
+    import { Trash2 } from 'lucide-vue-next'
 
     export default {
-        components: { draggable, Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting, Reading, Operation },
+        components: { draggable, Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting, Reading, Operation, Trash2 },
         setup() {
             const store = useMainStore()
             return { store }
