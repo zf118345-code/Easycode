@@ -1,8 +1,13 @@
-﻿<!-- frontend/src/layouts/IdeLayout.vue -->
+<!-- frontend/src/layouts/IdeLayout.vue -->
 <template>
     <div class="ide-shell-layout">
         <!-- 1. 顶部主菜单栏 -->
         <TopMenuBar @run="handleRun" @openSettings="settingsVisible = true" />
+
+        <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
+        <div class="debug-toolbar-bar">
+            <DebugToolbar />
+        </div>
 
         <!-- 2. 全局主工作区 -->
         <div class="ide-workspace-root">
@@ -177,6 +182,7 @@
     import WorkflowCanvas from '@/components/WorkflowCanvas.vue'
     import TopologyCanvas from '@/components/TopologyCanvas.vue'
     import PanelSettingsDialog from '@/components/PanelSettingsDialog.vue'
+    import DebugToolbar from '@/components/DebugToolbar.vue'
 
     import { leftPanelsConfig, rightPanelsConfig, bottomPanelsConfig } from '@/config/panelsConfig'
 
@@ -341,6 +347,15 @@
         position: relative;
         overflow: hidden;
         background: #12131e;
+    }
+
+    .debug-toolbar-bar {
+        display: flex; align-items: center;
+        padding: 6px 12px;
+        background: linear-gradient(180deg, #1a1b2e 0%, #161728 100%);
+        border-bottom: 1px solid var(--el-border-color-lighter, #25273f);
+        flex-shrink: 0;
+        gap: 12px;
     }
 
     .fixed-dock-left, .fixed-dock-right {

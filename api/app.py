@@ -59,6 +59,12 @@ except ImportError:
     logger.warning("ExecutionService 不可用")
 
 try:
+    from core.services.debug_service import DebugService
+except ImportError:
+    DebugService = None
+    logger.warning("DebugService 不可用")
+
+try:
     from core.services.export_service import ExportService
 except ImportError:
     ExportService = None
@@ -112,7 +118,7 @@ def create_app():
 
     app.include_router(create_system_router(ALL_PARAMS))
     app.include_router(create_blueprint_router(BlueprintService, load_project))
-    app.include_router(create_execution_router(ExecutionService))
+    app.include_router(create_execution_router(ExecutionService, DebugService))
     app.include_router(create_workspace_router(WorkspaceService))
     app.include_router(create_vision_router(VisionService))
     app.include_router(create_build_router(ExportService, CompilerService, PlayerService))

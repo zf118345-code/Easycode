@@ -1,6 +1,6 @@
 // frontend/src/config/panelsConfig.js
 import { defineAsyncComponent } from 'vue'
-import { FolderTree, Binary, Puzzle, Sliders, Terminal } from 'lucide-vue-next'
+import { FolderTree, Binary, Puzzle, Sliders, Terminal, Bug, ScrollText } from 'lucide-vue-next'
 
 export const leftPanelsConfig = [
     {
@@ -29,6 +29,12 @@ export const rightPanelsConfig = [
         title: '节点属性检查器',
         icon: Sliders,
         component: defineAsyncComponent(() => import('@/components/inspector/WorkflowInspector.vue'))
+    },
+    {
+        id: 'variable-inspector',
+        title: '调试变量检查器',
+        icon: Bug,
+        component: defineAsyncComponent(() => import('@/components/panels/VariableInspectorPanel.vue'))
     }
 ]
 
@@ -38,5 +44,11 @@ export const bottomPanelsConfig = [
         title: '运行控制台日志',
         icon: Terminal,
         component: defineAsyncComponent(() => import('@/components/canvas/CanvasLogPanel.vue'))
+    },
+    {
+        id: 'execution-log',
+        title: '调试执行日志',
+        icon: ScrollText,
+        component: defineAsyncComponent(() => import('@/components/panels/ExecutionLogPanel.vue'))
     }
 ]
