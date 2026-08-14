@@ -1,112 +1,44 @@
 <!--
   TopologyCanvas.vue
-  重写：使用共享 canvasRouter.js（A* 网格寻路 + 边间距偏移）
-  统一 canvasShared.js 样式（与 WorkflowCanvas 一致的节点卡片、端口、连线、流光动画）
-  统一碰撞推挤算法、20px 网格吸附、方向感知箭头
+  Unified canvas: shares CanvasNodeCard / CanvasEdgeLayer / CanvasContextMenu with WorkflowCanvas
+  Same visual style, same interaction model. Only data source and node catalog differ.
 -->
 <template>
-    <div ref="containerRef"
+    <div
+ref="containerRef"
          class="topology-canvas-container"
          @mousedown="onContainerMouseDown"
          @wheel.prevent="onWheel"
          @contextmenu.prevent="onContextMenu">
-        <!-- SVG 连线层 + 网格背景 -->
-        <div class="canvas-viewport grid-background"
+        <!-- 视口变换层 -->
+        <div
+class="canvas-viewport grid-background"
              :style="{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: '0 0' }">
-            <svg class="canvas-edges-layer" :width="svgWidth" :height="svgHeight">
-                <defs v-html="ARROW_MARKERS_SVG"></defs>
+<!-- SVG 连线层（共享子组件） -->
+            <CanvasEdgeLayer
+                :edges="computedEdges"
+                :drawing-connection="drawingConnection"
+                :svg-width="svgWidth"
+                :svg-height="svgHeight"
+                @edge-click="onEdgeClick" />
 
-                <!-- 已有连线 -->
-                <template v-for="edge in renderedEdges" :key="edge.edge_id">
-                    <path :d="edge.pathD"
-                          class="edge-path"
-                          :class="{
-              'is-success': edge.source_port !== 'failure',
-              'is-failure': edge.source_port === 'failure',
-              'is-selected': edge.edge_id === selectedEdgeId
-            }"
-                          :marker-end="`url(#${edge.markerId})`"
-                          @click.stop="onEdgeClick(edge)" />
-                    <!-- 流光动画 -->
-                    <path :d="edge.pathD"
-                          class="edge-flow-path"
-                          v-if="edge.edge_id !== selectedEdgeId" />
-                    <!-- 连线标签 -->
-                    <text v-if="edge.label"
-                          :x="edge.labelX"
-                          :y="edge.labelY"
-                          class="edge-label"
-                          text-anchor="middle">{{ edge.label }}</text>
-                </template>
-
-                <!-- 实时拉线预览 -->
-                <path v-if="drawingConnection.active"
-                      :d="previewPathD"
-                      class="edge-path is-success"
-                      stroke-dasharray="6 4"
-                      opacity="0.6" />
-            </svg>
-
-            <!-- 节点卡片层 -->
-            <div v-for="node in topologyNodes"
-                 :key="node.node_id"
-                 class="canvas-node-card"
-                 :class="{
-          'is-selected': node.node_id === selectedTopologyNodeId,
-          'is-action': node.type !== 'page_state'
-        }"
-                 :style="getNodeStyle(node)"
-                 @mousedown.stop="onNodeMouseDown($event, node)"
-                 @contextmenu.prevent.stop="onNodeContextMenu($event, node)">
-                <!-- 节点头部 -->
-                <div class="node-header" :style="{ background: getNodeHeaderColor(node.type) }">
-                    <component :is="getNodeIcon(node.type)" :size="14" />
-                    <span class="node-title">{{ node.node_name || node.label || node.page_id || '未命名' }}</span>
-                </div>
-
-                <!-- 节点主体 -->
-                <div class="node-body">
-                    <div v-if="node.type === 'page_state' && node.page_id" class="node-info">
-                        <span class="info-label">页面:</span> {{ node.page_id }}
-                    </div>
-                    <div v-if="node.features && node.features.length" class="node-info">
-                        <span class="info-label">特征:</span> {{ node.features.length }} 个 ({{ node.feature_mode || 'and' }})
-                    </div>
-                    <div v-if="node.exits && node.exits.length" class="node-info">
-                        <span class="info-label">出口:</span> {{ node.exits.length }} 个
-                    </div>
-                </div>
-
-                <!-- 入口端口（左侧） -->
-                <div class="node-port port-entry"
-                     style="left: -6px; top: 50%; transform: translateY(-50%);"
-                     title="入口"></div>
-
-                <!-- 成功出口端口（底部中心） -->
-                <div v-if="node.type === 'page_state' || node.type === 'smart_jump'"
-                     class="node-port port-success"
-                     style="left: 50%; bottom: -6px; transform: translateX(-50%);"
-                     title="成功出口"
-                     @mousedown.stop="startConnection($event, node, 'success')"></div>
-
-                <!-- 失败出口端口（右侧底部） -->
-                <div v-if="node.type === 'page_state' || node.type === 'image_recognition' || node.type === 'ocr_recognition'"
-                     class="node-port port-failure"
-                     style="right: -6px; bottom: 12px;"
-                     title="失败出口"
-                     @mousedown.stop="startConnection($event, node, 'failure')"></div>
-
-                <!-- 动态多出口端口（右侧） -->
-                <div v-for="(exit, idx) in (node.exits || [])"
-                     :key="`exit_${idx}`"
-                     class="node-port port-exit"
-                     :style="{ right: '-6px', top: `${42 + idx * 28}px` }"
-                     :title="exit.label || `出口${idx + 1}`"
-                     @mousedown.stop="startConnection($event, node, `exit_${idx}`)"></div>
-            </div>
+            <!-- 节点卡片层（共享子组件，拓扑模式） -->
+            <CanvasNodeCard
+                v-for="node in renderNodes"
+                :key="node.node_id"
+                :node="node"
+                :selected="node.node_id === selectedNodeId"
+                :is-active-debug="false"
+                :has-breakpoint="false"
+                :mode="'topology'"
+                @node-mousedown="onNodeMouseDown"
+                @node-mouseup="onNodeMouseUp"
+                @node-dblclick="onNodeDoubleClick"
+                @node-contextmenu="openNodeContextMenu"
+                @start-connection="startConnection" />
         </div>
 
-        <!-- 工具栏 -->
+        <!-- 缩放工具栏 -->
         <div class="canvas-toolbar">
             <button class="toolbar-btn" @click="zoomIn" title="放大">
                 <Plus :size="16" />
@@ -120,129 +52,136 @@
             <span class="zoom-display">{{ Math.round(viewport.zoom * 100) }}%</span>
         </div>
 
-        <!-- 右键菜单 -->
-        <div v-if="contextMenu.visible"
-             class="canvas-context-menu"
-             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
-             @mousedown.stop>
-            <template v-if="contextMenu.type === 'canvas'">
-                <div class="menu-item" @click="addNode('page_state', contextMenu.clickX, contextMenu.clickY)">新增页面状态</div>
-                <div class="menu-item" @click="addNode('click', contextMenu.clickX, contextMenu.clickY)">新增点击动作</div>
-                <div class="menu-item" @click="addNode('wait', contextMenu.clickX, contextMenu.clickY)">新增等待动作</div>
-                <div class="menu-item" @click="addNode('image_recognition', contextMenu.clickX, contextMenu.clickY)">新增图像识别</div>
-                <div class="menu-item" @click="addNode('ocr_recognition', contextMenu.clickX, contextMenu.clickY)">新增 OCR 识别</div>
-            </template>
-            <template v-if="contextMenu.type === 'node'">
-                <div class="menu-item" @click="editNodeCondition(contextMenu.node)">编辑条件</div>
-                <div class="menu-item" @click="addExit(contextMenu.node)">新增出口</div>
-                <div class="menu-item" @click="editNodeParams(contextMenu.node)">编辑参数</div>
-                <div class="menu-divider"></div>
-                <div class="menu-item menu-danger" @click="deleteNode(contextMenu.node)">删除节点</div>
-            </template>
-        </div>
-
-        <!-- 条件编辑器 -->
-        <ConditionDialog v-if="conditionDialog.visible"
-                         :visible="conditionDialog.visible"
-                         :initial-data="conditionDialog.data"
-                         :show-jump-config="false"
-                         @save="onConditionSave"
-                         @close="conditionDialog.visible = false" />
+        <!-- 右键菜单（共享子组件） -->
+        <CanvasContextMenu
+            :context-menu="customContextMenu"
+            :spawn-menu="spawnMenu"
+            :menu-z-index="menuZIndex"
+            :available-node-types="availableNodeTypes"
+            :has-breakpoint="false"
+            :is-paused="false"
+            @create-and-connect="createAndConnectNode"
+            @delete-node="handleDeleteNode"
+            @canvas-new-node="handleCanvasNewNode" />
     </div>
 </template>
 
 <script setup>
-    import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
+    import { ref, reactive, computed, onMounted, onUnmounted, watch, nextTick } from 'vue'
     import { useMainStore } from '@/stores/index'
     import {
         GRID_SIZE, NODE_WIDTH, NODE_MIN_HEIGHT,
-        NODE_TYPE_CONFIG, getNodeConfig,
-        snapToGrid, snapPositionToGrid,
+        snapToGrid,
         getPortPosition,
-        resolveCollisionsAndPushOthers,
-        ARROW_MARKERS_SVG
+        getMarkerId
     } from '@/utils/canvasShared'
-    import { computeEdgePath, getSimpleOrthoPath } from '@/utils/canvasRouter'
-    import { normalizeNodeList } from '@/utils/nodeModel'
-    // ===== P4 共享 CSS 注入（边/节点基础样式，与 WorkflowCanvas 一致） =====
+    import { computeEdgePath } from '@/utils/canvasRouter'
+    import { normalizePortType, normalizeNodeList } from '@/utils/nodeModel'
     import { useCanvasSharedStyle } from '@/composables/useCanvasSharedStyle'
     useCanvasSharedStyle()
-    import {
-        Plus, Minus, Maximize, MousePointerClick, Timer, Image,
-        Type, MapPin, Navigation, ScrollText, GitBranch, Filter,
-        Variable, Code, AppWindow, Square
-    } from 'lucide-vue-next'
-    import ConditionDialog from '@/components/conditions/ConditionDialog.vue'
+
+    import { Plus, Minus, Maximize } from 'lucide-vue-next'
+    import CanvasNodeCard from '@/components/canvas/CanvasNodeCard.vue'
+    import CanvasEdgeLayer from '@/components/canvas/CanvasEdgeLayer.vue'
+    import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
 
     const store = useMainStore()
     const containerRef = ref(null)
 
-    // 视口状态
+    // ===== 视口状态（与 WorkflowCanvas 一致） =====
     const viewport = reactive({ x: 0, y: 0, zoom: 1 })
     const svgWidth = ref(5000)
-    const svgHeight = ref(5000)
+    const svgHeight = ref(3000)
 
-    // 交互状态
+    // ===== 交互状态 =====
     const isPanning = ref(false)
     const panStart = reactive({ x: 0, y: 0, vx: 0, vy: 0 })
-    const draggingNode = ref(null)
-    const dragStart = reactive({ x: 0, y: 0, nx: 0, ny: 0 })
+    const draggingNodeId = ref(null)
+    const dragStartPos = reactive({ x: 0, y: 0, nx: 0, ny: 0 })
+    const selectedNodeId = ref(null)
+    const selectedEdgeId = ref(null)
+    const menuZIndex = ref(3000)
+
+    // ===== 拉线状态 =====
     const drawingConnection = reactive({
         active: false,
-        sourceNode: null,
-        sourcePort: 'success',
-        mouseX: 0,
-        mouseY: 0
+        currentX: 0,
+        currentY: 0,
+        sourceNodeId: null,
+        portType: 'success',
+        sourceX: 0,
+        sourceY: 0,
+        previewMarkerUrl: ''
     })
-    const selectedEdgeId = ref(null)
-    const contextMenu = reactive({ visible: false, x: 0, y: 0, clickX: 0, clickY: 0, type: 'canvas', node: null })
-    const conditionDialog = reactive({ visible: false, data: null, node: null })
 
-    // 节点白名单
-    const NODE_WHITELIST = ['page_state', 'click', 'wait', 'log', 'image_recognition', 'ocr_recognition']
+    // ===== 右键菜单 =====
+    const customContextMenu = reactive({
+        visible: false,
+        x: 0,
+        y: 0,
+        targetType: 'canvas_public',
+        targetId: null,
+        clickX: 0,
+        clickY: 0
+    })
+    const spawnMenu = reactive({ visible: false, x: 0, y: 0 })
 
-    // 图标映射
-    const ICON_MAP = {
-        MousePointerClick, Timer, Image, Type, MapPin, Navigation,
-        ScrollText, GitBranch, Filter, Variable, Code, AppWindow, Square
+    // ===== 节点白名单（拓扑模式可创建的节点类型） =====
+    const availableNodeTypes = {
+        page_state: '页面状态',
+        click: '点击动作',
+        wait: '等待动作',
+        image_recognition: '图像识别',
+        ocr_recognition: 'OCR 识别'
     }
 
-    // ========== 计算属性 ==========
+    // ========== 数据计算 ==========
 
     const topologyNodes = computed(() => store.topologyNodes)
     const topologyEdges = computed(() => store.topologyEdges)
 
-    // 将拓扑节点转换为路由器需要的格式（统一使用 nodeModel 归一化）
-    const nodesForRouting = computed(() => {
-        const raw = topologyNodes.value.map(n => ({
-            ...n,
-            position: n.position || { x: 0, y: 0 },
-            size: { w: NODE_WIDTH, h: computeTopologyNodeHeight(n) }
-        }))
-        return normalizeNodeList(raw)
-    })
-
-    function computeTopologyNodeHeight(node) {
-        let h = 38 // header
+    const computeTopologyNodeHeight = (node) => {
+        let h = 38
         if (node.type === 'page_state') {
             if (node.page_id) h += 18
             if (node.features?.length) h += 18
             if (node.exits?.length) h += 18
         }
-        // 出口端口空间
         const exitCount = node.exits?.length || 0
         if (exitCount > 0) h = Math.max(h, 42 + exitCount * 28)
         return Math.max(NODE_MIN_HEIGHT, snapToGrid(h + 8))
     }
 
-    // 渲染连线：使用 A* 寻路 + 边间距偏移
-    const renderedEdges = computed(() => {
+    const renderNodes = computed(() => {
+        const raw = topologyNodes.value.map(n => {
+            const pos = n.position || { x: 0, y: 0 }
+            const gridX = Math.round(pos.x / GRID_SIZE) * GRID_SIZE
+            const gridY = Math.round(pos.y / GRID_SIZE) * GRID_SIZE
+            const w = NODE_WIDTH
+            const h = computeTopologyNodeHeight(n)
+            return {
+                ...n,
+                node_type: n.type,
+                node_name: n.node_name || n.label || n.page_id || '未命名',
+                position: { x: gridX, y: gridY },
+                w,
+                h,
+                size: { w, h },
+                showFailPort: ['page_state', 'image_recognition', 'ocr_recognition'].includes(n.type),
+                selected: selectedNodeId.value === n.node_id
+            }
+        })
+        return normalizeNodeList(raw)
+    })
+
+    // ========== 连线路径计算 ==========
+
+    const computedEdges = computed(() => {
         if (!topologyNodes.value.length) return []
 
-        const allNodes = nodesForRouting.value
+        const allNodes = renderNodes.value
         const result = []
 
-        // 统计同源同目标的平行边数量
         const parallelCount = {}
         const parallelIndex = {}
         topologyEdges.value.forEach(edge => {
@@ -261,541 +200,267 @@
             const totalParallel = parallelCount[key]
 
             const sourcePort = edge.source_port || 'exit'
-            const isDragging = draggingNode.value === sourceNode.node_id || draggingNode.value === targetNode.node_id
+            const isDragging = draggingNodeId.value === sourceNode.node_id || draggingNodeId.value === targetNode.node_id
 
             const { pathD, markerId, points } = computeEdgePath(
                 sourceNode, targetNode, allNodes, sourcePort,
                 { isDragging, offsetIndex, totalParallel }
             )
 
-            // 标签位置
-            let labelX = 0, labelY = 0
-            if (edge.label && points.length >= 2) {
-                const midIdx = Math.floor(points.length / 2)
-                labelX = (points[midIdx - 1].x + points[midIdx].x) / 2
-                labelY = (points[midIdx - 1].y + points[midIdx].y) / 2 - 8
-            }
+            const isFail = sourcePort === 'failure' || sourcePort === 'fail'
+            const markerUrl = `url(#${markerId})`
 
             result.push({
-                edge_id: edge.edge_id,
-                pathD,
-                markerId,
-                source_port: sourcePort,
+                id: edge.edge_id || `e_${edge.source}_${edge.target}`,
+                path: pathD,
+                markerUrl,
+                isFail,
+                selected: selectedEdgeId.value === (edge.edge_id || `e_${edge.source}_${edge.target}`),
                 label: edge.label || '',
-                labelX,
-                labelY
+                labelX: points.length >= 2 ? (points[0].x + points[points.length - 1].x) / 2 : 0,
+                labelY: points.length >= 2 ? (points[0].y + points[points.length - 1].y) / 2 - 10 : 0,
+                rawPixelPoints: points
             })
         }
 
         return result
     })
 
-    // 实时拉线预览路径
-    const previewPathD = computed(() => {
-        if (!drawingConnection.active || !drawingConnection.sourceNode) return ''
-        const sourceNode = nodesForRouting.value.find(n => n.node_id === drawingConnection.sourceNode)
-        if (!sourceNode) return ''
+    // ========== 视口操作 ==========
 
-        const startPt = getPortPosition(sourceNode, drawingConnection.sourcePort)
-        const endPt = { x: drawingConnection.mouseX, y: drawingConnection.mouseY }
+    const zoomIn = () => { viewport.zoom = Math.min(4, viewport.zoom * 1.2) }
+    const zoomOut = () => { viewport.zoom = Math.max(0.2, viewport.zoom * 0.8) }
+    const resetView = () => { viewport.x = 0; viewport.y = 0; viewport.zoom = 1 }
 
-        return getSimpleOrthoPath(startPt, endPt, drawingConnection.sourcePort)
-    })
+    const onWheel = (e) => {
+        const delta = e.deltaY > 0 ? 0.9 : 1.1
+        viewport.zoom = Math.max(0.2, Math.min(4, viewport.zoom * delta))
+    }
 
-    // ========== 样式计算 ==========
+    const onContainerMouseDown = (e) => {
+        if (e.target.closest('.canvas-node-card') || e.target.closest('.canvas-toolbar')) return
+        selectedNodeId.value = null
+        selectedEdgeId.value = null
 
-    function getNodeStyle(node) {
-        const pos = node.position || { x: 0, y: 0 }
-        return {
-            left: `${pos.x}px`,
-            top: `${pos.y}px`,
-            width: `${NODE_WIDTH}px`
+        // 开始平移
+        isPanning.value = true
+        panStart.x = e.clientX
+        panStart.y = e.clientY
+        panStart.vx = viewport.x
+        panStart.vy = viewport.y
+
+        if (e.button === 2 || e.shiftKey) {
+            customContextMenu.visible = true
+            customContextMenu.x = e.clientX
+            customContextMenu.y = e.clientY
+            customContextMenu.targetType = 'canvas_public'
+            customContextMenu.clickX = e.clientX
+            customContextMenu.clickY = e.clientY
         }
     }
 
-    function getNodeHeaderColor(type) {
-        const config = getNodeConfig(type)
-        return config.color
-    }
-
-    function getNodeIcon(type) {
-        const config = getNodeConfig(type)
-        return ICON_MAP[config.icon] || Square
-    }
-
-    // ========== 端口位置 ==========（使用共享 getPortPosition，不再重复实现）
-
-    // ========== 鼠标交互 ==========
-
-    function onContainerMouseDown(e) {
-        if (e.button === 0) {
-            // 左键空白处：开始平移
-            isPanning.value = true
-            panStart.x = e.clientX
-            panStart.y = e.clientY
-            panStart.vx = viewport.x
-            panStart.vy = viewport.y
-            selectedEdgeId.value = null
-            contextMenu.visible = false
-        }
-    }
-
-    function onNodeMouseDown(e, node) {
-        if (e.button !== 0) return
+    const onContextMenu = (e) => {
         e.preventDefault()
-
-        store.selectTopologyNode(node.node_id)
-        draggingNode.value = node.node_id
-
-        dragStart.x = e.clientX
-        dragStart.y = e.clientY
-        dragStart.nx = node.position?.x || 0
-        dragStart.ny = node.position?.y || 0
-
-        // 注册全局 mousemove
-        window.addEventListener('mousemove', onNodeMouseMove)
-        window.addEventListener('mouseup', onNodeMouseUp)
+        customContextMenu.visible = true
+        customContextMenu.x = e.clientX
+        customContextMenu.y = e.clientY
+        customContextMenu.targetType = 'canvas_public'
+        customContextMenu.clickX = e.clientX
+        customContextMenu.clickY = e.clientY
     }
 
-    function onNodeMouseMove(e) {
-        if (!draggingNode.value) return
+    // ========== 节点交互 ==========
 
-        const node = topologyNodes.value.find(n => n.node_id === draggingNode.value)
+    const onNodeMouseDown = (e, node) => {
+        e.stopPropagation()
+        selectedNodeId.value = node.node_id
+        draggingNodeId.value = node.node_id
+        dragStartPos.x = e.clientX
+        dragStartPos.y = e.clientY
+        dragStartPos.nx = node.position.x
+        dragStartPos.ny = node.position.y
+
+        const onMove = (ev) => {
+            if (!draggingNodeId.value) return
+            const dx = (ev.clientX - dragStartPos.x) / viewport.zoom
+            const dy = (ev.clientY - dragStartPos.y) / viewport.zoom
+            const newX = snapToGrid(dragStartPos.nx + dx)
+            const newY = snapToGrid(dragStartPos.ny + dy)
+            store.updateTopologyNode(node.node_id, { position: { x: newX, y: newY } })
+        }
+        const onUp = () => {
+            draggingNodeId.value = null
+            window.removeEventListener('mousemove', onMove)
+            window.removeEventListener('mouseup', onUp)
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp)
+    }
+
+    const onNodeMouseUp = () => { draggingNodeId.value = null }
+
+    const onNodeDoubleClick = (e, node) => {
+        store.selectTopologyNode(node.node_id)
+    }
+
+    const openNodeContextMenu = (e, node) => {
+        e.preventDefault()
+        e.stopPropagation()
+        selectedNodeId.value = node.node_id
+        customContextMenu.visible = true
+        customContextMenu.x = e.clientX
+        customContextMenu.y = e.clientY
+        customContextMenu.targetType = 'node'
+        customContextMenu.targetId = node.node_id
+    }
+
+    // ========== 连线交互 ==========
+
+    const startConnection = (e, nodeId, portType) => {
+        e.stopPropagation()
+        const node = renderNodes.value.find(n => n.node_id === nodeId)
         if (!node) return
 
-        const dx = (e.clientX - dragStart.x) / viewport.zoom
-        const dy = (e.clientY - dragStart.y) / viewport.zoom
+        const pt = getPortPosition(node, portType)
+        drawingConnection.active = true
+        drawingConnection.sourceX = pt.x
+        drawingConnection.sourceY = pt.y
+        drawingConnection.currentX = pt.x
+        drawingConnection.currentY = pt.y
+        drawingConnection.sourceNodeId = nodeId
+        drawingConnection.portType = portType
 
-        const newX = snapToGrid(dragStart.nx + dx)
-        const newY = snapToGrid(dragStart.ny + dy)
+        const standardPort = normalizePortType(portType)
+        const arrowDir = 'right'
+        drawingConnection.previewMarkerUrl = `url(#${getMarkerId(standardPort, arrowDir)})`
 
-        node.position = { x: newX, y: newY }
-    }
-
-    function onNodeMouseUp(e) {
-        if (draggingNode.value) {
-            const draggedNode = topologyNodes.value.find(n => n.node_id === draggingNode.value)
-            if (draggedNode) {
-                // 碰撞推挤
-                const pushed = resolveCollisionsAndPushOthers(topologyNodes.value, draggedNode)
-                // 保存
-                store.saveTopologyToBlueprint()
+        const onMove = (ev) => {
+            if (!drawingConnection.active) return
+            const rect = containerRef.value?.getBoundingClientRect()
+            if (rect) {
+                drawingConnection.currentX = (ev.clientX - rect.left - viewport.x) / viewport.zoom
+                drawingConnection.currentY = (ev.clientY - rect.top - viewport.y) / viewport.zoom
             }
-            draggingNode.value = null
         }
-
-        // 修复：连线释放由 onGlobalMouseUp 统一处理，此处不再重复
-
-        window.removeEventListener('mousemove', onNodeMouseMove)
-        window.removeEventListener('mouseup', onNodeMouseUp)
+        const onUp = (ev) => {
+            if (!drawingConnection.active) return
+            const target = document.elementFromPoint(ev.clientX, ev.clientY)
+            const card = target?.closest('.canvas-node-card')
+            if (card) {
+                const targetId = card.getAttribute('data-node-id')
+                if (targetId && targetId !== nodeId) {
+                    store.addTopologyEdge({
+                        source: nodeId,
+                        target: targetId,
+                        source_port: portType === 'succ' ? 'success' : portType === 'fail' ? 'failure' : portType,
+                        edge_id: `e_${nodeId}_${portType}_${targetId}`
+                    })
+                }
+            }
+            drawingConnection.active = false
+        }
+        window.addEventListener('mousemove', onMove)
+        window.addEventListener('mouseup', onUp, { once: true })
     }
 
-    function onWheel(e) {
-        const delta = e.deltaY > 0 ? 0.9 : 1.1
-        const newZoom = Math.max(0.2, Math.min(4, viewport.zoom * delta))
-
-        // 以鼠标位置为中心缩放
-        const rect = containerRef.value.getBoundingClientRect()
-        const mouseX = e.clientX - rect.left
-        const mouseY = e.clientY - rect.top
-
-        const wx = (mouseX - viewport.x) / viewport.zoom
-        const wy = (mouseY - viewport.y) / viewport.zoom
-
-        viewport.zoom = newZoom
-        viewport.x = mouseX - wx * newZoom
-        viewport.y = mouseY - wy * newZoom
+    const onEdgeClick = (edge) => {
+        selectedEdgeId.value = edge.id
     }
 
-    // 全局 mousemove（平移 + 拉线）
-    function onGlobalMouseMove(e) {
+    // ========== 右键菜单操作 ==========
+
+    const handleCanvasNewNode = (nodeType, x, y) => {
+        const nodeId = `topo_${Date.now()}`
+        store.addTopologyNode({
+            node_id: nodeId,
+            type: nodeType,
+            node_name: availableNodeTypes[nodeType] || nodeType,
+            position: { x: snapToGrid(x), y: snapToGrid(y) }
+        })
+        customContextMenu.visible = false
+    }
+
+    const createAndConnectNode = (nodeType, x, y) => {
+        const newId = `topo_${Date.now()}`
+        store.addTopologyNode({
+            node_id: newId,
+            type: nodeType,
+            node_name: availableNodeTypes[nodeType] || nodeType,
+            position: { x: snapToGrid(x), y: snapToGrid(y) }
+        })
+        if (drawingConnection.sourceNodeId) {
+            store.addTopologyEdge({
+                source: drawingConnection.sourceNodeId,
+                target: newId,
+                source_port: drawingConnection.portType === 'succ' ? 'success' : drawingConnection.portType === 'fail' ? 'failure' : drawingConnection.portType,
+                edge_id: `e_${drawingConnection.sourceNodeId}_${drawingConnection.portType}_${newId}`
+            })
+        }
+        customContextMenu.visible = false
+        drawingConnection.active = false
+    }
+
+    const handleDeleteNode = (nodeId) => {
+        store.deleteTopologyNode(nodeId)
+        store.topologyEdges = store.topologyEdges.filter(e => e.source !== nodeId && e.target !== nodeId)
+        selectedNodeId.value = null
+        customContextMenu.visible = false
+    }
+
+    // ========== 全局事件 ==========
+
+    const onGlobalMouseMove = (e) => {
         if (isPanning.value) {
             viewport.x = panStart.vx + (e.clientX - panStart.x)
             viewport.y = panStart.vy + (e.clientY - panStart.y)
         }
+    }
 
-        if (drawingConnection.active) {
-            const rect = containerRef.value.getBoundingClientRect()
-            drawingConnection.mouseX = (e.clientX - rect.left - viewport.x) / viewport.zoom
-            drawingConnection.mouseY = (e.clientY - rect.top - viewport.y) / viewport.zoom
+    const onGlobalMouseUp = () => {
+        if (isPanning.value) {
+            isPanning.value = false
         }
     }
 
-    function onGlobalMouseUp(e) {
-        isPanning.value = false
-
-        // 修复：在全局 mouseup 中处理连线释放（不依赖 onNodeMouseUp）
-        if (drawingConnection.active) {
-            handleConnectionDrop(e)
+    const onDocClick = (e) => {
+        if (!e.target.closest('.canvas-context-menu')) {
+            customContextMenu.visible = false
         }
-    }
-
-    // ========== 连线创建 ==========
-
-    function startConnection(e, node, portType) {
-        e.preventDefault()
-        e.stopPropagation()
-
-        drawingConnection.active = true
-        drawingConnection.sourceNode = node.node_id
-        drawingConnection.sourcePort = portType
-
-        const rect = containerRef.value.getBoundingClientRect()
-        drawingConnection.mouseX = (e.clientX - rect.left - viewport.x) / viewport.zoom
-        drawingConnection.mouseY = (e.clientY - rect.top - viewport.y) / viewport.zoom
-
-        // 修复：不再重复注册 onGlobalMouseMove/onGlobalMouseUp
-        // 它们已在 onMounted 中注册，且 onGlobalMouseUp 会处理连线释放
-    }
-
-    function handleConnectionDrop(e) {
-        drawingConnection.active = false
-
-        // 检测是否释放在某个节点上
-        const rect = containerRef.value.getBoundingClientRect()
-        const dropX = (e.clientX - rect.left - viewport.x) / viewport.zoom
-        const dropY = (e.clientY - rect.top - viewport.y) / viewport.zoom
-
-        const targetNode = nodesForRouting.value.find(n => {
-            const nx = n.position?.x || 0
-            const ny = n.position?.y || 0
-            const nw = NODE_WIDTH
-            const nh = computeTopologyNodeHeight(n)
-            return dropX >= nx && dropX <= nx + nw && dropY >= ny && dropY <= ny + nh
-        })
-
-        if (targetNode && targetNode.node_id !== drawingConnection.sourceNode) {
-            store.addTopologyEdge({
-                edge_id: `edge_${Date.now()}`,
-                source: drawingConnection.sourceNode,
-                target: targetNode.node_id,
-                source_port: drawingConnection.sourcePort,
-                label: ''
-            })
-        }
-
-        drawingConnection.sourceNode = null
-        // 修复：不再移除全局监听器（由 onMounted/onUnmounted 管理）
-    }
-
-    function onEdgeClick(edge) {
-        selectedEdgeId.value = edge.edge_id
-    }
-
-    // ========== 右键菜单 ==========
-
-    function onContextMenu(e) {
-        contextMenu.x = e.clientX
-        contextMenu.y = e.clientY
-        contextMenu.clickX = e.clientX
-        contextMenu.clickY = e.clientY
-        contextMenu.type = 'canvas'
-        contextMenu.visible = true
-    }
-
-    function onNodeContextMenu(e, node) {
-        contextMenu.x = e.clientX
-        contextMenu.y = e.clientY
-        contextMenu.clickX = e.clientX
-        contextMenu.clickY = e.clientY
-        contextMenu.type = 'node'
-        contextMenu.node = node
-        contextMenu.visible = true
-    }
-
-    // ========== 节点操作 ==========
-
-    function addNode(type, clickX = null, clickY = null) {
-        if (!NODE_WHITELIST.includes(type)) return
-
-        const rect = containerRef.value.getBoundingClientRect()
-        let canvasX, canvasY
-        if (clickX !== null && clickY !== null) {
-            canvasX = (clickX - rect.left - viewport.x) / viewport.zoom
-            canvasY = (clickY - rect.top - viewport.y) / viewport.zoom
-        } else {
-            canvasX = (rect.width / 2 - viewport.x) / viewport.zoom
-            canvasY = (rect.height / 2 - viewport.y) / viewport.zoom
-        }
-
-        const nodeData = {
-            node_id: `topo_${Date.now()}`,
-            node_name: getNodeConfig(type).label,
-            type,
-            page_id: type === 'page_state' ? `page_${Date.now().toString(36)}` : '',
-            position: snapPositionToGrid(canvasX - NODE_WIDTH / 2, canvasY - 30),
-            features: [],
-            feature_mode: 'and',
-            exits: [],
-            params: {},
-            condition: null
-        }
-
-        store.addTopologyNode(nodeData)
-        contextMenu.visible = false
-    }
-
-    function deleteNode(node) {
-        store.removeTopologyNode(node.node_id)
-        contextMenu.visible = false
-    }
-
-    function addExit(node) {
-        const exits = node.exits || []
-        exits.push({
-            exit_id: `exit_${Date.now()}`,
-            label: `出口${exits.length + 1}`,
-            target_page_id: '',
-            action: ''
-        })
-        store.updateTopologyNode(node.node_id, { exits })
-        contextMenu.visible = false
-    }
-
-    function editNodeCondition(node) {
-        conditionDialog.data = node.condition
-        conditionDialog.node = node
-        conditionDialog.visible = true
-        contextMenu.visible = false
-    }
-
-    function editNodeParams(node) {
-        // 可以跳转到右侧检查器面板
-        store.selectTopologyNode(node.node_id)
-        contextMenu.visible = false
-    }
-
-    function onConditionSave(data) {
-        if (conditionDialog.node) {
-            store.updateTopologyNode(conditionDialog.node.node_id, { condition: data.condition })
-        }
-        conditionDialog.visible = false
-    }
-
-    // ========== 视图操作 ==========
-
-    function zoomIn() {
-        viewport.zoom = Math.min(4, viewport.zoom * 1.2)
-    }
-
-    function zoomOut() {
-        viewport.zoom = Math.max(0.2, viewport.zoom * 0.8)
-    }
-
-    function resetView() {
-        viewport.x = 0
-        viewport.y = 0
-        viewport.zoom = 1
     }
 
     // ========== 生命周期 ==========
 
-    // 修复：提取为命名函数以便正确移除
-    function onDocumentClick() {
-        contextMenu.visible = false
-    }
-
     onMounted(() => {
         window.addEventListener('mousemove', onGlobalMouseMove)
         window.addEventListener('mouseup', onGlobalMouseUp)
-        document.addEventListener('click', onDocumentClick)
+        document.addEventListener('click', onDocClick)
 
-        // 初始化：如果拓扑数据为空，尝试从 blueprint 加载
         if (!topologyNodes.value.length) {
-            store.loadTopologyFromBlueprint()
+            store.loadTopologyFromBlueprint?.()
         }
+
+        nextTick(() => {
+            if (containerRef.value) {
+                svgWidth.value = containerRef.value.clientWidth + 2000
+                svgHeight.value = containerRef.value.clientHeight + 1500
+            }
+        })
     })
 
     onUnmounted(() => {
         window.removeEventListener('mousemove', onGlobalMouseMove)
         window.removeEventListener('mouseup', onGlobalMouseUp)
-        // 修复：移除 document click 监听器，避免内存泄漏
-        document.removeEventListener('click', onDocumentClick)
+        document.removeEventListener('click', onDocClick)
     })
+
+    watch(topologyNodes, () => {
+        nextTick(() => {
+            if (containerRef.value) {
+                svgWidth.value = containerRef.value.clientWidth + 2000
+                svgHeight.value = containerRef.value.clientHeight + 1500
+            }
+        })
+    }, { deep: true })
 </script>
 
-<style scoped>
-    .topology-canvas-container {
-        position: relative;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #1a1b26;
-        cursor: grab;
-    }
 
-        .topology-canvas-container:active {
-            cursor: grabbing;
-        }
-
-    .canvas-viewport {
-        position: absolute;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-    }
-
-    .canvas-edges-layer {
-        position: absolute;
-        top: 0;
-        left: 0;
-        pointer-events: none;
-        overflow: visible;
-    }
-
-        .canvas-edges-layer .edge-path {
-            pointer-events: stroke;
-            cursor: pointer;
-        }
-
-    /* 边的基础样式（.edge-path / .edge-flow-path / @keyframes）已由
-       useCanvasSharedStyle() 全局注入 SHARED_EDGE_CSS，此处不再重复定义 */
-
-    .edge-label {
-        fill: #a0a1ab;
-        font-size: 11px;
-        pointer-events: none;
-    }
-
-    /* 节点卡片 */
-    .canvas-node-card {
-        position: absolute;
-        background: #1e1f2b;
-        border: 1px solid rgba(255, 255, 255, 0.08);
-        border-radius: 8px;
-        overflow: visible;
-        cursor: move;
-        user-select: none;
-        transition: box-shadow 0.2s, border-color 0.2s;
-        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    }
-
-        .canvas-node-card:hover {
-            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-            border-color: rgba(78, 209, 156, 0.4);
-        }
-
-        .canvas-node-card.is-selected {
-            border-color: #4ed19c;
-            box-shadow: 0 0 0 2px rgba(78, 209, 156, 0.3), 0 4px 16px rgba(0, 0, 0, 0.3);
-        }
-
-        .canvas-node-card.is-action {
-            border-style: dashed;
-        }
-
-    .node-header {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 6px 10px;
-        border-radius: 8px 8px 0 0;
-        font-size: 12px;
-        font-weight: 500;
-        color: #fff;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .node-title {
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .node-body {
-        padding: 6px 10px;
-        font-size: 11px;
-        color: #a0a1ab;
-    }
-
-    .node-info {
-        line-height: 18px;
-    }
-
-    .info-label {
-        color: #6b7280;
-    }
-
-    /* 端口 / 网格背景基础样式已由 useCanvasSharedStyle() 全局注入 SHARED_NODE_CSS，
-       此处不再重复定义，保持与 WorkflowCanvas 视觉一致 */
-
-    /* 工具栏 */
-    .canvas-toolbar {
-        position: absolute;
-        bottom: 16px;
-        right: 16px;
-        display: flex;
-        align-items: center;
-        gap: 4px;
-        padding: 4px 8px;
-        background: rgba(30, 31, 43, 0.9);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        backdrop-filter: blur(8px);
-        z-index: 100;
-    }
-
-    .toolbar-btn {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 28px;
-        height: 28px;
-        border: none;
-        background: transparent;
-        color: #a0a1ab;
-        border-radius: 4px;
-        cursor: pointer;
-        transition: background 0.2s, color 0.2s;
-    }
-
-        .toolbar-btn:hover {
-            background: rgba(255, 255, 255, 0.1);
-            color: #fff;
-        }
-
-    .zoom-display {
-        font-size: 12px;
-        color: #a0a1ab;
-        min-width: 40px;
-        text-align: center;
-    }
-
-    /* 右键菜单 */
-    .canvas-context-menu {
-        position: fixed;
-        min-width: 160px;
-        background: rgba(30, 31, 43, 0.95);
-        border: 1px solid rgba(255, 255, 255, 0.1);
-        border-radius: 8px;
-        padding: 4px 0;
-        z-index: 1000;
-        backdrop-filter: blur(8px);
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-    }
-
-    .menu-item {
-        padding: 8px 16px;
-        font-size: 13px;
-        color: #e0e0e0;
-        cursor: pointer;
-        transition: background 0.15s;
-    }
-
-        .menu-item:hover {
-            background: rgba(78, 209, 156, 0.15);
-        }
-
-        .menu-item.menu-danger:hover {
-            background: rgba(245, 108, 108, 0.15);
-            color: #f56c6c;
-        }
-
-    .menu-divider {
-        height: 1px;
-        background: rgba(255, 255, 255, 0.1);
-        margin: 4px 0;
-    }
-</style>

@@ -1,279 +1,185 @@
 // canvasRouter.js
-// Á½È«ÆäÃÀµÄÁ¬ÏßÂ·ÓÉÒýÇæ£¨ÁãÍâ²¿ÒÀÀµ£©£º
-// 1. BFS Íø¸ñÑ°Â· ¡ª ÏßÓÀÔ¶²»´©¹ý½Úµã£¨¼Ì³Ð WorkflowCanvas µÄÓÅµã£©
-// 2. ±ß¼ä¾àÆ«ÒÆ ¡ª Æ½ÐÐÏß´í¿ª£¬±ÜÃâÖØµþ£¨½â¾ö WorkflowCanvas µÄÈ±µã£©
-// 3. ¶Ë¿Ú¸ÐÖª ¡ª ´Ó¾«È·¶Ë¿ÚÎ»ÖÃ³ö·¢£¬µ½´ï¾«È·¶Ë¿ÚÎ»ÖÃ
-// 4. ÍÏ×§½µ¼¶ ¡ª ÍÏ×§Ê±ÓÃ¼ò»¯ÕÛÏß£¬ËÉÊÖºó BFS ÖØËã
-// 5. ±´Èû¶ûÔ²½Ç ¡ª Â·¾¶Ô²½Ç»¯£¬ÊÓ¾õÈáºÍ
-// Á½¸ö»­²¼£¨WorkflowCanvas / TopologyCanvas£©¹²ÓÃ´ËÄ£¿é
-// ÐÞ¸´£ºÒÆ³ý pathfinding npm ÒÀÀµ£¬¸ÄÓÃ´¿ JS BFS ÊµÏÖ
+// Production-grade orthogonal router for node-to-node edges.
+// Design principles (reference: Figma / Miro / n8n / Draw.io):
+//   1. Pure geometry â€” deterministic, smooth, no "flying" lines.
+//   2. Routing driven by actual port positions (bottom = success/branch, right = failure, top = entry).
+//   3. For each edge, pick a routing strategy based on source port direction and target relative position.
+//   4. Routes never self-intersect for a single edge; parallel offsets separate multi-edges.
+//   5. Final path is rendered as a smooth rounded polyline (radius 12px) via getRoundedPathString.
 
 import {
     GRID_SIZE, NODE_WIDTH, NODE_MIN_HEIGHT,
     getPortPosition, getArrowDirection, getMarkerId
 } from './canvasShared'
 
-// BFS Íø¸ñ²ÎÊý
-const GRID_CELL = GRID_SIZE  // Ã¿¸ñ 20px£¬Óë»­²¼Íø¸ñÒ»ÖÂ
-const GRID_PADDING = 200     // Íø¸ñ±ß½çÁô°×
-const GRID_DIM = 600         // 600 * 20 = 12000px ¸²¸Ç·¶Î§
+const DEFAULT_ROUTE_OFFSET = 50
+const PARALLEL_OFFSET = 20
 
-/**
- * ÇáÁ¿¼¶ BFS Íø¸ñÂ·ÓÉÆ÷
- * ²»ÒÀÀµÈÎºÎÍâ²¿¿â£¬´¿ JavaScript ÊµÏÖ
- */
-export class GridRouter {
-    constructor() {
-        this.gridW = GRID_DIM
-        this.gridH = GRID_DIM
-        this.gridOffset = GRID_PADDING
+// ---------------------------------------------------------------------------
+// Strategy selection
+// ---------------------------------------------------------------------------
+
+function selectStrategy(sourcePort, srcPt, tgtPt) {
+    const dx = tgtPt.x - srcPt.x
+    const dy = tgtPt.y - srcPt.y
+
+    let srcDir = 'down'
+    if (sourcePort === 'failure' || sourcePort === 'fail') srcDir = 'right'
+    else if (sourcePort === 'entry') srcDir = 'up'
+    else if (sourcePort === 'success' || sourcePort === 'succ' || sourcePort === 'exit' ||
+             sourcePort.startsWith('exit_') || sourcePort.startsWith('branch_')) srcDir = 'down'
+
+    const tgtToRight = dx >= 0
+    const tgtBelow = dy >= 0
+
+    if (srcDir === 'down') {
+        if (tgtBelow && tgtToRight) return 'Z-right'
+        if (tgtBelow && !tgtToRight) return 'Z-left'
+        if (!tgtBelow && tgtToRight) return 'S-right-up'
+        return 'S-left-up'
     }
-
-    /**
-     * ÏñËØ×ø±ê -> Íø¸ñ×ø±ê
-     */
-    toGridCoord(x, y) {
-        return {
-            gx: Math.floor((x + this.gridOffset) / GRID_CELL),
-            gy: Math.floor((y + this.gridOffset) / GRID_CELL)
-        }
+    if (srcDir === 'right') {
+        if (tgtToRight) return 'Z-right'
+        return 'U-turn'
     }
-
-    /**
-     * Íø¸ñ×ø±ê -> ÏñËØ×ø±ê£¨¸ñ×ÓÖÐÐÄ£©
-     */
-    toPixelCoord(gx, gy) {
-        return {
-            x: gx * GRID_CELL - this.gridOffset + GRID_CELL / 2,
-            y: gy * GRID_CELL - this.gridOffset + GRID_CELL / 2
-        }
+    if (srcDir === 'up') {
+        if (!tgtBelow && tgtToRight) return 'S-right-down'
+        if (!tgtBelow && !tgtToRight) return 'S-left-down'
+        return 'fallback'
     }
-
-    /**
-     * ½«½Úµã¾ØÐÎ±ê¼ÇÎªÍø¸ñÕÏ°­Îï
-     */
-    markObstacle(walkable, node) {
-        const x = node.position?.x || 0
-        const y = node.position?.y || 0
-        const w = node.size?.w || NODE_WIDTH
-        const h = node.size?.h || NODE_MIN_HEIGHT
-
-        const minGX = Math.max(0, Math.floor((x + this.gridOffset) / GRID_CELL))
-        const minGY = Math.max(0, Math.floor((y + this.gridOffset) / GRID_CELL))
-        const maxGX = Math.min(this.gridW - 1, Math.floor((x + w + this.gridOffset) / GRID_CELL))
-        const maxGY = Math.min(this.gridH - 1, Math.floor((y + h + this.gridOffset) / GRID_CELL))
-
-        for (let gx = minGX; gx <= maxGX; gx++) {
-            for (let gy = minGY; gy <= maxGY; gy++) {
-                walkable[gy * this.gridW + gx] = false
-            }
-        }
-    }
-
-    /**
-     * ÔÚÆðÖ¹µã¸½½üÇå³ýÕÏ°­£¨È·±£¶Ë¿Ú¿É³ö·¢/µ½´ï£©
-     */
-    clearAround(walkable, gx, gy, radius = 1) {
-        for (let dy = -radius; dy <= radius; dy++) {
-            for (let dx = -radius; dx <= radius; dx++) {
-                const x = gx + dx
-                const y = gy + dy
-                if (x >= 0 && x < this.gridW && y >= 0 && y < this.gridH) {
-                    walkable[y * this.gridW + x] = true
-                }
-            }
-        }
-    }
-
-    /**
-     * BFS Ñ°Â·ºËÐÄ
-     * @returns {Array<[gx, gy]>} Íø¸ñÂ·¾¶£¬»ò null
-     */
-    bfs(walkable, startGX, startGY, endGX, endGY) {
-        if (startGX === endGX && startGY === endGY) return [[startGX, startGY]]
-
-        const W = this.gridW
-        const visited = new Uint8Array(W * this.gridH)
-        const parent = new Int32Array(W * this.gridH).fill(-1)
-        const queue = []
-        let head = 0
-
-        const startIdx = startGY * W + startGX
-        visited[startIdx] = 1
-        queue.push(startIdx)
-
-        // 4 ·½Ïò£ºÓÒ¡¢ÏÂ¡¢×ó¡¢ÉÏ
-        const dirs = [[1, 0], [0, 1], [-1, 0], [0, -1]]
-
-        while (head < queue.length) {
-            const curIdx = queue[head++]
-            const curGX = curIdx % W
-            const curGY = Math.floor(curIdx / W)
-
-            if (curGX === endGX && curGY === endGY) {
-                // »ØËÝÂ·¾¶
-                const path = []
-                let idx = curIdx
-                while (idx !== -1) {
-                    path.push([idx % W, Math.floor(idx / W)])
-                    idx = parent[idx]
-                }
-                path.reverse()
-                return path
-            }
-
-            for (const [dx, dy] of dirs) {
-                const nx = curGX + dx
-                const ny = curGY + dy
-                if (nx < 0 || nx >= W || ny < 0 || ny >= this.gridH) continue
-                const nIdx = ny * W + nx
-                if (visited[nIdx]) continue
-                if (!walkable[nIdx]) continue
-                visited[nIdx] = 1
-                parent[nIdx] = curIdx
-                queue.push(nIdx)
-            }
-        }
-
-        return null
-    }
-
-    /**
-     * ÍêÕûÂ·ÓÉ£º´ÓÔ´¶Ë¿Úµ½Ä¿±ê¶Ë¿Ú
-     * @param {Object} sourceNode
-     * @param {Object} targetNode
-     * @param {Array} allNodes - ËùÓÐ½Úµã£¨ÕÏ°­Îï£©
-     * @param {String} sourcePort - Ô´¶Ë¿ÚÀàÐÍ
-     * @param {String} targetPort - Ä¿±ê¶Ë¿ÚÀàÐÍ
-     * @param {Object} options - { offsetIndex, totalParallel, avoidNodes }
-     * @returns {Array<{x, y}>} ÏñËØÂ·¾¶µãÊý×é
-     */
-    route(sourceNode, targetNode, allNodes, sourcePort = 'success', targetPort = 'entry', options = {}) {
-        const { offsetIndex = 0, totalParallel = 1, avoidNodes = [] } = options
-
-        // 1. ¼ÆËãÆðÖ¹¶Ë¿ÚÏñËØÎ»ÖÃ
-        const startPt = getPortPosition(sourceNode, sourcePort, options)
-        const endPt = getPortPosition(targetNode, targetPort, options)
-
-        // ±ß¼ä¾àÆ«ÒÆ£ºÆ½ÐÐ±ßÔÚ´¹Ö±·½Ïò´í¿ª
-        const offset = totalParallel > 1
-            ? (offsetIndex - (totalParallel - 1) / 2) * (GRID_CELL * 0.75)
-            : 0
-
-        // 2. ¹¹½¨¿ÉÍ¨ÐÐÍø¸ñ
-        const walkable = new Uint8Array(this.gridW * this.gridH).fill(1)
-
-        // 3. ËùÓÐ½ÚµãÉèÎªÕÏ°­Îï£¨³ýÁËÔ´ºÍÄ¿±ê£©
-        allNodes.forEach(n => {
-            if (n === sourceNode || n === targetNode) return
-            if (avoidNodes.includes(n.node_id)) return
-            this.markObstacle(walkable, n)
-        })
-
-        // 4. ×ª»»ÎªÍø¸ñ×ø±ê
-        const startGrid = this.toGridCoord(startPt.x, startPt.y)
-        const endGrid = this.toGridCoord(endPt.x, endPt.y)
-
-        // ÆðÖ¹µã¸½½üÇå³ýÕÏ°­£¨È·±£¶Ë¿Ú¿ÉÍ¨ÐÐ£©
-        this.clearAround(walkable, startGrid.gx, startGrid.gy, 2)
-        this.clearAround(walkable, endGrid.gx, endGrid.gy, 2)
-
-        // 5. BFS Ñ°Â·
-        let path = this.bfs(walkable, startGrid.gx, startGrid.gy, endGrid.gx, endGrid.gy)
-
-        if (!path || path.length < 2) {
-            // BFS Ê§°Ü£¬½µ¼¶ÎªÖÐµãÕÛÏß
-            return this.fallbackPath(startPt, endPt, sourcePort)
-        }
-
-        // 6. ×ª»»ÎªÏñËØ×ø±ê
-        const pixelPath = path.map(([gx, gy]) => this.toPixelCoord(gx, gy))
-
-        // Ìæ»»Ê×Î²Îª¾«È·¶Ë¿ÚÎ»ÖÃ
-        pixelPath[0] = startPt
-        pixelPath[pixelPath.length - 1] = endPt
-
-        // 7. Õý½»»¯ + È¥¹²Ïßµã
-        const simplified = this.simplifyPath(pixelPath)
-
-        // 8. Ó¦ÓÃ±ß¼ä¾àÆ«ÒÆ£¨ÔÚÆ½ÐÐ¶Î´í¿ª£©
-        const offsetPath = this.applyOffset(simplified, offset, sourcePort, targetPort)
-
-        return offsetPath
-    }
-
-    /**
-     * È¥¹²Ïßµã¼ò»¯
-     */
-    simplifyPath(points) {
-        if (points.length < 3) return points
-        const result = [points[0]]
-        for (let i = 1; i < points.length - 1; i++) {
-            const prev = points[i - 1]
-            const curr = points[i]
-            const next = points[i + 1]
-            // Èç¹ûÈýµã¹²Ïß£¬Ìø¹ýÖÐ¼äµã
-            const cross = (curr.x - prev.x) * (next.y - curr.y) - (curr.y - prev.y) * (next.x - curr.x)
-            if (Math.abs(cross) > 0.01) {
-                result.push(curr)
-            }
-        }
-        result.push(points[points.length - 1])
-        return result
-    }
-
-    /**
-     * Ó¦ÓÃ±ß¼ä¾àÆ«ÒÆ
-     * ÔÚÂ·¾¶µÄÖÐ¼ä¶ÎÉÏµþ¼Ó´¹Ö±Æ«ÒÆ£¬Ê¹Æ½ÐÐÏß´í¿ª
-     */
-    applyOffset(points, offset, sourcePort, targetPort) {
-        if (offset === 0 || points.length < 2) return points
-
-        const result = [...points]
-        for (let i = 1; i < result.length - 1; i++) {
-            const prev = result[i - 1]
-            const curr = result[i]
-            const next = result[i + 1]
-
-            // ÅÐ¶ÏÊÇË®Æ½¶Î»¹ÊÇ´¹Ö±¶Î
-            const isHorizontal = Math.abs(curr.x - prev.x) > Math.abs(curr.y - prev.y)
-            if (isHorizontal) {
-                result[i] = { x: curr.x, y: curr.y + offset }
-            } else {
-                result[i] = { x: curr.x + offset, y: curr.y }
-            }
-        }
-        return result
-    }
-
-    /**
-     * ½µ¼¶Â·¾¶£ºÖÐµãÕÛÏß
-     */
-    fallbackPath(start, end, sourcePort) {
-        const isFromBottom = sourcePort === 'success' || sourcePort === 'exit' || sourcePort.startsWith('exit_')
-        const isFromRight = sourcePort === 'failure'
-
-        if (isFromRight) {
-            const midX = (start.x + end.x) / 2
-            return [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
-        } else if (isFromBottom) {
-            const midY = (start.y + end.y) / 2
-            return [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
-        } else {
-            const midY = (start.y + end.y) / 2
-            return [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
-        }
-    }
+    return 'fallback'
 }
 
-// µ¥ÀýÂ·ÓÉÆ÷£¨±ÜÃâÃ¿´Î´´½¨ÐÂÊµÀý£©
-const _router = new GridRouter()
+// ---------------------------------------------------------------------------
+// Path builders per strategy
+// ---------------------------------------------------------------------------
+
+function buildZRight(src, tgt, offset) {
+    const midY = src.y + Math.max(offset, Math.abs(tgt.y - src.y) * 0.4)
+    return [src, { x: src.x, y: midY }, { x: tgt.x, y: midY }, tgt]
+}
+
+function buildZLeft(src, tgt, offset) {
+    const midY = src.y + Math.max(offset, Math.abs(tgt.y - src.y) * 0.4)
+    return [src, { x: src.x, y: midY }, { x: tgt.x, y: midY }, tgt]
+}
+
+function buildSRightUp(src, tgt, offset) {
+    const downY = src.y + offset
+    const midX = Math.max(src.x + offset, tgt.x + 30)
+    return [src, { x: src.x, y: downY }, { x: midX, y: downY }, { x: midX, y: tgt.y }, tgt]
+}
+
+function buildSLeftUp(src, tgt, offset) {
+    const downY = src.y + offset
+    const midX = Math.min(src.x - offset, tgt.x - 30)
+    return [src, { x: src.x, y: downY }, { x: midX, y: downY }, { x: midX, y: tgt.y }, tgt]
+}
+
+function buildURight(src, tgt, offset) {
+    const midX = src.x + Math.max(offset, Math.abs(tgt.x - src.x) * 0.4)
+    return [src, { x: midX, y: src.y }, { x: midX, y: tgt.y }, tgt]
+}
+
+function buildUTurn(src, tgt, offset) {
+    const bottomY = Math.max(src.y, tgt.y) + offset
+    const midX = src.x + offset
+    return [src, { x: midX, y: src.y }, { x: midX, y: bottomY }, { x: tgt.x, y: bottomY }, tgt]
+}
+
+function buildSRightDown(src, tgt, offset) {
+    const upY = src.y - offset
+    const midX = Math.max(src.x + offset, tgt.x + 30)
+    return [src, { x: src.x, y: upY }, { x: midX, y: upY }, { x: midX, y: tgt.y }, tgt]
+}
+
+function buildSLeftDown(src, tgt, offset) {
+    const upY = src.y - offset
+    const midX = Math.min(src.x - offset, tgt.x - 30)
+    return [src, { x: src.x, y: upY }, { x: midX, y: upY }, { x: midX, y: tgt.y }, tgt]
+}
+
+function buildFallback(src, tgt, _offset) {
+    const midY = (src.y + tgt.y) / 2
+    return [src, { x: src.x, y: midY }, { x: tgt.x, y: midY }, tgt]
+}
+
+// ---------------------------------------------------------------------------
+// Router entrypoint
+// ---------------------------------------------------------------------------
 
 /**
- * Â·¾¶Ô²½Ç»¯
- * ½«Ó²Ö±½ÇÕÛÏß×ªÎªÔ²½Ç SVG path ×Ö·û´®
+ * Compute a clean orthogonal path for an edge between two nodes.
  */
-export function getRoundedPathString(points, radius = 10) {
+export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success', options = {}) {
+    const { offsetIndex = 0, totalParallel = 1 } = options
+
+    const startPt = getPortPosition(sourceNode, sourcePort, options)
+    const endPt = getPortPosition(targetNode, 'entry', options)
+
+    const absDx = Math.abs(endPt.x - startPt.x)
+    const absDy = Math.abs(endPt.y - startPt.y)
+
+    if (absDx < 3 && absDy < 3) {
+        const points = [startPt, endPt]
+        return finalize(points, sourcePort)
+    }
+
+    const offset = DEFAULT_ROUTE_OFFSET + Math.max(0, totalParallel - 1) * 10
+    const parallelShift = totalParallel > 1
+        ? (offsetIndex - (totalParallel - 1) / 2) * PARALLEL_OFFSET
+        : 0
+
+    const strategy = selectStrategy(sourcePort, startPt, endPt)
+    let points
+    switch (strategy) {
+        case 'Z-right':       points = buildZRight(startPt, endPt, offset); break
+        case 'Z-left':        points = buildZLeft(startPt, endPt, offset); break
+        case 'S-right-up':    points = buildSRightUp(startPt, endPt, offset); break
+        case 'S-left-up':     points = buildSLeftUp(startPt, endPt, offset); break
+        case 'U-right':       points = buildURight(startPt, endPt, offset); break
+        case 'U-turn':        points = buildUTurn(startPt, endPt, offset); break
+        case 'S-right-down':  points = buildSRightDown(startPt, endPt, offset); break
+        case 'S-left-down':   points = buildSLeftDown(startPt, endPt, offset); break
+        default:              points = buildFallback(startPt, endPt, offset)
+    }
+
+    if (parallelShift !== 0 && points.length >= 3) {
+        points = applyParallelOffset(points, parallelShift)
+    }
+
+    return finalize(points, sourcePort)
+}
+
+function finalize(points, sourcePort) {
+    const pathD = getRoundedPathString(points, 12)
+    const arrowDir = getArrowDirection(points)
+    const markerId = getMarkerId(sourcePort, arrowDir)
+    return { pathD, arrowDir, markerId, points }
+}
+
+function applyParallelOffset(points, shift) {
+    if (points.length < 3) return points
+    const result = [points[0]]
+    for (let i = 1; i < points.length - 1; i++) {
+        const prev = points[i - 1]
+        const curr = points[i]
+        const isHoriz = Math.abs(curr.x - prev.x) > Math.abs(curr.y - prev.y)
+        if (isHoriz) {
+            result.push({ x: curr.x, y: curr.y + shift })
+        } else {
+            result.push({ x: curr.x + shift, y: curr.y })
+        }
+    }
+    result.push(points[points.length - 1])
+    return result
+}
+
+// ---------------------------------------------------------------------------
+// Rounded polyline (used by edges and preview paths)
+// ---------------------------------------------------------------------------
+
+export function getRoundedPathString(points, radius = 12) {
     if (!points || points.length < 2) return ''
     if (points.length === 2) {
         return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`
@@ -286,7 +192,6 @@ export function getRoundedPathString(points, radius = 10) {
         const curr = points[i]
         const next = points[i + 1]
 
-        // ¼ÆËãÈëÉäºÍ³öÉäÏòÁ¿
         const v1x = curr.x - prev.x
         const v1y = curr.y - prev.y
         const v2x = next.x - curr.x
@@ -295,7 +200,6 @@ export function getRoundedPathString(points, radius = 10) {
         const v1Len = Math.sqrt(v1x * v1x + v1y * v1y) || 1
         const v2Len = Math.sqrt(v2x * v2x + v2y * v2y) || 1
 
-        // Ô²½ÇÆðµãºÍÖÕµã
         const r = Math.min(radius, v1Len / 2, v2Len / 2)
         const p1x = curr.x - (v1x / v1Len) * r
         const p1y = curr.y - (v1y / v1Len) * r
@@ -308,78 +212,51 @@ export function getRoundedPathString(points, radius = 10) {
 
     const last = points[points.length - 1]
     path += ` L ${last.x} ${last.y}`
-
     return path
 }
 
+// ---------------------------------------------------------------------------
+// Preview path (used during drag-to-connect)
+// ---------------------------------------------------------------------------
+
+export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
+    const dx = end.x - start.x
+    const dy = end.y - start.y
+    const absDx = Math.abs(dx)
+    const absDy = Math.abs(dy)
+
+    if (absDx < 4 && absDy < 4) {
+        return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+    }
+
+    let srcDir = 'down'
+    if (sourcePort === 'failure' || sourcePort === 'fail') srcDir = 'right'
+    else if (sourcePort === 'entry') srcDir = 'up'
+
+    const offset = 40
+    let points
+
+    if (srcDir === 'down') {
+        const midY = start.y + Math.max(offset, absDy * 0.3)
+        points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
+    } else if (srcDir === 'right') {
+        const midX = start.x + Math.max(offset, absDx * 0.3)
+        points = [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
+    } else {
+        const midY = start.y - Math.max(offset, absDy * 0.3)
+        points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
+    }
+
+    return getRoundedPathString(points, 10)
+}
+
 /**
- * ¼ò»¯°æ±´Èû¶ûÂ·¾¶£¨ÍÏ×§Ê±Ê¹ÓÃ£¬²»×ß BFS£©
+ * Legacy bezier (not used anymore, kept for backward compat).
  */
 export function getSimpleBezierPath(start, end) {
-    const dy = Math.abs(end.y - start.y)
     const dx = Math.abs(end.x - start.x)
     const offset = Math.max(40, dx * 0.4)
-    return `M ${start.x} ${start.y} C ${start.x} ${start.y + offset}, ${end.x} ${end.y - offset}, ${end.x} ${end.y}`
+    return `M ${start.x} ${start.y + offset}, ${end.x} ${end.y - offset}, ${end.x} ${end.y}`
 }
 
-/**
- * ¼ò»¯°æÕÛÏßÂ·¾¶£¨ÍÏ×§Ê±Ê¹ÓÃ£©
- */
-export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
-    const isFromBottom = sourcePort === 'success' || sourcePort === 'exit' || sourcePort.startsWith('exit_')
-    const isFromRight = sourcePort === 'failure'
-
-    if (isFromRight) {
-        const midX = (start.x + end.x) / 2
-        return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`
-    } else if (isFromBottom) {
-        const midY = (start.y + end.y) / 2
-        return `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`
-    } else {
-        const midY = (start.y + end.y) / 2
-        return `M ${start.x} ${start.y} L ${start.x} ${midY} L ${end.x} ${midY} L ${end.x} ${end.y}`
-    }
-}
-
-/**
- * ¼ÆËãÁ¬ÏßµÄÍêÕû SVG path£¨BFS Â·ÓÉ + Ô²½Ç»¯£©
- * @param {Object} sourceNode
- * @param {Object} targetNode
- * @param {Array} allNodes
- * @param {String} sourcePort
- * @param {Object} options - { isDragging, offsetIndex, totalParallel }
- * @returns {{ pathD: string, arrowDir: string, markerId: string, points: Array }}
- */
-export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success', options = {}) {
-    const { isDragging = false, offsetIndex = 0, totalParallel = 1 } = options
-
-    const startPt = getPortPosition(sourceNode, sourcePort, options)
-    const endPt = getPortPosition(targetNode, 'entry', options)
-
-    let points
-    if (isDragging) {
-        // ÍÏ×§Ê±ÓÃ¼ò»¯ÕÛÏß£¨²»×ß BFS£¬±ÜÃâÃ¿Ö¡Ñ°Â·¿¨¶Ù£©
-        points = _router.fallbackPath(startPt, endPt, sourcePort)
-    } else {
-        // ¾²Ì¬Ê±×ß BFS Ñ°Â·
-        try {
-            points = _router.route(sourceNode, targetNode, allNodes, sourcePort, 'entry', {
-                offsetIndex,
-                totalParallel
-            })
-        } catch (e) {
-            // Òì³£Ê±½µ¼¶
-            console.warn('[canvasRouter] BFS Â·ÓÉÊ§°Ü£¬½µ¼¶ÎªÕÛÏß:', e)
-            points = _router.fallbackPath(startPt, endPt, sourcePort)
-        }
-    }
-
-    // Ô²½Ç»¯
-    const pathD = getRoundedPathString(points, 10)
-
-    // ¼ýÍ··½Ïò
-    const arrowDir = getArrowDirection(points)
-    const markerId = getMarkerId(sourcePort, arrowDir)
-
-    return { pathD, arrowDir, markerId, points }
-}
+export { GRID_SIZE, NODE_WIDTH, NODE_MIN_HEIGHT }

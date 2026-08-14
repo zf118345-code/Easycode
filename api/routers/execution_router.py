@@ -1,5 +1,5 @@
 import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Body
 from fastapi.responses import StreamingResponse
 
 from core.schemas import RunRequestSchema

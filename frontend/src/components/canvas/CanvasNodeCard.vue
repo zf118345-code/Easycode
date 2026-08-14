@@ -1,16 +1,35 @@
 <!-- frontend/src/components/canvas/CanvasNodeCard.vue -->
+<!--
+    Shared node card for WorkflowCanvas + TopologyCanvas.
+    The visual appearance is identical between the two modes.
+    Only the body content and port visibility differ (driven by the `mode` prop).
+
+    Port layout (industry standard):
+      - entry   : LEFT  (target) — where an incoming edge lands
+      - success : BOTTOM (primary exit, green)
+      - failure : RIGHT  (failure exit, red)
+      - branch_N / exit_N : stacked on the right side
+-->
 <template>
     <div
-        :class="['canvas-node-card', { 'is-selected': selected, 'is-active-debug': isActiveDebug }]"
-        :style="{ left: node.position.x + 'px', top: node.position.y + 'px', width: node.w + 'px', height: node.h + 'px' }"
+        :class="['canvas-node-card', {
+            'is-selected': selected,
+            'is-active-debug': isActiveDebug,
+            'is-topology': mode === 'topology'
+        }]"
+        :style="cardStyle"
+        :data-node-id="node.node_id"
         @mousedown.stop="$emit('node-mousedown', $event, node)"
         @mouseup="$emit('node-mouseup', $event, node)"
         @dblclick.stop="$emit('node-dblclick', $event, node)"
         @contextmenu.prevent.stop="$emit('node-contextmenu', $event, node)">
-
-        <!-- 1. 卡片头部 -->
-        <div class="node-header" :data-node-id="node.node_id">
+<!-- 1. Header with accent color (per-type) -->
+        <div
+            class="node-header"
+            :style="headerStyle"
+            :data-node-id="node.node_id">
             <span
+                v-if="mode !== 'topology'"
                 class="node-breakpoint-gutter"
                 :class="{ active: hasBreakpoint }"
                 title="点击切换断点"
@@ -26,11 +45,27 @@
             </span>
         </div>
 
-        <!-- 2. 卡片中间主体区 -->
+        <!-- 2. Body — mode-specific content -->
         <div class="node-body" :data-node-id="node.node_id">
-            <!-- 图像识别节点预览 -->
+            <!-- Topology mode body -->
+            <template v-if="mode === 'topology'">
+                <div v-if="node.node_type === 'page_state' && node.page_id" class="node-info">
+                    <span class="info-label">页面:</span> {{ node.page_id }}
+                </div>
+                <div v-if="node.features && node.features.length" class="node-info">
+                    <span class="info-label">特征:</span> {{ node.features.length }} 个 ({{ node.feature_mode || 'and' }})
+                </div>
+                <div v-if="node.exits && node.exits.length" class="node-info">
+                    <span class="info-label">出口:</span> {{ node.exits.length }} 个
+                </div>
+                <div v-if="node.node_type === 'smart_jump' && node.target_page" class="node-info">
+                    <span class="info-label">跳转至:</span> {{ node.target_page }}
+                </div>
+            </template>
+
+            <!-- Workflow mode: image recognition preview -->
             <div
-                v-if="node.node_type === 'image_recognition'"
+                v-else-if="node.node_type === 'image_recognition'"
                 class="node-image-embedded"
                 :style="node.params?.image_source ? { '--bg-image-url': `url(${imageThumbUrl})` } : {}">
                 <img
@@ -41,12 +76,12 @@
                     @load="onImageLoaded"
                     @error="$event.target.style.display = 'none'" />
                 <div v-else class="embedded-placeholder">
-                    <Image style="width: 16px; height: 16px; opacity: 0.5; margin-bottom: 2px;" />
+                    <Image class="embedded-icon" style="width: 18px; height: 18px; opacity: 0.5;" />
                     <span>未选模板</span>
                 </div>
             </div>
 
-            <!-- 分支选择 Branch 节点 -->
+            <!-- Workflow mode: branch candidates -->
             <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
                 <div
                     v-for="(cand, cIdx) in (node.params?.candidates || [])"
@@ -61,36 +96,112 @@
                         @mousedown.stop="$emit('start-connection', $event, node.node_id, `branch_${cIdx}`)" />
                 </div>
                 <div v-if="!node.params?.candidates?.length" class="empty-cand-placeholder">
-                    <span>未配置分流条件</span>
+                    未配置分流条件
                 </div>
             </div>
+
+            <!-- Workflow mode: generic info display -->
+            <template v-else-if="mode !== 'topology'">
+                <div v-if="node.node_type === 'log' && node.params?.message" class="node-info">
+                    <span class="info-label">日志:</span> {{ truncateText(node.params.message, 28) }}
+                </div>
+                <div v-if="node.node_type === 'logic_check' && node.params?.condition_type" class="node-info">
+                    <span class="info-label">条件:</span> {{ node.params.condition_type }}
+                </div>
+                <div v-if="node.node_type === 'variable_op' && node.params?.variable_name" class="node-info">
+                    <span class="info-label">变量:</span> {{ node.params.variable_name }}
+                </div>
+                <div v-if="node.node_type === 'script_call' && node.params?.script_name" class="node-info">
+                    <span class="info-label">脚本:</span> {{ node.params.script_name }}
+                </div>
+                <div v-if="node.node_type === 'click' && node.params?.selector" class="node-info">
+                    <span class="info-label">选择器:</span> {{ truncateText(node.params.selector, 24) }}
+                </div>
+            </template>
         </div>
 
-        <!-- 3. 卡片底部固定边栏 -->
-        <div class="node-footer-bar" :data-node-id="node.node_id">
+        <!-- 3. Footer bar (workflow mode only) -->
+        <div v-if="mode !== 'topology'" class="node-footer-bar" :data-node-id="node.node_id">
             <span class="footer-tag">延时: {{ node.delay_before ?? 200 }}ms</span>
             <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
         </div>
 
-        <!-- 通用入口与失败/兜底锚点 -->
-        <div class="node-handle target-handle top-handle" title="入口位置" />
-        <div v-if="node.node_type !== 'branch'" class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')" />
-        <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" :title="node.node_type === 'branch' ? 'Else 兜底分支出口' : '失败分支出口'" @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')" />
+        <!-- 4. Ports / handles (shared between modes) -->
+        <!-- Entry target on the left (always visible) -->
+        <div class="node-handle entry-handle" title="入口 (entry)" />
+
+        <!-- Success exit — bottom center -->
+        <div
+            v-if="showSuccessPort"
+            class="node-handle source-handle succ-handle"
+            :title="mode === 'topology' ? '主出口 (success)' : '成功出口 (success)'"
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')" />
+
+        <!-- Failure exit — right middle -->
+        <div
+            v-if="showFailPort"
+            class="node-handle source-handle fail-handle"
+            :title="node.node_type === 'branch' ? 'Else 兜底出口' : '失败出口 (failure)'"
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')" />
+
+        <!-- Topology mode: dynamic stacked exits on the right -->
+        <template v-if="mode === 'topology'">
+            <div
+                v-for="(exit, idx) in (node.exits || [])"
+                :key="`exit_${idx}`"
+                class="node-handle source-handle exit-handle"
+                :style="{ top: `${42 + idx * 28}px` }"
+                :title="exit.label || `出口${idx + 1}`"
+                @mousedown.stop="$emit('start-connection', $event, node.node_id, `exit_${idx}`)" />
+        </template>
+
+        <!-- Workflow mode: stacked branch exits -->
+        <template v-if="mode !== 'topology' && node.node_type === 'branch'">
+            <div
+                v-for="(cand, idx) in (node.params?.candidates || [])"
+                :key="`branch_${idx}`"
+                class="node-handle source-handle exit-handle"
+                :style="{ top: `${82 + idx * 28}px` }"
+                :title="`分支 ${idx + 1}`"
+                @mousedown.stop="$emit('start-connection', $event, node.node_id, `branch_${idx}`)" />
+        </template>
     </div>
 </template>
 
 <script setup>
     import { computed, reactive } from 'vue'
-    import { CirclePlay, Image as ImageIcon } from 'lucide-vue-next'
-    import { NODE_TYPE_CONFIG } from '@/utils/canvasShared'
+    import {
+        CirclePlay,
+        Image as ImageIcon,
+        MousePointerClick,
+        Timer,
+        ScrollText,
+        Type,
+        GitBranch,
+        Filter,
+        Variable,
+        Code,
+        AppWindow,
+        MapPin,
+        Navigation,
+        Square,
+        SearchCheck,
+        Binary,
+        ListOrdered,
+        FileCode,
+        Target,
+        Clock
+    } from 'lucide-vue-next'
+    import { getNodeConfig } from '@/utils/canvasShared'
 
     const props = defineProps({
-        node: { type: Object, required: true },
-        selected: { type: Boolean, default: false },
-        isActiveDebug: { type: Boolean, default: false },
-        hasBreakpoint: { type: Boolean, default: false },
-        currentProjectPath: { type: String, default: '' },
-        blueprintVersion: { type: [Number, String], default: 0 }
+        node:              { type: Object,  required: true },
+        selected:          { type: Boolean, default: false },
+        isActiveDebug:     { type: Boolean, default: false },
+        hasBreakpoint:     { type: Boolean, default: false },
+        currentProjectPath:{ type: String,  default: '' },
+        blueprintVersion:  { type: [Number, String], default: 0 },
+        mode:              { type: String,  default: 'workflow' }
     })
 
     const emit = defineEmits([
@@ -103,31 +214,45 @@
         'image-loaded'
     ])
 
-    // 图标组件缓存
-    const _iconCache = { CirclePlay, Image: ImageIcon }
-    const _iconComponentMap = {
-        click: 'MousePointerClick',
-        wait: 'Clock',
-        set_window: 'Target',
-        image_recognition: 'Image',
-        ocr_recognition: 'FileSearch',
-        branch: 'GitBranch',
-        logic_check: 'SearchCheck',
-        variable_op: 'Binary',
-        log: 'ListOrdered',
-        script_call: 'FileCode',
-        smart_jump: 'Compass'
+    const headerStyle = computed(() => {
+        const config = getNodeConfig(props.node.node_type)
+        return { '--node-accent': config.color }
+    })
+
+    const cardStyle = computed(() => ({
+        left:   props.node.position.x + 'px',
+        top:    props.node.position.y + 'px',
+        width:  props.node.w + 'px',
+        height: props.node.h + 'px'
+    }))
+
+    const showSuccessPort = computed(() => {
+        if (props.mode === 'topology') {
+            return true
+        }
+        return props.node.node_type !== 'branch'
+    })
+
+    const showFailPort = computed(() => {
+        if (props.mode === 'topology') {
+            return ['page_state', 'image_recognition', 'ocr_recognition', 'smart_jump'].includes(props.node.node_type)
+        }
+        return !!props.node.showFailPort
+    })
+
+    const _iconRegistry = {
+        MousePointerClick, Timer, ScrollText, Image: ImageIcon, Type, GitBranch,
+        Filter, Variable, Code, AppWindow, MapPin, Navigation, Square,
+        Clock, SearchCheck, Binary, ListOrdered, FileCode, Target
     }
 
     const nodeIcon = computed(() => {
-        const config = NODE_TYPE_CONFIG[props.node.node_type]
-        const iconName = config?.icon || _iconComponentMap[props.node.node_type]
-        return _iconCache[iconName] || ImageIcon
+        const config = getNodeConfig(props.node.node_type)
+        const iconName = config?.icon || 'Square'
+        return _iconRegistry[iconName] || Square
     })
 
-    // 图像高度追踪
     const tallImageFlags = reactive({})
-
     const isSpecialTallImage = computed(() => !!tallImageFlags[props.node.node_id])
 
     const imageThumbUrl = computed(() => {
@@ -144,34 +269,36 @@
         const naturalH = img.naturalHeight || 100
         const cardInnerWidth = props.node.w - 24
         const ratio = naturalH / naturalW
-        if (ratio > 1) {
-            tallImageFlags[props.node.node_id] = true
-        }
+        if (ratio > 1) tallImageFlags[props.node.node_id] = true
         emit('image-loaded', { nodeId: props.node.node_id, width: naturalW, height: naturalH, cardInnerWidth })
     }
 
-    // 格式化条件描述
+    const truncateText = (text, maxLen) => {
+        if (!text) return ''
+        return text.length > maxLen ? text.slice(0, maxLen) + '...' : text
+    }
+
     const formatCondDesc = (item) => {
         if (!item) return '未配置条件'
         const condType = item.condition_type || item.type || 'variable_check'
         const params = item.params || item
-
         if (condType === 'image_exists') {
             const opText = params.exist_mode === 'not_exists' ? '不存在' : '存在'
             return `${opText}: ${params.image_source || '未选图片'}`
         }
-        if (condType === 'text_contains') {
-            return `文本: ${params.target_text || '未设文本'}`
-        }
+        if (condType === 'text_contains') return `文本: ${params.target_text || '未设文本'}`
         if (condType === 'variable_check') {
             return `变量: ${params.variable_name || params.var_name || '未选'} (${params.operator || 'eq'}) ${params.compare_value ?? params.target_value ?? ''}`
         }
-        if (condType === 'window_state') {
-            return `窗口: ${params.window_title || '默认'} (${params.state_check || '存在'})`
-        }
-        if (condType === 'file_exists') {
-            return `文件: ${params.file_path || '未设路径'}`
-        }
+        if (condType === 'window_state') return `窗口: ${params.window_title || '默认'} (${params.state_check || '存在'})`
+        if (condType === 'file_exists') return `文件: ${params.file_path || '未设路径'}`
         return `判定: ${condType}`
     }
 </script>
+
+<style scoped>
+    .embedded-icon {
+        margin-bottom: 4px;
+        opacity: 0.6;
+    }
+</style>

@@ -5,18 +5,22 @@ export function useConnection() {
         active: false,
         sourceNodeId: null,
         portType: 'succ',
+        sourceX: 0,
+        sourceY: 0,
         currentX: 0,
         currentY: 0,
         previewMarkerUrl: 'url(#arrow-preview)'
     })
 
-    const startConnection = (e, nodeId, portType) => {
+    const startConnection = (e, nodeId, portType, sourceX = 0, sourceY = 0) => {
         drawingConnection.value = {
             active: true,
             sourceNodeId: nodeId,
             portType: portType,
-            currentX: 0,
-            currentY: 0,
+            sourceX: sourceX,
+            sourceY: sourceY,
+            currentX: sourceX,
+            currentY: sourceY,
             previewMarkerUrl: 'url(#arrow-preview)'
         }
         e.stopPropagation()
