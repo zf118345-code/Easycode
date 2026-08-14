@@ -41,15 +41,23 @@ def assert_safe_path(base_dir: str, target_path: str) -> str:
     """
     工业级路径安全断言（防御目录穿越 / Path Traversal 攻击）
     确保目标路径绝对位于基础目录内部
-    """
-    abs_base = os.path.abspath(base_dir)
-    abs_target = os.path.abspath(target_path)
 
-    # 检查目标路径是否以基准路径为前缀
-    if not abs_target.startswith(abs_base):
+    修复：使用 normcase + 分隔符前缀检查，防止兄弟目录前缀碰撞
+    (例如 /demo 与 /demo_evil 被 startswith 误判为父子关系)
+    """
+    if not base_dir or not target_path:
+        return target_path
+
+    norm_base = os.path.normcase(os.path.abspath(base_dir))
+    norm_target = os.path.normcase(os.path.abspath(target_path))
+
+    # 确保 base 路径结尾带分隔符，防止 /demo 与 /demo_evil 的前缀碰撞
+    base_prefix = norm_base if norm_base.endswith(os.sep) else norm_base + os.sep
+
+    if norm_target != norm_base and not norm_target.startswith(base_prefix):
         raise ValueError(f'安全违规：非法的越权文件路径访问 -> {target_path}')
 
-    return abs_target
+    return str(target_path)
 
 
 __all__ = ['LicenseManager', 'SecureAssetCrypto', 'atomic_write_json', 'assert_safe_path']
