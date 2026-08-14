@@ -35,9 +35,9 @@
                     </div>
                 </div>
 
-                <div v-if="store.recentProjects.length" class="recent">
+                <div v-if="store.recentProjects?.length" class="recent">
                     <span>最近打开：</span>
-                    <el-link v-for="p in store.recentProjects"
+                    <el-link v-for="p in (store.recentProjects || [])"
                              :key="p.path"
                              style="margin: 0 8px;"
                              @click="handleOpenRecent(p.path)">
@@ -51,13 +51,13 @@
 
 <script setup>
     import { ref, onMounted, computed } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { useProjectStore } from '@/stores'
     import { ElMessage } from 'element-plus'
     import { InfoFilled } from '@element-plus/icons-vue'
     import IdeLayout from '@/layouts/IdeLayout.vue'
     import PlayerView from '@/views/PlayerView.vue'
 
-    const store = useMainStore()
+    const store = useProjectStore()
     const projectPathInput = ref('')
     const projectLoaded = ref(false)
 

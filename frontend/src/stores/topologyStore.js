@@ -16,17 +16,28 @@ export const useTopologyStore = defineStore('topology', {
     },
 
     actions: {
-        loadTopologyFromBlueprint(blueprint) {
-            const topo = blueprint?.topology
+        async loadTopologyFromBlueprint(blueprint) {
+            // 兼容：未显式传 blueprint 时，自动从 projectStore 取，避免组件挂载时传空导致数据被清
+            let bp = blueprint
+            if (!bp) {
+                const { useProjectStore } = await import('./projectStore')
+                bp = useProjectStore().blueprint
+            }
+            const topo = bp?.topology
             if (topo && Array.isArray(topo.nodes) && Array.isArray(topo.edges)) {
                 this.topologyBlueprint = {
                     nodes: JSON.parse(JSON.stringify(topo.nodes)),
                     edges: JSON.parse(JSON.stringify(topo.edges))
                 }
-            } else {
+            } else if ((this.topologyBlueprint?.nodes || []).length === 0) {
+                // 只在真的没有数据时才初始化为空；有本地数据则保留（防止覆盖刚新增但尚未保存的节点）
                 this.topologyBlueprint = { nodes: [], edges: [] }
             }
             this.selectedTopologyNodeId = null
+        },
+
+        selectTopologyNode(nodeId) {
+            this.selectedTopologyNodeId = nodeId || null
         },
 
         syncTopologyToBlueprint() {

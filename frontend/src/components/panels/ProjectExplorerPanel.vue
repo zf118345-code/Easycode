@@ -116,28 +116,28 @@
     // 点击组：选中组 + 驱动右侧 + 画布镜头对齐组中心
     const handleGroupClick = (task) => {
         const gId = `group_${task.task_id}`
-        store.selectedGroupId = gId
-        store.selectedNodeIds = []
+        store.setSelectedGroup(gId)
+        store.clearSelection()
 
         // 发发镜头聚焦事件
-        store.focusTarget = {
+        store.setFocusTarget({
             type: 'group',
             id: gId,
             timestamp: Date.now()
-        }
+        })
     }
 
     // 点击节点：选中节点 + 驱动右侧 + 画布镜头对齐节点中心
     const handleNodeClick = (node) => {
-        store.selectedNodeIds = [node.node_id]
-        store.selectedGroupId = null
+        store.selectNode(node.node_id)
+        store.setSelectedGroup(null)
 
         // 触发镜头聚焦事件
-        store.focusTarget = {
+        store.setFocusTarget({
             type: 'node',
             id: node.node_id,
             timestamp: Date.now()
-        }
+        })
     }
 </script>
 

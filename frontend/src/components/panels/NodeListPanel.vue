@@ -121,7 +121,7 @@
             }
         },
         watch: {
-            'store.batchMode'(val) { if (!val) this.store.selectedNodeIds = [] }
+            'store.batchMode'(val) { if (!val) this.store.clearSelection() }
         },
         methods: {
             getNodeIcon(type) {

@@ -18,10 +18,120 @@ import { useContextStore } from './contextStore'
 export const useMainStore = defineStore('main', {
     state: () => ({}),
     getters: {
+        // ===== 子 Store 引用（架构层） =====
         projectStore() { return useProjectStore() },
         uiStore() { return useUiStore() },
         executionStore() { return useExecutionStore() },
         topologyStore() { return useTopologyStore() },
-        contextStore() { return useContextStore() }
+        contextStore() { return useContextStore() },
+
+        // ===== projectStore 关键字段代理（向后兼容） =====
+        currentProjectPath() { return useProjectStore().currentProjectPath },
+        currentProjectName() { return useProjectStore().currentProjectName },
+        recentProjects() { return useProjectStore().recentProjects },
+        blueprint() { return useProjectStore().blueprint },
+        paramsDefinitions() { return useProjectStore().paramsDefinitions },
+        currentTaskId() { return useProjectStore().currentTaskId },
+        tasks() { return useProjectStore().tasks },
+        currentTask() { return useProjectStore().currentTask },
+        nodes() { return useProjectStore().nodes },
+        params() { return useProjectStore().params },
+        uiState() { return useProjectStore().uiState },
+
+        // ===== uiStore 关键字段代理 =====
+        selectedNodeId() { return useUiStore().selectedNodeId },
+        selectedNodeIds() { return useUiStore().selectedNodeIds },
+        selectedGroupId() { return useUiStore().selectedGroupId },
+        selectedNode() { return useUiStore().selectedNode },
+        canvasMode() { return useUiStore().canvasMode },
+        batchMode() { return useUiStore().batchMode },
+        breakpoints() { return useUiStore().breakpoints },
+        hasBreakpoints() { return useUiStore().hasBreakpoints },
+        focusTarget() { return useUiStore().focusTarget },
+
+        // ===== executionStore 关键字段代理 =====
+        executionLogs() { return useExecutionStore().executionLogs },
+        currentExecutionId() { return useExecutionStore().currentExecutionId },
+        executionState() { return useExecutionStore().executionState },
+        executionPaused() { return useExecutionStore().executionPaused },
+        executionVariables() { return useExecutionStore().executionVariables },
+        executionCallstack() { return useExecutionStore().executionCallstack },
+        currentActiveNodeId() { return useExecutionStore().currentActiveNodeId },
+        isRunning() { return useExecutionStore().isRunning },
+        isPaused() { return useExecutionStore().isPaused },
+
+        // ===== topologyStore 关键字段代理 =====
+        topologyBlueprint() { return useTopologyStore().topologyBlueprint },
+        selectedTopologyNodeId() { return useTopologyStore().selectedTopologyNodeId },
+        topologyNodes() { return useTopologyStore().topologyNodes },
+        topologyEdges() { return useTopologyStore().topologyEdges },
+        currentTopologyNode() { return useTopologyStore().currentTopologyNode },
+
+        // ===== contextStore 关键字段代理 =====
+        currentContext() { return useContextStore().currentContext }
+    },
+    actions: {
+        // ===== projectStore 关键方法代理 =====
+        async loadParams() { return useProjectStore().loadParams() },
+        async loadProjectByPath(path) { return useProjectStore().loadProjectByPath(path) },
+        async loadProjectData() { return useProjectStore().loadProjectData() },
+        updateUiState(keyOrObject, value) { return useProjectStore().updateUiState(keyOrObject, value) },
+        toggleMinimap() { return useProjectStore().toggleMinimap() },
+        toggleLogPanel() { return useProjectStore().toggleLogPanel() },
+        async loadTasks() { return useProjectStore().loadTasks() },
+        saveBlueprintDebounced() { return useProjectStore().saveBlueprintDebounced() },
+        async saveBlueprintImmediately() { return useProjectStore().saveBlueprintImmediately() },
+        async saveCurrentTask() { return useProjectStore().saveCurrentTask() },
+        async loadTaskNodes(taskId) { return useProjectStore().loadTaskNodes(taskId) },
+        async createNewTask(taskName) { return useProjectStore().createNewTask(taskName) },
+
+        // ===== uiStore 关键方法代理 =====
+        setCanvasMode(mode) { return useUiStore().setCanvasMode(mode) },
+        selectNode(nodeId) { return useUiStore().selectNode(nodeId) },
+        selectNodes(nodeIds) { return useUiStore().selectNodes(nodeIds) },
+        clearSelection() { return useUiStore().clearSelection() },
+        setSelectedGroup(groupId) { return useUiStore().setSelectedGroup(groupId) },
+        toggleBatchMode() { return useUiStore().toggleBatchMode() },
+        enterBatchMode() { return useUiStore().enterBatchMode() },
+        exitBatchMode() { return useUiStore().exitBatchMode() },
+        toggleNodeSelection(nodeId) { return useUiStore().toggleNodeSelection(nodeId) },
+        selectAllNodes() { return useUiStore().selectAllNodes() },
+        async batchDeleteNodes() { return useUiStore().batchDeleteNodes() },
+        async batchSetDelay(delayMs) { return useUiStore().batchSetDelay(delayMs) },
+        toggleBreakpoint(nodeId) { return useUiStore().toggleBreakpoint(nodeId) },
+        addBreakpoint(nodeId) { return useUiStore().addBreakpoint(nodeId) },
+        removeBreakpoint(nodeId) { return useUiStore().removeBreakpoint(nodeId) },
+        clearBreakpoints() { return useUiStore().clearBreakpoints() },
+        hasBreakpoint(nodeId) { return useUiStore().hasBreakpoint(nodeId) },
+        getBreakpointList() { return useUiStore().getBreakpointList() },
+        setFocusTarget(target) { return useUiStore().setFocusTarget(target) },
+
+        // ===== executionStore 关键方法代理 =====
+        async runTask(taskId, startNodeId) { return useExecutionStore().runTask(taskId, startNodeId) },
+        async stopExecution() { return useExecutionStore().stopExecution() },
+        async pauseExecution() { return useExecutionStore().pauseExecution() },
+        async resumeExecution() { return useExecutionStore().resumeExecution() },
+        async stepOverExecution() { return useExecutionStore().stepOverExecution() },
+        async stepIntoExecution() { return useExecutionStore().stepIntoExecution() },
+        async stepOutExecution() { return useExecutionStore().stepOutExecution() },
+        async pollDebugState() { return useExecutionStore().pollDebugState() },
+        async getExecutionVariables(level) { return useExecutionStore().getExecutionVariables(level) },
+        startDebugPolling(intervalMs) { return useExecutionStore().startDebugPolling(intervalMs) },
+        stopDebugPolling() { return useExecutionStore().stopDebugPolling() },
+
+        // ===== topologyStore 关键方法代理 =====
+        async loadTopologyFromBlueprint(bp) { return useTopologyStore().loadTopologyFromBlueprint(bp) },
+        syncTopologyToBlueprint() { return useTopologyStore().syncTopologyToBlueprint() },
+        async saveTopologyToBlueprint() { return useTopologyStore().saveTopologyToBlueprint() },
+        addTopologyNode(nodeData) { return useTopologyStore().addTopologyNode(nodeData) },
+        selectTopologyNode(nodeId) { return useTopologyStore().selectTopologyNode(nodeId) },
+        updateTopologyNode(nodeId, data) { return useTopologyStore().updateTopologyNode(nodeId, data) },
+        removeTopologyNode(nodeId) { return useTopologyStore().removeTopologyNode(nodeId) },
+        addTopologyEdge(edgeData) { return useTopologyStore().addTopologyEdge(edgeData) },
+        removeTopologyEdge(edgeId) { return useTopologyStore().removeTopologyEdge(edgeId) },
+
+        // ===== contextStore 关键方法代理 =====
+        async loadContext() { return useContextStore().loadContext() },
+        async setCurrentContext(ctx) { return useContextStore().setCurrentContext(ctx) }
     }
 })

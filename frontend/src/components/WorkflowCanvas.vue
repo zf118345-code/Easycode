@@ -1,4 +1,4 @@
-﻿<!-- frontend/src/components/WorkflowCanvas.vue -->
+<!-- frontend/src/components/WorkflowCanvas.vue -->
 <template>
     <div ref="containerRef"
          class="custom-canvas-container"
@@ -101,17 +101,29 @@
             <div v-for="node in renderNodes"
                  :key="node.node_id"
                  :data-node-id="node.node_id"
-                 :class="['canvas-node-card', { 'is-selected': node.selected }]"
+                 :class="['canvas-node-card', { 'is-selected': node.selected, 'is-active-debug': store.currentActiveNodeId === node.node_id }]"
                  :style="{ left: node.position.x + 'px', top: node.position.y + 'px', width: node.w + 'px', height: node.h + 'px' }"
                  @mousedown.stop="onNodeMouseDown($event, node)"
                  @mouseup="onNodeMouseUpCard($event, node)"
-                 @dblclick.stop="onNodeDoubleClick($event, node)">
-                <!-- 1. 卡片头部：左侧图标 + 名称 -->
+                 @dblclick.stop="onNodeDoubleClick($event, node)"
+                 @contextmenu.prevent.stop="openNodeContextMenu($event, node)">
+                <!-- 1. 卡片头部：左侧图标 + 名称 + 右上角断点红点 -->
                 <div class="node-header" :data-node-id="node.node_id">
+                    <!-- 断点红点（点击切换） -->
+                    <span class="node-breakpoint-gutter"
+                          :class="{ active: uiStore.hasBreakpoint(node.node_id) }"
+                          title="点击切换断点"
+                          @click.stop="handleToggleBreakpoint(node.node_id)">
+                        <span v-if="uiStore.hasBreakpoint(node.node_id)" class="bp-dot" />
+                    </span>
                     <div class="node-header-left" :data-node-id="node.node_id">
                         <component :is="getNodeIcon(node.node_type)" class="node-type-icon" />
                         <span class="node-title" :data-node-id="node.node_id">{{ node.node_name }}</span>
                     </div>
+                    <!-- 调试命中标示 -->
+                    <span v-if="store.currentActiveNodeId === node.node_id" class="node-debug-tag" title="当前执行命中此节点">
+                        <CirclePlay class="debug-pulse-icon" />
+                    </span>
                 </div>
 
                 <!-- 2. 卡片中间主体区 -->
@@ -199,6 +211,22 @@
                     <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
                     <span>从此节点开始运行</span>
                 </div>
+                <div class="menu-divider" />
+                <div class="menu-item" @click="handleToggleBreakpoint(customContextMenu.targetId)">
+                    <span class="menu-item-icon bp-dot-inline" />
+                    <span>{{ uiStore.hasBreakpoint(customContextMenu.targetId) ? '🔴 移除断点' : '⚪ 设置断点' }}</span>
+                </div>
+                <div class="menu-item" @click="handleAddBreakpointAndRun(customContextMenu.targetId)">
+                    <span class="menu-item-icon">🎯</span>
+                    <span>设断点并运行到此处</span>
+                </div>
+                <template v-if="store.isPaused">
+                    <div class="menu-divider" />
+                    <div class="menu-item" @click="store.resumeExecution()">▶️ 继续执行 (F5)</div>
+                    <div class="menu-item" @click="store.stepOverExecution()">⏭ 单步跳过 (F10)</div>
+                    <div class="menu-item" @click="store.stepIntoExecution()">⏬ 单步进入 (F11)</div>
+                </template>
+                <div class="menu-divider" />
                 <div class="menu-item danger" @click="handleDeleteNode">
                     <Trash2 class="menu-item-icon" />
                     <span>删除节点</span>
@@ -244,12 +272,17 @@
 
 <script setup>
     import { ref, computed, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { useMainStore, useUiStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
     import { blueprintApi } from '@/api/blueprintApi'
     import { router } from '@/utils/gridRouter'
     import { getRoundedPathString } from '@/utils/pathSmooth'
     import { getNextZIndex } from '@/utils/zIndexManager'
+
+    // ===== 画布增强 Composables（快捷键/撤销重做/连线标签） =====
+    import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
+    import { createPiniaUndoRedo } from '@/composables/useUndoRedo'
+    import { useEdgeLabels } from '@/composables/useEdgeLabels'
 
     import {
         MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
@@ -257,6 +290,38 @@
     } from 'lucide-vue-next'
 
     const store = useMainStore()
+    const uiStore = useUiStore()
+
+    // ===== 注册快捷键：Ctrl+S 保存 / Delete 删除节点 / Ctrl+A 全选 =====
+    useCanvasKeyboard({
+        onSave: async () => {
+            await store.saveBlueprintImmediately()
+            ElMessage.success('蓝图已保存')
+        },
+        onDelete: async () => {
+            // 复用批量删除能力（兼容多选删除）
+            await uiStore.batchDeleteNodes()
+        },
+        onSelectAll: () => {
+            uiStore.selectAllNodes()
+        }
+    })
+
+    // ===== Undo/Redo（Ctrl+Z / Ctrl+Shift+Z） =====
+    const undoRedo = createPiniaUndoRedo()
+    // 额外注册撤销/重做快捷键
+    function _onUndoHotkey(e) {
+        const ctrl = e.ctrlKey || e.metaKey
+        if (!ctrl) return
+        if (e.key === 'z' && !e.shiftKey) {
+            e.preventDefault(); e.stopPropagation(); undoRedo.undo()
+        } else if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+            e.preventDefault(); e.stopPropagation(); undoRedo.redo()
+        }
+    }
+    onMounted(() => { window.addEventListener('keydown', _onUndoHotkey, true) })
+    onUnmounted(() => { window.removeEventListener('keydown', _onUndoHotkey, true) })
+
     const containerRef = ref(null)
     const minimapCanvasRef = ref(null)
     const menuZIndex = ref(3000)
@@ -681,6 +746,63 @@
         }
     }
 
+    // ===== 调试：右键节点打开上下文菜单 =====
+    function openNodeContextMenu(e, node) {
+        customContextMenu.visible = true
+        customContextMenu.targetType = 'node'
+        customContextMenu.targetId = node.node_id
+        customContextMenu.targetName = node.node_name
+        customContextMenu.clientX = e.clientX
+        customContextMenu.clientY = e.clientY
+        // 相对容器坐标
+        const rect = containerRef.value?.getBoundingClientRect?.()
+        customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
+        customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
+        menuZIndex.value = getNextZIndex()
+        closeSpawnMenu()
+    }
+
+    // ===== 调试：切换节点断点 =====
+    function handleToggleBreakpoint(nodeId) {
+        if (!nodeId) return
+        const added = uiStore.toggleBreakpoint(nodeId)
+        customContextMenu.visible = false
+        ElMessage.info(
+            added ? `🔴 已设置断点：${nodeId}` : `⚪ 已移除断点：${nodeId}`
+        )
+    }
+
+    // ===== 调试：设置断点并运行到此处 =====
+    async function handleAddBreakpointAndRun(nodeId) {
+        if (!nodeId) return
+        uiStore.enableBreakpoint(nodeId)
+        customContextMenu.visible = false
+
+        // 找到归属 task 并执行
+        const tasks = store.blueprint?.tasks || []
+        let targetTaskId = null
+        for (const task of tasks) {
+            if ((task.nodes || []).some(n => n.node_id === nodeId)) {
+                targetTaskId = task.task_id
+                break
+            }
+        }
+        if (!targetTaskId) {
+            ElMessage.error('未找到该节点所属任务组')
+            return
+        }
+        try {
+            const result = await store.runTask(targetTaskId)
+            if (result?.status === 'started') {
+                ElMessage.success('任务已启动，将在设置的断点处暂停')
+            } else {
+                ElMessage.error('启动失败')
+            }
+        } catch (err) {
+            ElMessage.error('启动失败：' + err.message)
+        }
+    }
+
     const handleDeleteNode = async () => {
         const nodeId = customContextMenu.targetId
         customContextMenu.visible = false
@@ -1095,8 +1217,8 @@
             }
 
             localSelectedNodeIds.value = []
-            store.selectedNodeIds = []
-            store.selectedGroupId = null
+            store.clearSelection()
+            store.setSelectedGroup(null)
             selectedEdgeId.value = null
         }
 
@@ -1145,8 +1267,8 @@
             }
         }
 
-        store.selectedNodeIds = [...localSelectedNodeIds.value]
-        store.selectedGroupId = null
+        store.selectNodes([...localSelectedNodeIds.value])
+        store.setSelectedGroup(null)
 
         draggingNodeId.value = node.node_id
         dragStartMouse.value = { x: e.clientX, y: e.clientY }
@@ -1750,15 +1872,15 @@
     }
 
     const onNodeDoubleClick = (e, node) => {
-        store.selectedNodeIds = [node.node_id]
-        store.selectedGroupId = null
+        store.selectNode(node.node_id)
+        store.setSelectedGroup(null)
         localSelectedNodeIds.value = [node.node_id]
         e.stopPropagation()
     }
 
     const openGroupInspector = (e, group) => {
-        store.selectedGroupId = group.groupId
-        store.selectedNodeIds = []
+        store.setSelectedGroup(group.groupId)
+        store.clearSelection()
         localSelectedNodeIds.value = []
         e.stopPropagation()
     }
@@ -2047,7 +2169,7 @@
             await blueprintApi.saveBlueprint(store.currentProjectPath, store.blueprint)
 
             localSelectedNodeIds.value = [newNodeId]
-            store.selectedNodeIds = [newNodeId]
+            store.selectNode(newNodeId)
 
             ElMessage.success(`成功创建节点: [${newNode.node_name}]`)
         } catch (err) {
@@ -2210,6 +2332,44 @@
             border: 2px solid var(--el-color-primary);
             box-shadow: 0 0 12px rgba(78, 209, 156, 0.5);
         }
+
+        /* ===== 调试：当前执行命中节点高亮 ===== */
+        .canvas-node-card.is-active-debug {
+            border: 2px solid #ffb020 !important;
+            box-shadow: 0 0 0 3px rgba(255, 176, 32, 0.35), 0 6px 18px rgba(255, 176, 32, 0.25) !important;
+            animation: debug-pulse 1.2s ease-in-out infinite;
+        }
+
+        @keyframes debug-pulse {
+            0%, 100% { filter: brightness(1); }
+            50%      { filter: brightness(1.12); }
+        }
+
+    /* ===== 节点头部断点 gutter + 当前执行标签 ===== */
+    .node-breakpoint-gutter {
+        width: 18px; height: 18px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        margin-right: 4px; cursor: pointer; user-select: none;
+        border-radius: 50%;
+        transition: background-color 0.15s;
+    }
+    .node-breakpoint-gutter:hover { background: rgba(255,255,255,0.08); }
+    .node-breakpoint-gutter .bp-dot {
+        width: 12px; height: 12px; border-radius: 50%;
+        background: #e5484d;
+        box-shadow: 0 0 6px rgba(229, 72, 77, 0.8), inset 0 -2px 0 rgba(0,0,0,0.2);
+    }
+    .node-breakpoint-gutter.active { background: rgba(229, 72, 77, 0.12); }
+
+    .node-debug-tag {
+        display: inline-flex; align-items: center; justify-content: center;
+        width: 18px; height: 18px; border-radius: 50%;
+        background: #ffb020; color: #1a1a1a;
+        box-shadow: 0 0 8px rgba(255, 176, 32, 0.8);
+        flex-shrink: 0;
+        animation: debug-pulse 1s ease-in-out infinite;
+    }
+    .debug-pulse-icon { width: 12px; height: 12px; }
 
     .node-header {
         display: flex;
@@ -2451,6 +2611,18 @@
         height: 14px;
         flex-shrink: 0;
     }
+
+    .menu-divider {
+        height: 1px;
+        margin: 4px 8px;
+        background: var(--el-border-color-lighter);
+        opacity: 0.8;
+    }
+    .bp-dot-inline {
+        display: inline-block; width: 10px; height: 10px; border-radius: 50%;
+        background: #e5484d; box-shadow: 0 0 4px rgba(229, 72, 77, 0.7);
+    }
+
 
     .edge-path {
         fill: none;

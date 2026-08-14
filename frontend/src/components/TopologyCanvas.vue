@@ -1,4 +1,4 @@
-﻿<!--
+<!--
   TopologyCanvas.vue
   重写：使用共享 canvasRouter.js（A* 网格寻路 + 边间距偏移）
   统一 canvasShared.js 样式（与 WorkflowCanvas 一致的节点卡片、端口、连线、流光动画）
@@ -338,7 +338,7 @@
         if (e.button !== 0) return
         e.preventDefault()
 
-        store.selectedTopologyNodeId = node.node_id
+        store.selectTopologyNode(node.node_id)
         draggingNode.value = node.node_id
 
         dragStart.x = e.clientX
@@ -546,7 +546,7 @@
 
     function editNodeParams(node) {
         // 可以跳转到右侧检查器面板
-        store.selectedTopologyNodeId = node.node_id
+        store.selectTopologyNode(node.node_id)
         contextMenu.visible = false
     }
 
