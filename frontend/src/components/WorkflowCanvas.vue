@@ -8,61 +8,11 @@ ref="containerRef"
          @contextmenu="onContextMenu">
         <!-- 视口变换层 -->
         <div class="canvas-viewport" :style="viewportStyle">
-<!-- SVG 连线层 -->
-            <svg class="canvas-edges-layer">
-                <defs>
-                    <pattern id="grid-pattern" width="20" height="20" patternUnits="userSpaceOnUse">
-                        <path d="M 20 0 L 0 0 0 20" fill="none" stroke="rgba(255, 255, 255, 0.08)" stroke-width="1" />
-                    </pattern>
-
-                    <marker id="arrow-succ-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 8 2 L 5 9 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 8 L 8 8 L 5 1 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 2 8 L 9 5 z" fill="#4ed19c" />
-                    </marker>
-                    <marker id="arrow-succ-left" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 8 2 L 8 8 L 1 5 z" fill="#4ed19c" />
-                    </marker>
-
-                    <marker id="arrow-fail-down" viewBox="0 0 10 10" refX="5" refY="8" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 8 2 L 5 9 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-up" viewBox="0 0 10 10" refX="5" refY="2" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 8 L 8 8 L 5 1 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-right" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 2 2 L 2 8 L 9 5 z" fill="#f56c6c" />
-                    </marker>
-                    <marker id="arrow-fail-left" viewBox="0 0 10 10" refX="2" refY="5" markerWidth="6" markerHeight="6" orient="0">
-                        <path d="M 8 2 L 8 8 L 1 5 z" fill="#f56c6c" />
-                    </marker>
-
-                    <marker id="arrow-preview" viewBox="0 0 10 10" refX="7" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                        <path d="M 0 2 L 10 5 L 0 8 z" fill="#4ed19c" />
-                    </marker>
-                </defs>
-
-                <rect x="-5000" y="-5000" width="15000" height="15000" fill="url(#grid-pattern)" pointer-events="none" />
-
-                <!-- 纯净流光连线层 -->
-                <g v-for="edge in computedEdges" :key="edge.id">
-                    <path
-:d="edge.path"
-                          :class="['edge-path', { 'is-selected': edge.selected, 'is-danger': edge.isFail }]"
-                          :marker-end="edge.markerUrl"
-                          @click.stop="onEdgeClick(edge)" />
-                    <path
-:d="edge.path"
-                          :class="['edge-flow-path', { 'is-danger': edge.isFail }]"
-                          pointer-events="none" />
-                </g>
-
-                <path v-if="drawingConnection.active" :d="drawingConnection.path" class="edge-path preview-path" :marker-end="drawingConnection.previewMarkerUrl" />
-            </svg>
+<!-- SVG 连线层（已提取为 CanvasEdgeLayer 组件） -->
+            <CanvasEdgeLayer
+                :edges="computedEdges"
+                :drawing-connection="drawingConnection"
+                @edge-click="onEdgeClick" />
 
             <!-- 任务组包围框 -->
             <div
@@ -101,88 +51,23 @@ v-if="draggingNodeId && dragPreviewBox.visible"
                 </div>
             </div>
 
-            <!-- 节点卡片层 -->
-            <div
-v-for="node in renderNodes"
-                 :key="node.node_id"
-                 :data-node-id="node.node_id"
-                 :class="['canvas-node-card', { 'is-selected': node.selected, 'is-active-debug': store.currentActiveNodeId === node.node_id }]"
-                 :style="{ left: node.position.x + 'px', top: node.position.y + 'px', width: node.w + 'px', height: node.h + 'px' }"
-                 @mousedown.stop="onNodeMouseDown($event, node)"
-                 @mouseup="onNodeMouseUpCard($event, node)"
-                 @dblclick.stop="onNodeDoubleClick($event, node)"
-                 @contextmenu.prevent.stop="openNodeContextMenu($event, node)">
-                <!-- 1. 卡片头部：左侧图标 + 名称 + 右上角断点红点 -->
-                <div class="node-header" :data-node-id="node.node_id">
-                    <!-- 断点红点（点击切换） -->
-                    <span
-class="node-breakpoint-gutter"
-                          :class="{ active: uiStore.hasBreakpoint(node.node_id) }"
-                          title="点击切换断点"
-                          @click.stop="handleToggleBreakpoint(node.node_id)">
-                        <span v-if="uiStore.hasBreakpoint(node.node_id)" class="bp-dot" />
-                    </span>
-                    <div class="node-header-left" :data-node-id="node.node_id">
-                        <component :is="getNodeIcon(node.node_type)" class="node-type-icon" />
-                        <span class="node-title" :data-node-id="node.node_id">{{ node.node_name }}</span>
-                    </div>
-                    <!-- 调试命中标示 -->
-                    <span v-if="store.currentActiveNodeId === node.node_id" class="node-debug-tag" title="当前执行命中此节点">
-                        <CirclePlay class="debug-pulse-icon" />
-                    </span>
-                </div>
-
-                <!-- 2. 卡片中间主体区 -->
-                <div class="node-body" :data-node-id="node.node_id">
-                    <!-- 图像识别节点预览 -->
-                    <div
-v-if="node.node_type === 'image_recognition'"
-                         class="node-image-embedded"
-                         :style="node.params?.image_source ? { '--bg-image-url': `url(${getImageThumbnailUrl(node.params.image_source)})` } : {}">
-                        <img
-v-if="node.params?.image_source"
-                             :src="getImageThumbnailUrl(node.params.image_source)"
-                             :class="['embedded-template-img', { 'is-contain': isSpecialTallImage(node.node_id) }]"
-                             alt="模板"
-                             @load="(e) => onImageLoaded(e, node.node_id)"
-                             @error="$event.target.style.display = 'none'" />
-                        <div v-else class="embedded-placeholder">
-                            <Image style="width: 16px; height: 16px; opacity: 0.5; margin-bottom: 2px;" />
-                            <span>未选模板</span>
-                        </div>
-                    </div>
-
-                    <!-- ⚡ 分支选择 Branch 节点: 行级条件与专属出口锚点 -->
-                    <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
-                        <div
-v-for="(cand, cIdx) in (node.params?.candidates || [])"
-                             :key="cIdx"
-                             class="branch-candidate-item">
-                            <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
-                                {{ formatCondDesc(cand.condition || cand) }}
-                            </span>
-                            <div
-class="node-handle source-handle branch-handle"
-                                 :title="`分支 ${cIdx + 1} 成立时流向出口`"
-                                 @mousedown.stop="startConnection($event, node.node_id, `branch_${cIdx}`)" />
-                        </div>
-                        <div v-if="!node.params?.candidates?.length" class="empty-cand-placeholder">
-                            <span>未配置分流条件</span>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 3. 卡片底部固定边栏 -->
-                <div class="node-footer-bar" :data-node-id="node.node_id">
-                    <span class="footer-tag">延时: {{ node.delay_before ?? 200 }}ms</span>
-                    <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
-                </div>
-
-                <!-- 通用入口与失败/兜底锚点 -->
-                <div class="node-handle target-handle top-handle" title="入口位置" />
-                <div v-if="node.node_type !== 'branch'" class="node-handle source-handle succ-handle" title="成功流向出口" @mousedown.stop="startConnection($event, node.node_id, 'succ')" />
-                <div v-if="node.showFailPort" class="node-handle source-handle fail-handle" :title="node.node_type === 'branch' ? 'Else 兜底分支出口' : '失败分支出口'" @mousedown.stop="startConnection($event, node.node_id, 'fail')" />
-            </div>
+            <!-- 节点卡片层（已提取为 CanvasNodeCard 组件） -->
+            <CanvasNodeCard
+                v-for="node in renderNodes"
+                :key="node.node_id"
+                :node="node"
+                :selected="node.selected"
+                :is-active-debug="store.currentActiveNodeId === node.node_id"
+                :has-breakpoint="uiStore.hasBreakpoint(node.node_id)"
+                :current-project-path="store.currentProjectPath"
+                :blueprint-version="store.blueprint?.version || 0"
+                @node-mousedown="onNodeMouseDown"
+                @node-mouseup="onNodeMouseUpCard"
+                @node-dblclick="onNodeDoubleClick"
+                @node-contextmenu="openNodeContextMenu"
+                @toggle-breakpoint="handleToggleBreakpoint"
+                @start-connection="startConnection"
+                @image-loaded="onImageLoadedFromCard" />
 </div>
 
         <!-- 全景缩略图导航面板 -->
@@ -193,91 +78,25 @@ class="node-handle source-handle branch-handle"
         <!-- 框选 UI -->
         <div v-if="selectionBox.visible" class="selection-box" :style="selectionBoxStyle" />
 
-        <!-- 节点类型选择菜单 -->
-        <div
-v-if="spawnMenu.visible"
-             class="spawn-menu"
-             :style="{ left: spawnMenu.x + 'px', top: spawnMenu.y + 'px', zIndex: menuZIndex }"
-             @mousedown.stop
-             @click.stop>
-            <div class="spawn-menu-header">
-                ⚡ {{ spawnMenu.sourceNodeId ? `快捷创建并连接` : '✨ 选择新建节点类型' }}
-            </div>
-            <div class="spawn-menu-list">
-                <div v-for="(label, type) in availableNodeTypes" :key="type" class="spawn-menu-item" @click="createAndConnectNode(type)">
-                    {{ label }}
-                </div>
-            </div>
-        </div>
-
-        <!-- 画布空白处右键菜单 -->
-        <div
-v-if="customContextMenu.visible"
-             class="custom-context-menu"
-             :style="{ left: customContextMenu.x + 'px', top: customContextMenu.y + 'px', zIndex: menuZIndex }"
-             @mousedown.stop
-             @click.stop>
-            <template v-if="customContextMenu.targetType === 'node'">
-                <div class="menu-item" @click="handleRunFromNode">
-                    <CirclePlay class="menu-item-icon" style="color: var(--el-color-primary);" />
-                    <span>从此节点开始运行</span>
-                </div>
-                <div class="menu-divider" />
-                <div class="menu-item" @click="handleToggleBreakpoint(customContextMenu.targetId)">
-                    <span class="menu-item-icon bp-dot-inline" />
-                    <span>{{ uiStore.hasBreakpoint(customContextMenu.targetId) ? '🔴 移除断点' : '⚪ 设置断点' }}</span>
-                </div>
-                <div class="menu-item" @click="handleAddBreakpointAndRun(customContextMenu.targetId)">
-                    <span class="menu-item-icon">🎯</span>
-                    <span>设断点并运行到此处</span>
-                </div>
-                <template v-if="store.isPaused">
-                    <div class="menu-divider" />
-                    <div class="menu-item" @click="store.resumeExecution()">▶️ 继续执行 (F5)</div>
-                    <div class="menu-item" @click="store.stepOverExecution()">⏭ 单步跳过 (F10)</div>
-                    <div class="menu-item" @click="store.stepIntoExecution()">⏬ 单步进入 (F11)</div>
-                </template>
-                <div class="menu-divider" />
-                <div class="menu-item danger" @click="handleDeleteNode">
-                    <Trash2 class="menu-item-icon" />
-                    <span>删除节点</span>
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'group'">
-                <div class="menu-item danger" @click="handleDeleteGroup">
-                    <Trash2 class="menu-item-icon" />
-                    <span>删除组</span>
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'canvas_in_group'">
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    📁 在当前组 [{{ customContextMenu.targetName }}] 新建节点
-                </div>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-            </template>
-
-            <template v-else-if="customContextMenu.targetType === 'canvas_public'">
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    ✨ 在新建组中新建节点
-                </div>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-            </template>
-
-            <template v-else>
-                <div class="menu-item" @click="handleCanvasNewGroup">
-                    📁 新建任务组
-                </div>
-                <div class="menu-item" @click="handleCanvasNewNode">
-                    ✨ 新建节点
-                </div>
-            </template>
-        </div>
+        <!-- 右键菜单 + 节点选择菜单（已提取为 CanvasContextMenu 组件） -->
+        <CanvasContextMenu
+            :spawn-menu="spawnMenu"
+            :context-menu="customContextMenu"
+            :menu-z-index="menuZIndex"
+            :available-node-types="availableNodeTypes"
+            :has-breakpoint="customContextMenu.targetId ? uiStore.hasBreakpoint(customContextMenu.targetId) : false"
+            :is-paused="store.isPaused"
+            @create-and-connect="createAndConnectNode"
+            @run-from-node="handleRunFromNode"
+            @toggle-breakpoint="handleToggleBreakpoint"
+            @add-breakpoint-and-run="handleAddBreakpointAndRun"
+            @resume-execution="store.resumeExecution"
+            @step-over="store.stepOverExecution"
+            @step-into="store.stepIntoExecution"
+            @delete-node="handleDeleteNode"
+            @delete-group="handleDeleteGroup"
+            @canvas-new-node="handleCanvasNewNode"
+            @canvas-new-group="handleCanvasNewGroup" />
     </div>
 </template>
 
@@ -294,6 +113,9 @@ v-if="customContextMenu.visible"
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { createPiniaUndoRedo } from '@/composables/useUndoRedo'
     import { useEdgeLabels } from '@/composables/useEdgeLabels'
+    import CanvasNodeCard from '@/components/canvas/CanvasNodeCard.vue'
+    import CanvasEdgeLayer from '@/components/canvas/CanvasEdgeLayer.vue'
+    import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
 
     import {
         MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
@@ -535,6 +357,17 @@ v-if="customContextMenu.visible"
         const cardInnerWidth = (NODE_GRID_W * GRID_SIZE) - 24
 
         const ratio = naturalH / naturalW
+        if (ratio > 1) {
+            tallImageFlags[nodeId] = true
+            dynamicImageHeights[nodeId] = cardInnerWidth
+        } else {
+            tallImageFlags[nodeId] = false
+            dynamicImageHeights[nodeId] = Math.round(cardInnerWidth * ratio)
+        }
+    }
+
+    const onImageLoadedFromCard = ({ nodeId, width, height, cardInnerWidth }) => {
+        const ratio = height / width
         if (ratio > 1) {
             tallImageFlags[nodeId] = true
             dynamicImageHeights[nodeId] = cardInnerWidth
