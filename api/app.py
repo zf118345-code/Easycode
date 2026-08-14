@@ -104,6 +104,23 @@ def create_app():
         allow_headers=['*'],
     )
 
+    # ====== 全局异常处理 ======
+    from fastapi import Request
+    from fastapi.exceptions import RequestValidationError
+
+    from core.error_codes import ErrorCode
+    from core.response import error_response
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_exception_handler(request: Request, exc: RequestValidationError):
+        logger.warning(f'参数校验失败 [{request.url.path}]: {exc.errors()}')
+        return error_response(ErrorCode.VALIDATION_ERROR, '请求参数校验失败', status_code=422)
+
+    @app.exception_handler(Exception)
+    async def global_exception_handler(request: Request, exc: Exception):
+        logger.error(f'未处理异常 [{request.url.path}]: {exc}', exc_info=True)
+        return error_response(ErrorCode.INTERNAL_ERROR, '内部服务器错误', status_code=500)
+
     # ====== 注册路由 ======
     from api.routers.blueprint_router import create_blueprint_router
     from api.routers.build_router import create_build_router
