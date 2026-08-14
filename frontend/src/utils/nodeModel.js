@@ -123,7 +123,7 @@ export { getArrowDirection, getMarkerId } from './canvasShared'
 // ========== 连线路径结果格式转换 ==========
 
 /**
- * 将 canvasRouter.computeEdgePath 返回的结果，转成旧 gridRouter 的结构
+ * 将 canvasRouter.computeEdgePath 返回的结果，转成统一的结构
  * 目的：让 WorkflowCanvas 中已有的 computedEdges 逻辑无需大改即可切换路由
  *
  * 新返回: { pathD, arrowDir, markerId, points }
