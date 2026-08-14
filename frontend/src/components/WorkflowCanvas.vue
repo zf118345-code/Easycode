@@ -299,6 +299,7 @@ v-if="customContextMenu.visible"
         MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
         Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2, Compass
     } from 'lucide-vue-next'
+    import { GRID_SIZE, NODE_GRID_W, NODE_TYPE_CONFIG } from '@/utils/canvasShared'
 
     const store = useMainStore()
     const uiStore = useUiStore()
@@ -359,6 +360,8 @@ v-if="customContextMenu.visible"
 
     const spawnMenu = ref({ visible: false, x: 0, y: 0, sourceNodeId: null, portType: 'succ', clientX: 0, clientY: 0 })
 
+    const closeSpawnMenu = () => { spawnMenu.value.visible = false }
+
     const customContextMenu = reactive({
         visible: false,
         x: 0,
@@ -373,37 +376,29 @@ v-if="customContextMenu.visible"
     const selectedEdgeId = ref(null)
     const localSelectedNodeIds = ref([])
 
-    const GRID_SIZE = 20
-    const NODE_GRID_W = 8
 
     const availableNodeTypes = {
-        click: '🖱️ 鼠标点击',
-        wait: '⏳ 等待',
-        image_recognition: '🎯 图像识别',
-        ocr_recognition: '👁️ 文字识别 (OCR)',
-        branch: '🔀 分支选择',
-        logic_check: '🔍 逻辑判断',
-        variable_op: '🔢 变量操作',
-        log: '📝 日志输出',
-        script_call: '📜 调用脚本',
-        smart_jump: '🧭 智能跳转' // ⚡ 新增智能跳转节点
+        click: '鼠标点击',
+        wait: '等待',
+        image_recognition: '图像识别',
+        ocr_recognition: '文字识别 (OCR)',
+        branch: '分支选择',
+        logic_check: '逻辑判断',
+        variable_op: '变量操作',
+        log: '日志输出',
+        script_call: '调用脚本',
+        smart_jump: '智能跳转'
     }
 
-    const nodeIconComponentMap = {
-        click: MousePointerClick,
-        wait: Clock,
-        set_window: Target,
-        image_recognition: Image,
-        ocr_recognition: FileSearch,
-        branch: GitBranch,
-        logic_check: SearchCheck,
-        variable_op: Binary,
-        log: ListOrdered,
-        script_call: FileCode,
-        smart_jump: Compass // ⚡ 绑定智能跳转图标
+    // 图标映射统一从 canvasShared.NODE_TYPE_CONFIG 获取
+    const _iconComponentCache = {
+        MousePointerClick, Clock, Target, FileSearch, GitBranch, SearchCheck,
+        Binary, ListOrdered, FileCode, Image, CirclePlay, Trash2, Compass
     }
-
-    const getNodeIcon = (nodeType) => nodeIconComponentMap[nodeType] || FileCode
+    const getNodeIcon = (nodeType) => {
+        const config = NODE_TYPE_CONFIG[nodeType]
+        return (config && _iconComponentCache[config.icon]) || FileCode
+    }
 
     const getNodeShortLabel = (nodeType) => {
         const label = availableNodeTypes[nodeType] || nodeType
@@ -814,62 +809,6 @@ v-if="customContextMenu.visible"
         }
     }
 
-    // ===== 调试：右键节点打开上下文菜单 =====
-    function openNodeContextMenu(e, node) {
-        customContextMenu.visible = true
-        customContextMenu.targetType = 'node'
-        customContextMenu.targetId = node.node_id
-        customContextMenu.targetName = node.node_name
-        customContextMenu.clientX = e.clientX
-        customContextMenu.clientY = e.clientY
-        // 相对容器坐标
-        const rect = containerRef.value?.getBoundingClientRect?.()
-        customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
-        customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
-        menuZIndex.value = getNextZIndex()
-        spawnMenu.value.visible = false
-    }
-
-    // ===== 调试：切换节点断点 =====
-    function handleToggleBreakpoint(nodeId) {
-        if (!nodeId) return
-        const added = uiStore.toggleBreakpoint(nodeId)
-        customContextMenu.visible = false
-        ElMessage.info(
-            added ? `🔴 已设置断点：${nodeId}` : `⚪ 已移除断点：${nodeId}`
-        )
-    }
-
-    // ===== 调试：设置断点并运行到此处 =====
-    async function handleAddBreakpointAndRun(nodeId) {
-        if (!nodeId) return
-        uiStore.enableBreakpoint(nodeId)
-        customContextMenu.visible = false
-
-        // 找到归属 task 并执行
-        const tasks = store.blueprint?.tasks || []
-        let targetTaskId = null
-        for (const task of tasks) {
-            if ((task.nodes || []).some(n => n.node_id === nodeId)) {
-                targetTaskId = task.task_id
-                break
-            }
-        }
-        if (!targetTaskId) {
-            ElMessage.error('未找到该节点所属任务组')
-            return
-        }
-        try {
-            const result = await store.runTask(targetTaskId)
-            if (result?.status === 'started') {
-                ElMessage.success('任务已启动，将在设置的断点处暂停')
-            } else {
-                ElMessage.error('启动失败')
-            }
-        } catch (err) {
-            ElMessage.error('启动失败：' + err.message)
-        }
-    }
 
     const handleDeleteNode = async () => {
         const nodeId = customContextMenu.targetId

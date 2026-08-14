@@ -5,23 +5,20 @@
   统一碰撞推挤算法、20px 网格吸附、方向感知箭头
 -->
 <template>
-    <div
-ref="containerRef"
+    <div ref="containerRef"
          class="topology-canvas-container"
          @mousedown="onContainerMouseDown"
          @wheel.prevent="onWheel"
          @contextmenu.prevent="onContextMenu">
         <!-- SVG 连线层 + 网格背景 -->
-        <div
-class="canvas-viewport grid-background"
+        <div class="canvas-viewport grid-background"
              :style="{ transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`, transformOrigin: '0 0' }">
             <svg class="canvas-edges-layer" :width="svgWidth" :height="svgHeight">
                 <defs v-html="ARROW_MARKERS_SVG"></defs>
 
                 <!-- 已有连线 -->
                 <template v-for="edge in renderedEdges" :key="edge.edge_id">
-                    <path
-:d="edge.pathD"
+                    <path :d="edge.pathD"
                           class="edge-path"
                           :class="{
               'is-success': edge.source_port !== 'failure',
@@ -31,13 +28,11 @@ class="canvas-viewport grid-background"
                           :marker-end="`url(#${edge.markerId})`"
                           @click.stop="onEdgeClick(edge)" />
                     <!-- 流光动画 -->
-                    <path
-:d="edge.pathD"
+                    <path :d="edge.pathD"
                           class="edge-flow-path"
                           v-if="edge.edge_id !== selectedEdgeId" />
                     <!-- 连线标签 -->
-                    <text
-v-if="edge.label"
+                    <text v-if="edge.label"
                           :x="edge.labelX"
                           :y="edge.labelY"
                           class="edge-label"
@@ -45,8 +40,7 @@ v-if="edge.label"
                 </template>
 
                 <!-- 实时拉线预览 -->
-                <path
-v-if="drawingConnection.active"
+                <path v-if="drawingConnection.active"
                       :d="previewPathD"
                       class="edge-path is-success"
                       stroke-dasharray="6 4"
@@ -54,8 +48,7 @@ v-if="drawingConnection.active"
             </svg>
 
             <!-- 节点卡片层 -->
-            <div
-v-for="node in topologyNodes"
+            <div v-for="node in topologyNodes"
                  :key="node.node_id"
                  class="canvas-node-card"
                  :class="{
@@ -85,30 +78,26 @@ v-for="node in topologyNodes"
                 </div>
 
                 <!-- 入口端口（左侧） -->
-                <div
-class="node-port port-entry"
+                <div class="node-port port-entry"
                      style="left: -6px; top: 50%; transform: translateY(-50%);"
                      title="入口"></div>
 
                 <!-- 成功出口端口（底部中心） -->
-                <div
-v-if="node.type === 'page_state' || node.type === 'smart_jump'"
+                <div v-if="node.type === 'page_state' || node.type === 'smart_jump'"
                      class="node-port port-success"
                      style="left: 50%; bottom: -6px; transform: translateX(-50%);"
                      title="成功出口"
                      @mousedown.stop="startConnection($event, node, 'success')"></div>
 
                 <!-- 失败出口端口（右侧底部） -->
-                <div
-v-if="node.type === 'page_state' || node.type === 'image_recognition' || node.type === 'ocr_recognition'"
+                <div v-if="node.type === 'page_state' || node.type === 'image_recognition' || node.type === 'ocr_recognition'"
                      class="node-port port-failure"
                      style="right: -6px; bottom: 12px;"
                      title="失败出口"
                      @mousedown.stop="startConnection($event, node, 'failure')"></div>
 
                 <!-- 动态多出口端口（右侧） -->
-                <div
-v-for="(exit, idx) in (node.exits || [])"
+                <div v-for="(exit, idx) in (node.exits || [])"
                      :key="`exit_${idx}`"
                      class="node-port port-exit"
                      :style="{ right: '-6px', top: `${42 + idx * 28}px` }"
@@ -132,16 +121,16 @@ v-for="(exit, idx) in (node.exits || [])"
         </div>
 
         <!-- 右键菜单 -->
-        <div
-v-if="contextMenu.visible"
+        <div v-if="contextMenu.visible"
              class="canvas-context-menu"
-             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }">
+             :style="{ left: contextMenu.x + 'px', top: contextMenu.y + 'px' }"
+             @mousedown.stop>
             <template v-if="contextMenu.type === 'canvas'">
-                <div class="menu-item" @click="addNode('page_state')">新增页面状态</div>
-                <div class="menu-item" @click="addNode('click')">新增点击动作</div>
-                <div class="menu-item" @click="addNode('wait')">新增等待动作</div>
-                <div class="menu-item" @click="addNode('image_recognition')">新增图像识别</div>
-                <div class="menu-item" @click="addNode('ocr_recognition')">新增 OCR 识别</div>
+                <div class="menu-item" @click="addNode('page_state', contextMenu.clickX, contextMenu.clickY)">新增页面状态</div>
+                <div class="menu-item" @click="addNode('click', contextMenu.clickX, contextMenu.clickY)">新增点击动作</div>
+                <div class="menu-item" @click="addNode('wait', contextMenu.clickX, contextMenu.clickY)">新增等待动作</div>
+                <div class="menu-item" @click="addNode('image_recognition', contextMenu.clickX, contextMenu.clickY)">新增图像识别</div>
+                <div class="menu-item" @click="addNode('ocr_recognition', contextMenu.clickX, contextMenu.clickY)">新增 OCR 识别</div>
             </template>
             <template v-if="contextMenu.type === 'node'">
                 <div class="menu-item" @click="editNodeCondition(contextMenu.node)">编辑条件</div>
@@ -153,8 +142,7 @@ v-if="contextMenu.visible"
         </div>
 
         <!-- 条件编辑器 -->
-        <ConditionDialog
-v-if="conditionDialog.visible"
+        <ConditionDialog v-if="conditionDialog.visible"
                          :visible="conditionDialog.visible"
                          :initial-data="conditionDialog.data"
                          :show-jump-config="false"
@@ -203,7 +191,7 @@ v-if="conditionDialog.visible"
         mouseY: 0
     })
     const selectedEdgeId = ref(null)
-    const contextMenu = reactive({ visible: false, x: 0, y: 0, type: 'canvas', node: null })
+    const contextMenu = reactive({ visible: false, x: 0, y: 0, clickX: 0, clickY: 0, type: 'canvas', node: null })
     const conditionDialog = reactive({ visible: false, data: null, node: null })
 
     // 节点白名单
@@ -492,9 +480,10 @@ v-if="conditionDialog.visible"
     // ========== 右键菜单 ==========
 
     function onContextMenu(e) {
-        const rect = containerRef.value.getBoundingClientRect()
         contextMenu.x = e.clientX
         contextMenu.y = e.clientY
+        contextMenu.clickX = e.clientX
+        contextMenu.clickY = e.clientY
         contextMenu.type = 'canvas'
         contextMenu.visible = true
     }
@@ -502,6 +491,8 @@ v-if="conditionDialog.visible"
     function onNodeContextMenu(e, node) {
         contextMenu.x = e.clientX
         contextMenu.y = e.clientY
+        contextMenu.clickX = e.clientX
+        contextMenu.clickY = e.clientY
         contextMenu.type = 'node'
         contextMenu.node = node
         contextMenu.visible = true
@@ -509,19 +500,25 @@ v-if="conditionDialog.visible"
 
     // ========== 节点操作 ==========
 
-    function addNode(type) {
+    function addNode(type, clickX = null, clickY = null) {
         if (!NODE_WHITELIST.includes(type)) return
 
         const rect = containerRef.value.getBoundingClientRect()
-        const centerX = (rect.width / 2 - viewport.x) / viewport.zoom
-        const centerY = (rect.height / 2 - viewport.y) / viewport.zoom
+        let canvasX, canvasY
+        if (clickX !== null && clickY !== null) {
+            canvasX = (clickX - rect.left - viewport.x) / viewport.zoom
+            canvasY = (clickY - rect.top - viewport.y) / viewport.zoom
+        } else {
+            canvasX = (rect.width / 2 - viewport.x) / viewport.zoom
+            canvasY = (rect.height / 2 - viewport.y) / viewport.zoom
+        }
 
         const nodeData = {
             node_id: `topo_${Date.now()}`,
             node_name: getNodeConfig(type).label,
             type,
             page_id: type === 'page_state' ? `page_${Date.now().toString(36)}` : '',
-            position: snapPositionToGrid(centerX - NODE_WIDTH / 2, centerY - 30),
+            position: snapPositionToGrid(canvasX - NODE_WIDTH / 2, canvasY - 30),
             features: [],
             feature_mode: 'and',
             exits: [],
@@ -647,7 +644,8 @@ v-if="conditionDialog.visible"
             cursor: pointer;
         }
 
-    /* 使用共享样式 */
+    /* [P1-5] 以下连线/节点/端口样式与 canvasShared.js 的 SHARED_EDGE_CSS / SHARED_NODE_CSS 重复。
+       P2 阶段提取 CanvasNodeCard / CanvasEdgeLayer 组件时统一引用共享样式。 */
     :deep(.edge-path) {
         fill: none;
         stroke-width: 2.5px;
