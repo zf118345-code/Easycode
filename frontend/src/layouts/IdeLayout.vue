@@ -44,7 +44,7 @@ class="activity-icon-item"
                     <!-- 左侧展开面板 -->
                     <ToolWindow
 v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
-                                :title="currentLeftPanel.title"
+                                :title="leftPanelTitle"
                                 :width="store.uiState.leftPanelWidth + 'px'"
                                 class="ide-card-panel"
                                 @close="store.updateUiState('leftPanelExpanded', false)">
@@ -57,11 +57,10 @@ v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
                          class="splitter-v"
                          @mousedown="startLeftResize" />
 
-                    <!-- 中央画布区域：根据 canvasMode 动态挂载对应画布 -->
+                    <!-- 中央画布区域：唯一画布页面（workflow/topology 共用一套画布组件，仅数据源不同） -->
                     <div class="ide-center-viewport ide-card-panel">
                         <div class="pane-content-inner">
-                            <!-- ⚡ 动态画布组件：workflow 模式挂载 WorkflowCanvas，topology 模式挂载 TopologyCanvas -->
-                            <component :is="currentCanvasComponent" :key="store.canvasMode" />
+                            <CanvasPage :key="store.canvasMode" />
                         </div>
                     </div>
 
@@ -142,8 +141,7 @@ position="right"
     import TopMenuBar from '@/components/shell/TopMenuBar.vue'
     import ActivityBar from '@/components/shell/ActivityBar.vue'
     import ToolWindow from '@/components/shell/ToolWindow.vue'
-    import WorkflowCanvas from '@/components/WorkflowCanvas.vue'
-    import TopologyCanvas from '@/components/TopologyCanvas.vue'
+    import CanvasPage from '@/components/CanvasPage.vue'
     import PanelSettingsDialog from '@/components/PanelSettingsDialog.vue'
     import DebugToolbar from '@/components/DebugToolbar.vue'
 
@@ -152,20 +150,24 @@ position="right"
     const store = useMainStore()
     const settingsVisible = ref(false)
 
-    // ⚡ 根据画布模式动态选择画布组件
-    const currentCanvasComponent = computed(() => {
-        return store.canvasMode === 'topology' ? TopologyCanvas : WorkflowCanvas
-    })
-
-    // ⚡ 右侧面板：统一属性检查器（InspectorPanel 按 canvasMode 自动切换数据源）
+    // ⚡ 右侧面板：统一属性检查器（InspectorPanel 按 canvasMode 自动切换数据源，标题恒定）
     const rightActive = ref('inspector')
     const currentRightPanel = computed(() => {
         return rightPanelsConfig.find(p => p.id === rightActive.value)
     })
 
     const rightPanelTitle = computed(() => {
-        if (store.canvasMode === 'topology') return '拓扑节点编辑器'
         return currentRightPanel.value?.title || '属性面板'
+    })
+
+    // ⚡ 左侧面板标题：仅「资源管理器」随画布模式切换（内容同数据源切换）；
+    // 其余面板（变量监控/插件中心等）标题与模式无关，按当前激活面板返回
+    const leftPanelTitle = computed(() => {
+        const base = currentLeftPanel.value?.title || '项目资源管理器'
+        if (store.canvasMode === 'topology' && currentLeftPanel.value?.id === 'explorer') {
+            return '拓扑资源管理器'
+        }
+        return base
     })
 
     // ⚡ 状态栏画布模式文案

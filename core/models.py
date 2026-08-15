@@ -10,7 +10,6 @@ from core.registry import NodeExecutorRegistry
 class Jump:
     """
     连线驱动 Jump 模型：通过 target（目标任务组）与 target_node（目标节点）进行精确图路由
-    兼容旧版 type/jump_type 字段但不再依赖它们
     """
 
     target: str | None = None  # 目标任务组 ID
@@ -37,8 +36,7 @@ class Jump:
 @dataclass
 class Edge:
     """
-    P1 新增：连线一等公民实体
-    拥有唯一 ID、源/目标节点、源端口（success/failure/branch_N）、可选条件、样式
+    连线一等公民实体：唯一 ID、源/目标节点、源端口（success/failure/branch_N）
     替代之前寄生在 node.params 中的 on_success/on_failure
     """
 
@@ -47,7 +45,6 @@ class Edge:
     target_node: str  # 目标节点 ID
     target_task: str | None = None  # 目标任务组（跨任务连线时使用）
     source_port: str = 'success'  # 源端口: success / failure / branch_0 / branch_1 ...
-    condition: dict[str, Any] | None = None  # 连线绑定的条件（用于条件路由）
     return_on_complete: bool = False  # 跨任务跳转完成后是否返回
     label: str = ''  # 连线显示标签
     canvas: str = 'workflow'  # 所属画布: workflow / topology
@@ -62,7 +59,6 @@ class Edge:
             target_node=d.get('target_node', ''),
             target_task=d.get('target_task') or d.get('target'),
             source_port=d.get('source_port', 'success'),
-            condition=d.get('condition'),
             return_on_complete=d.get('return_on_complete', False),
             label=d.get('label', ''),
             canvas=d.get('canvas', 'workflow'),
@@ -75,7 +71,6 @@ class Edge:
             'target_node': self.target_node,
             'target_task': self.target_task,
             'source_port': self.source_port,
-            'condition': self.condition,
             'return_on_complete': self.return_on_complete,
             'label': self.label,
             'canvas': self.canvas,

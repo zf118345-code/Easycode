@@ -41,26 +41,7 @@ def build_variable_op_params() -> dict[str, Any]:
 
     params_def.update(dynamic_sub_params)
 
-    on_success_config: dict[str, Any] = {
-        'type': 'dict',
-        'label': '成功跳转',
-        'sub': {
-            'jump_type': {
-                'type': 'select',
-                'options': [
-                    {'value': 'next', 'label': '下一个节点'},
-                    {'value': 'node', 'label': '跳转节点'},
-                    {'value': 'end', 'label': '结束流程'},
-                ],
-                'default': 'next',
-                'label': '跳转类型',
-            }
-        },
-    }
-
-    params_def['on_success'] = on_success_config
-
     return params_def
 
 
-PARAM_DEFINITIONS: dict[str, Any] = {'variable_op': {'label': '变量操作', 'params': build_variable_op_params()}}
+PARAM_DEFINITIONS: dict[str, Any] = {'variable_op': {'label': '变量操作', 'modes': ['workflow'], 'params': build_variable_op_params()}}

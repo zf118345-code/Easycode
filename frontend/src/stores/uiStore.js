@@ -1,6 +1,5 @@
 import { defineStore } from 'pinia'
 import { useProjectStore } from './projectStore'
-import { useTopologyStore } from './topologyStore'
 
 export const useUiStore = defineStore('ui', {
     state: () => ({
@@ -36,11 +35,10 @@ export const useUiStore = defineStore('ui', {
             if (mode !== 'workflow' && mode !== 'topology') return
             if (this.canvasMode === mode) return
             this.canvasMode = mode
-            // 切换模式时双向清空选中状态（workflow 选中 + 拓扑选中）
+            // 切换 Tab 时清空选中状态（同一套选中状态，两 Tab 共用）
             this.selectedNodeId = null
             this.selectedNodeIds = []
             this.selectedGroupId = null
-            useTopologyStore().selectedTopologyNodeId = null
             useProjectStore().updateUiState('canvasMode', mode)
         },
 
@@ -141,32 +139,54 @@ export const useUiStore = defineStore('ui', {
             await projectStore.saveBlueprintDebounced()
         },
 
-        // ===== 断点管理 =====
+        // ===== 断点管理（持久化到 project.json ui_state，刷新后保留） =====
+        _persistBreakpoints() {
+            useProjectStore().updateUiState('breakpoints', Array.from(this.breakpoints))
+        },
+        _restoreBreakpoints() {
+            const saved = useProjectStore().blueprint?.ui_state?.breakpoints
+            if (Array.isArray(saved)) {
+                this.breakpoints = new Set(saved)
+            }
+        },
         toggleBreakpoint(nodeId) {
             if (!nodeId) return false
             if (this.breakpoints.has(nodeId)) {
                 this.breakpoints.delete(nodeId)
-                return false
             } else {
                 this.breakpoints.add(nodeId)
-                return true
             }
+            this._persistBreakpoints()
+            return this.breakpoints.has(nodeId)
         },
         addBreakpoint(nodeId) {
-            if (nodeId) this.breakpoints.add(nodeId)
+            if (nodeId) {
+                this.breakpoints.add(nodeId)
+                this._persistBreakpoints()
+            }
         },
         enableBreakpoint(nodeId) {
             // 语义化别名：设置节点断点（不存在则添加，已存在保持）
-            if (nodeId) this.breakpoints.add(nodeId)
+            if (nodeId) {
+                this.breakpoints.add(nodeId)
+                this._persistBreakpoints()
+            }
         },
         disableBreakpoint(nodeId) {
-            if (nodeId) this.breakpoints.delete(nodeId)
+            if (nodeId) {
+                this.breakpoints.delete(nodeId)
+                this._persistBreakpoints()
+            }
         },
         removeBreakpoint(nodeId) {
-            if (nodeId) this.breakpoints.delete(nodeId)
+            if (nodeId) {
+                this.breakpoints.delete(nodeId)
+                this._persistBreakpoints()
+            }
         },
         clearBreakpoints() {
             this.breakpoints.clear()
+            this._persistBreakpoints()
         },
         hasBreakpoint(nodeId) {
             return nodeId ? this.breakpoints.has(nodeId) : false

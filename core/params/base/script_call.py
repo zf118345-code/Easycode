@@ -3,6 +3,7 @@
 PARAM_DEFINITIONS = {
     'script_call': {
         'label': '调用脚本',
+        'modes': ['workflow'],
         'params': {
             'script': {
                 'type': 'str',  # ⚡ 修正：改为常规字符串输入框

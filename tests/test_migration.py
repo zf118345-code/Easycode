@@ -108,15 +108,22 @@ class TestMigrationFull:
             'ui_state': {'canvasMode': 'topology'},
         }
 
-        # workflow.json：内容完整、节点废弃字段已清理
+        # workflow.json：内容完整、节点废弃字段已清理、params 边已提取为 edges 实体
         workflow = json.loads((pdir / 'workflow.json').read_text(encoding='utf-8'))
         assert workflow['tasks'][0]['task_id'] == 'task_main'
         node_1 = workflow['tasks'][0]['nodes'][0]
-        assert node_1['params'] == {'x': 1, 'on_success': {'target_node': 'node_2'}}
+        assert node_1['params'] == {'x': 1}
         assert node_1['position'] == {'x': 10, 'y': 20}
         for key in ('on_success', 'on_failure', 'positions', 'canvas_ids'):
             assert key not in node_1
-        assert workflow['edges'] == LEGACY_BLUEPRINT['edges']
+        # on_success 已提取为实体边（canvas=workflow），原实体边保留
+        assert workflow['_migrated_edges'] is True
+        workflow_edges = {e['source_port']: e for e in workflow['edges']}
+        assert workflow_edges['success']['target_node'] == 'node_2'
+        assert workflow_edges['success']['source_node'] == 'node_1'
+        assert workflow_edges['success']['canvas'] == 'workflow'
+        for legacy_edge in LEGACY_BLUEPRINT['edges']:
+            assert any(e.get('edge_id') == legacy_edge.get('edge_id') for e in workflow['edges'])
 
         # topology.json：任务组结构，节点折叠进 params、连线键名映射
         topology = json.loads((pdir / 'topology.json').read_text(encoding='utf-8'))
@@ -212,6 +219,83 @@ class TestMigrationLegacyOnly:
         assert workflow['tasks'][0]['nodes'][0]['node_id'] == 'n1'
 
 
+class TestWorkflowEdgeMigration:
+    """workflow 边实体化：params.on_success/on_failure/candidates[].on_success → edges 实体"""
+
+    def test_extract_params_edges(self, tmp_path):
+        """纯 params 连线（无现成实体边）提取为 edges 实体，params 清理"""
+        pdir = tmp_path / 'proj_edges'
+        pdir.mkdir()
+        legacy = {
+            'project_name': 'edge_proj',
+            'tasks': [
+                {
+                    'task_id': 'task_main',
+                    'task_name': '主任务',
+                    'nodes': [
+                        {
+                            'node_id': 'n_a',
+                            'node_name': 'a',
+                            'node_type': 'click',
+                            'params': {'on_success': {'target_node': 'n_b', 'target_task': 'task_main'}},
+                            'position': None,
+                        },
+                        {
+                            'node_id': 'n_b',
+                            'node_name': 'b',
+                            'node_type': 'wait',
+                            'params': {'on_failure': {'target_node': 'n_c'}},
+                            'position': None,
+                        },
+                        {
+                            'node_id': 'n_c',
+                            'node_name': 'c',
+                            'node_type': 'branch',
+                            'params': {
+                                'candidates': [
+                                    {'condition': {}, 'on_success': {'target_node': 'n_a'}},
+                                    {'condition': {}, 'on_success': {'target_node': 'n_b'}},
+                                ]
+                            },
+                            'position': None,
+                        },
+                    ],
+                }
+            ],
+            'variables': {},
+            'edges': [],
+        }
+        (pdir / 'project_blueprint.json').write_text(json.dumps(legacy, ensure_ascii=False), encoding='utf-8')
+
+        assert ensure_migrated(str(pdir)) is True
+
+        workflow = json.loads((pdir / 'workflow.json').read_text(encoding='utf-8'))
+        assert workflow['_migrated_edges'] is True
+        ports = {e['source_port']: e for e in workflow['edges']}
+        assert ports['success']['source_node'] == 'n_a'
+        assert ports['success']['target_node'] == 'n_b'
+        assert ports['success']['target_task'] == 'task_main'
+        assert ports['failure']['source_node'] == 'n_b'
+        assert ports['failure']['target_node'] == 'n_c'
+        assert ports['branch_0']['target_node'] == 'n_a'
+        assert ports['branch_1']['target_node'] == 'n_b'
+        for e in workflow['edges']:
+            assert e['canvas'] == 'workflow'
+
+        # params 已清理
+        params_a = workflow['tasks'][0]['nodes'][0]['params']
+        params_b = workflow['tasks'][0]['nodes'][1]['params']
+        params_c = workflow['tasks'][0]['nodes'][2]['params']
+        assert 'on_success' not in params_a
+        assert 'on_failure' not in params_b
+        assert all('on_success' not in (c or {}) for c in params_c['candidates'])
+
+        # 幂等：再次迁移无变化
+        before = (pdir / 'workflow.json').read_text(encoding='utf-8')
+        assert ensure_migrated(str(pdir)) is False
+        assert (pdir / 'workflow.json').read_text(encoding='utf-8') == before
+
+
 class TestMigrationSafety:
     def test_corrupt_legacy_not_migrated(self, tmp_path):
         """损坏的旧蓝图跳过迁移且保留原文件"""
@@ -253,11 +337,13 @@ class TestMigrationLoadProject:
         # 节点已合并默认参数，且无废弃字段
         node_1 = project.tasks['task_main'].nodes[0]
         assert not hasattr(node_1, 'canvas_ids')
-        # 跳转配置从 params 读取（merge_defaults 会补齐参数默认键，只校验核心字段）
-        assert node_1.params['on_success']['target_node'] == 'node_2'
-        # 全局连线
+        # 连线已实体化：params 不再含 on_success；同端口已有实体边时提取幂等跳过
+        assert 'on_success' not in node_1.params
+        # 全局连线：原实体边即代表 success 连线（提取不重复）
         assert len(project.edges) == 1
-        assert project.edges[0].source_node == 'node_1'
+        assert project.edges[0].source_port == 'success'
+        assert project.edges[0].target_node == 'node_2'
+        assert project.edges[0].canvas == 'workflow'
         # 拓扑地图：任务组化，页面数据在 params 内
         assert len(project.topology.tasks) == 1
         topo_nodes = list(project.topology.iter_nodes())

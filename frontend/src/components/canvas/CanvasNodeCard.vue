@@ -1,21 +1,20 @@
 <!-- frontend/src/components/canvas/CanvasNodeCard.vue -->
 <!--
-    Shared node card for WorkflowCanvas + TopologyCanvas.
-    The visual appearance is identical between the two modes.
-    Only the body content and port visibility differ (driven by the `mode` prop).
+    Shared node card for WorkflowCanvas + TopologyCanvas（两模式同一套代码/组件）。
+    视觉与结构完全一致；内容区由 config/nodeRegistry.js 的 content 规则驱动：
+      无内容 → 高度 0（仅剩网格取整松弛区）；有内容 → 按类型渲染并参与高度估算。
 
-    Port layout (industry standard):
+    Port layout (grid-based):
       - entry   : LEFT  (target) — where an incoming edge lands
-      - success : BOTTOM (primary exit, green)
-      - failure : RIGHT  (failure exit, red)
-      - branch_N / exit_N : stacked on the right side
+      - success : RIGHT (primary exit, green), 1 grid from top
+      - failure : RIGHT (failure exit, red), 1 grid from bottom
+      - branch_N / exit_N : stacked on the right, 2 grids apart
 -->
 <template>
     <div
         :class="['canvas-node-card', {
             'is-selected': selected,
-            'is-active-debug': isActiveDebug,
-            'is-topology': mode === 'topology'
+            'is-active-debug': isActiveDebug
         }]"
         :style="cardStyle"
         :data-node-id="node.node_id"
@@ -28,13 +27,6 @@
             class="node-header"
             :style="headerStyle"
             :data-node-id="node.node_id">
-            <span
-                class="node-breakpoint-gutter"
-                :class="{ active: hasBreakpoint && mode !== 'topology', 'is-placeholder': mode === 'topology' }"
-                :title="mode !== 'topology' ? '点击切换断点' : ''"
-                @click.stop="mode !== 'topology' && $emit('toggle-breakpoint', node.node_id)">
-                <span v-if="hasBreakpoint && mode !== 'topology'" class="bp-dot" />
-            </span>
             <div class="node-header-left" :data-node-id="node.node_id">
                 <component :is="nodeIcon" class="node-type-icon" />
                 <span class="node-title" :data-node-id="node.node_id">{{ node.node_name }}</span>
@@ -42,34 +34,20 @@
             <span v-if="isActiveDebug" class="node-debug-tag" title="当前执行命中此节点">
                 <CirclePlay class="debug-pulse-icon" />
             </span>
+            <!-- 断点槽：标题栏右侧（未设置=空心环，已设置=实心红点，命中=脉冲） -->
+            <span
+                class="node-breakpoint-gutter"
+                :class="{ active: hasBreakpoint }"
+                :title="hasBreakpoint ? '点击移除断点' : '点击设置断点'"
+                @click.stop="$emit('toggle-breakpoint', node.node_id)">
+                <span v-if="hasBreakpoint" class="bp-dot" />
+            </span>
         </div>
 
-        <!-- 2. Body — mode-specific content -->
-        <div
-            class="node-body"
-            :class="{ 'is-scrollable': (node.ports?.dynamic?.length || 0) > 10 }"
-            :data-node-id="node.node_id">
-            <!-- Topology mode body -->
-            <template v-if="mode === 'topology'">
-                <div v-if="node.node_type === 'page_state' && node.page_id" class="node-info">
-                    <span class="info-label">页面:</span> {{ node.page_id }}
-                </div>
-                <div v-if="node.features && node.features.length" class="node-info">
-                    <span class="info-label">特征:</span> {{ node.features.length }} 个 ({{ node.feature_mode || 'and' }})
-                </div>
-                <div v-if="node.exits && node.exits.length" class="node-info">
-                    <span class="info-label">出口:</span> {{ node.exits.length }} 个
-                </div>
-                <div v-if="node.node_type === 'smart_jump' && node.target_page" class="node-info">
-                    <span class="info-label">跳转至:</span> {{ node.target_page }}
-                </div>
-            </template>
-
-            <!-- Workflow mode: image recognition preview -->
-            <div
-                v-else-if="node.node_type === 'image_recognition'"
-                class="node-image-embedded"
-                :style="node.params?.image_source ? { '--bg-image-url': `url(${imageThumbUrl})` } : {}">
+        <!-- 2. Body — 注册表驱动的内容区（无内容时高度为 0） -->
+        <div class="node-body" :data-node-id="node.node_id">
+            <!-- 图像识别：模板缩略图（保持宽高比，最小高度 80px） -->
+            <div v-if="contentKind === 'image'" class="node-image-embedded">
                 <img
                     v-if="node.params?.image_source"
                     :src="imageThumbUrl"
@@ -78,13 +56,34 @@
                     @load="onImageLoaded"
                     @error="$event.target.style.display = 'none'" />
                 <div v-else class="embedded-placeholder">
-                    <Image class="embedded-icon" style="width: 18px; height: 18px; opacity: 0.5;" />
+                    <ImageIcon class="embedded-icon" style="width: 18px; height: 18px;" />
                     <span>未选模板</span>
                 </div>
             </div>
 
-            <!-- Workflow mode: branch candidates -->
-            <div v-else-if="node.node_type === 'branch'" class="branch-candidates-list">
+            <!-- OCR 识别：模板缩略图 + 识别配置行（最小高度 60px） -->
+            <div v-else-if="contentKind === 'ocr'" class="ocr-preview-block">
+                <img
+                    v-if="node.params?.image_source"
+                    :src="imageThumbUrl"
+                    class="ocr-thumb"
+                    alt="OCR 模板"
+                    @error="$event.target.style.display = 'none'" />
+                <div v-else class="ocr-thumb ocr-thumb-placeholder">
+                    <ImageIcon style="width: 16px; height: 16px;" />
+                </div>
+                <div class="ocr-info-col">
+                    <div class="node-info">
+                        <span class="info-label">保存到</span>{{ node.params?.save_to_var || '未设置' }}
+                    </div>
+                    <div class="node-info">
+                        <span class="info-label">区域</span>{{ regionText }}
+                    </div>
+                </div>
+            </div>
+
+            <!-- 分支：候选条件列表（每候选一行，动态计算高度） -->
+            <div v-else-if="contentKind === 'branch-candidates'" class="branch-candidates-list">
                 <div
                     v-for="(cand, cIdx) in (node.params?.candidates || [])"
                     :key="cIdx"
@@ -98,33 +97,27 @@
                 </div>
             </div>
 
-            <!-- Workflow mode: generic info display -->
-            <template v-else-if="mode !== 'topology'">
-                <div v-if="node.node_type === 'log' && node.params?.message" class="node-info">
-                    <span class="info-label">日志:</span> {{ truncateText(node.params.message, 28) }}
+            <!-- 页面状态：页面特征 / 出口预览（有才显示，数据内嵌 params） -->
+            <div v-else-if="contentKind === 'page-info'" class="page-info-list">
+                <div v-if="node.params?.page_id" class="node-info">
+                    <span class="info-label">页面:</span>{{ node.params.page_id }}
                 </div>
-                <div v-if="node.node_type === 'logic_check' && node.params?.condition_type" class="node-info">
-                    <span class="info-label">条件:</span> {{ node.params.condition_type }}
+                <div v-if="node.params?.features && node.params.features.length" class="node-info">
+                    <span class="info-label">特征:</span>{{ node.params.features.length }} 个 ({{ node.params.feature_mode || 'and' }})
                 </div>
-                <div v-if="node.node_type === 'variable_op' && node.params?.variable_name" class="node-info">
-                    <span class="info-label">变量:</span> {{ node.params.variable_name }}
+                <div v-if="node.params?.exits && node.params.exits.length" class="node-info">
+                    <span class="info-label">出口:</span>{{ node.params.exits.length }} 个
                 </div>
-                <div v-if="node.node_type === 'script_call' && node.params?.script_name" class="node-info">
-                    <span class="info-label">脚本:</span> {{ node.params.script_name }}
-                </div>
-                <div v-if="node.node_type === 'click' && node.params?.selector" class="node-info">
-                    <span class="info-label">选择器:</span> {{ truncateText(node.params.selector, 24) }}
-                </div>
-            </template>
+            </div>
         </div>
 
-        <!-- 3. Footer bar (workflow mode only) -->
-        <div v-if="mode !== 'topology'" class="node-footer-bar" :data-node-id="node.node_id">
+        <!-- 3. Footer bar（两模式一致） -->
+        <div class="node-footer-bar" :data-node-id="node.node_id">
             <span class="footer-tag">延时: {{ node.delay_before ?? 200 }}ms</span>
             <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
         </div>
 
-        <!-- 4. Ports / handles（网格布局：左缘入口、右缘成功/失败/动态出口） -->
+        <!-- 4. Ports / handles（网格布局：左缘入口、右缘成功/失败/动态出口，间距 2 格） -->
         <!-- Entry target on the left, 1 grid from top (always visible) -->
         <div
             class="node-handle entry-handle"
@@ -137,7 +130,7 @@
             class="node-handle source-handle succ-handle"
             :class="{ 'is-unconnected': !node.ports?.success?.connected }"
             :style="{ top: portTop('success') }"
-            :title="mode === 'topology' ? '主出口 (success)' : '成功出口 (success)'"
+            :title="'成功出口 (success)'"
             @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')" />
 
         <!-- Failure exit — right, 1 grid from bottom (conditional) -->
@@ -149,7 +142,7 @@
             :title="node.node_type === 'branch' ? 'Else 兜底出口' : '失败出口 (failure)'"
             @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')" />
 
-        <!-- Dynamic exits — right, 1 grid step between success and failure -->
+        <!-- Dynamic exits — right, 2 grids apart, 与节点高度联动 -->
         <div
             v-for="port in (node.ports?.dynamic || [])"
             :key="port.name"
@@ -186,6 +179,8 @@
         Clock
     } from 'lucide-vue-next'
     import { getNodeConfig, getNodePortTop } from '@/utils/canvasShared'
+    import { getNodeContentSpec } from '@/config/nodeRegistry'
+    import { useMainStore } from '@/stores'
 
     const props = defineProps({
         node:              { type: Object,  required: true },
@@ -207,8 +202,10 @@
         'image-loaded'
     ])
 
+    const store = useMainStore()
+
     const headerStyle = computed(() => {
-        const config = getNodeConfig(props.node.node_type)
+        const config = getNodeConfig(props.node.node_type, store.paramsDefinitions)
         return { '--node-accent': config.color }
     })
 
@@ -219,7 +216,11 @@
         height: props.node.h + 'px'
     }))
 
-    // 端口距卡片顶部的像素偏移（网格坐标，与 getPortPosition 共用同一公式）
+    // 内容区展示规则（注册表驱动；null = 无内容，高度为 0）
+    const contentSpec = computed(() => getNodeContentSpec(props.node.node_type))
+    const contentKind = computed(() => contentSpec.value?.kind || null)
+
+    // 端口距卡片顶部的像素偏移（网格坐标，与 getPortPosition 共用同一公式，随 node.h 联动）
     const portTop = (portType) => `${getNodePortTop(props.node, portType)}px`
 
     const _iconRegistry = {
@@ -229,7 +230,7 @@
     }
 
     const nodeIcon = computed(() => {
-        const config = getNodeConfig(props.node.node_type)
+        const config = getNodeConfig(props.node.node_type, store.paramsDefinitions)
         const iconName = config?.icon || 'Square'
         return _iconRegistry[iconName] || Square
     })
@@ -245,6 +246,12 @@
         return `/api/image/thumb?project_path=${encodeURIComponent(props.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&v=${props.blueprintVersion}`
     })
 
+    const regionText = computed(() => {
+        const region = props.node.params?.region_value
+        if (!Array.isArray(region) || !region.length) return '未设置'
+        return `[${region.join(', ')}]`
+    })
+
     const onImageLoaded = (e) => {
         const img = e.target
         const naturalW = img.naturalWidth || 100
@@ -253,11 +260,6 @@
         const ratio = naturalH / naturalW
         if (ratio > 1) tallImageFlags[props.node.node_id] = true
         emit('image-loaded', { nodeId: props.node.node_id, width: naturalW, height: naturalH, cardInnerWidth })
-    }
-
-    const truncateText = (text, maxLen) => {
-        if (!text) return ''
-        return text.length > maxLen ? text.slice(0, maxLen) + '...' : text
     }
 
     const formatCondDesc = (item) => {

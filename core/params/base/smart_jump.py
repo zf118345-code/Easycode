@@ -11,6 +11,7 @@ from typing import Any
 PARAM_DEFINITIONS: dict[str, dict[str, Any]] = {
     'smart_jump': {
         'label': '智能跳转',
+        'modes': ['workflow', 'topology'],
         'params': {
             # 目标页面 ID：在拓扑地图上寻路（页面级）
             'target_page_id': {'type': 'str', 'label': '目标页面 ID', 'default': '', 'placeholder': '如：shop'},

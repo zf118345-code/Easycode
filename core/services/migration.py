@@ -188,9 +188,124 @@ def _migrate_locked(project_path: str) -> bool:
     return True
 
 
+def _migrate_workflow_edges_locked(project_path: str) -> bool:
+    """
+    workflow 边实体化迁移：把寄生在节点 params 里的连线（on_success / on_failure /
+    candidates[i].on_success）提取为 workflow.json 顶层 edges 实体数组（与 topology.json 同构）。
+    幂等：_migrated_edges 标记存在或该端口已有实体边时跳过；迁移前备份一次 workflow.json.bak。
+    """
+    wf_path = os.path.join(project_path, WORKFLOW_FILE)
+    if not os.path.isfile(wf_path):
+        return False
+    try:
+        with open(wf_path, encoding='utf-8-sig') as f:
+            data = json.load(f)
+    except Exception as e:
+        logger.error(f'workflow 边迁移：读取失败，跳过 [{wf_path}]: {e}')
+        return False
+    if not isinstance(data, dict) or data.get('_migrated_edges'):
+        return False
+
+    tasks = data.get('tasks', [])
+    edges = data.get('edges', [])
+    if not isinstance(edges, list):
+        edges = []
+    # 已有实体边集合（source, source_port），幂等去重
+    existing = {(e.get('source_node'), e.get('source_port')) for e in edges if isinstance(e, dict)}
+
+    def _jump_fields(jump: Any) -> dict | None:
+        """从 Jump dict 提取 target_node/target_task/return_on_complete；无效连线返回 None"""
+        if not isinstance(jump, dict):
+            return None
+        target_node = jump.get('target_node')
+        target_task = jump.get('target_task') or jump.get('target')
+        if not target_node and not target_task:
+            return None
+        return {
+            'target_node': target_node,
+            'target_task': target_task,
+            'return_on_complete': bool(jump.get('return_on_complete', False)),
+        }
+
+    def _append_edge(source_node: str, port: str, fields: dict, cand_index: int | None = None) -> None:
+        key = (source_node, port)
+        if key in existing or not fields or not fields['target_node']:
+            return
+        existing.add(key)
+        edge = {
+            'edge_id': f'e_{source_node}_{port}_{fields["target_node"]}',
+            'source_node': source_node,
+            'target_node': fields['target_node'],
+            'source_port': port,
+            'return_on_complete': fields['return_on_complete'],
+            'canvas': 'workflow',
+        }
+        if fields['target_task']:
+            edge['target_task'] = fields['target_task']
+        edges.append(edge)
+
+    changed = False
+    for task in tasks:
+        if not isinstance(task, dict):
+            continue
+        for node in task.get('nodes', []):
+            if not isinstance(node, dict):
+                continue
+            params = node.get('params')
+            if not isinstance(params, dict):
+                continue
+
+            on_success = _jump_fields(params.get('on_success'))
+            if on_success:
+                _append_edge(node.get('node_id', ''), 'success', on_success)
+                params.pop('on_success', None)
+                changed = True
+
+            on_failure = _jump_fields(params.get('on_failure'))
+            if on_failure:
+                _append_edge(node.get('node_id', ''), 'failure', on_failure)
+                params.pop('on_failure', None)
+                changed = True
+
+            candidates = params.get('candidates')
+            if isinstance(candidates, list):
+                for cidx, candidate in enumerate(candidates):
+                    if isinstance(candidate, dict):
+                        cand_jump = _jump_fields(candidate.get('on_success'))
+                        if cand_jump:
+                            _append_edge(node.get('node_id', ''), f'branch_{cidx}', cand_jump, cidx)
+                            candidate.pop('on_success', None)
+                            changed = True
+
+    if not changed and not edges:
+        # 无任何可迁移内容，也落标记避免每次扫描
+        data['_migrated_edges'] = True
+        changed = True
+
+    if changed:
+        data['_migrated_edges'] = True
+        bak_path = wf_path + '.bak'
+        try:
+            if not os.path.isfile(bak_path):
+                import shutil
+                shutil.copy2(wf_path, bak_path)
+        except Exception as e:
+            logger.warning(f'workflow 边迁移备份失败（继续迁移）: {e}')
+        try:
+            _write_json_graceful(wf_path, data)
+            logger.info(f'workflow 边实体化完成: {wf_path}（{len(edges)} 条实体边）')
+            return True
+        except Exception as e:
+            logger.error(f'workflow 边迁移写入失败: {e}')
+            return False
+    return False
+
+
 def ensure_migrated(project_path: str) -> bool:
-    """按需迁移：project_blueprint.json 存在时拆分写三文件并备份旧文件；幂等，并发安全"""
+    """按需迁移：旧蓝图拆分三文件 + workflow 边实体化；幂等，并发安全"""
     if not project_path or not os.path.isdir(project_path):
         return False
     with _migration_lock:
-        return _migrate_locked(project_path)
+        migrated = _migrate_locked(project_path)
+        _migrate_workflow_edges_locked(project_path)
+        return migrated

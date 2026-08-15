@@ -39,7 +39,7 @@ class GraphExecutor:
     # 单节点最大访问次数（防止环路死循环）
     MAX_NODE_VISITS = 50
 
-    def __init__(self, project, project_dir=None, text_log_enabled=True, image_log_enabled=True, initial_context=None):
+    def __init__(self, project, project_dir=None, text_log_enabled=True, image_log_enabled=True, initial_context=None, debug_session=None):
         self.project = project
         self.tasks = project.tasks
         self.variables = project.variables.copy()
@@ -48,6 +48,9 @@ class GraphExecutor:
         self.current_node_index = 0
         self.current_node = None
         self.current_task_name = 'unknown'
+
+        # 调试会话（断点/暂停/单步；None 时调试功能关闭，不影响正常执行）
+        self.debug_session = debug_session
 
         # P0 修复：停止标志 + 线程锁
         self._stop = False
@@ -230,22 +233,44 @@ class GraphExecutor:
 
             self._visited_count[node.node_id] = visit_count + 1
 
+            # 调试检查点：断点命中/手动暂停/单步时阻塞，等待恢复信号
+            if self.debug_session is not None:
+                self.debug_session.on_node_enter(node.node_id, task_id)
+                if self.is_stopped:
+                    break
+
             # 执行节点
             result = self._execute_node_safely(node)
 
-            # 路由决策
+            # 路由决策：执行器显式 jump > branch 分支索引（图出边 branch_N）>
+            # 成功/失败图出边（success/failure）> 旧数据 params 回退（迁移前 JSON 仍可运行）
             jump = None
             is_success = result.get('success', True)
 
-            # 优先级：执行器返回的 jump > params.on_failure > params.on_success
-            node_failure_jump = Jump.from_dict((node.params or {}).get('on_failure'))
-            node_success_jump = Jump.from_dict((node.params or {}).get('on_success'))
             if 'jump' in result and result['jump']:
                 jump = Jump.from_dict(result['jump'])
-            elif not is_success and node_failure_jump:
-                jump = node_failure_jump
-            elif is_success and node_success_jump:
-                jump = node_success_jump
+            else:
+                graph = self._graph_cache.get(task_id)
+                out_edges = graph.get_out_edges(node.node_id) if graph else []
+                branch_index = result.get('branch_index')
+
+                def _edge_jump(port):
+                    for (tgt_node, tgt_task, edge_data) in out_edges:
+                        if edge_data.get('source_port') == port and tgt_node:
+                            return Jump(
+                                target=tgt_task,
+                                target_node=tgt_node,
+                                return_on_complete=bool(edge_data.get('return_on_complete', False)),
+                            )
+                    return None
+
+                if branch_index is not None:
+                    # branch 命中：目标由分支连线 branch_N 决定（旧数据经 result['jump'] 已提前返回）
+                    jump = _edge_jump(f'branch_{branch_index}')
+                elif not is_success:
+                    jump = _edge_jump('failure') or Jump.from_dict((node.params or {}).get('on_failure'))
+                else:
+                    jump = _edge_jump('success') or Jump.from_dict((node.params or {}).get('on_success'))
 
             # 处理跳转
             should_return = self._handle_jump(jump, node_id_to_index)

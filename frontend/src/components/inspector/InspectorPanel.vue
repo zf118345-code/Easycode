@@ -1,66 +1,60 @@
 <!-- frontend/src/components/inspector/InspectorPanel.vue
-  统一属性检查器（Step 3）：按 canvasMode 操作对应数据源。
-    workflow -> uiStore 选中（NodeInspectorPanel / BatchInspectorPanel / GroupInspectorPanel）
-    topology -> topologyStore 选中（NodeInspectorPanel，节点转换为文件形态编辑）
+  统一属性检查器：workflow 与 topology 共用一套逻辑。
+  监听 uiStore 选中状态，从「当前画布数据源」（blueprint.workflow / blueprint.topology）读取节点编辑，
+  保存时写回同一数据源（两数据源结构同构，节点页面数据内嵌 params）。
 -->
 <template>
     <div class="workflow-inspector-embedded">
-        <!-- workflow 模式 -->
-        <template v-if="store.canvasMode === 'workflow'">
-            <NodeInspectorPanel
-                v-if="targetType === 'node' && currentNode"
-                :node="currentNode"
-                @save="triggerSave" />
+        <NodeInspectorPanel
+            v-if="targetType === 'node' && currentNode"
+            :node="currentNode"
+            @save="triggerSave" />
 
-            <BatchInspectorPanel
-                v-else-if="targetType === 'batch' && selectedNodes.length > 1"
-                :nodes="selectedNodes"
-                @save="triggerSave" />
+        <BatchInspectorPanel
+            v-else-if="targetType === 'batch' && selectedNodes.length > 1"
+            :nodes="selectedNodes"
+            @save="triggerSave" />
 
-            <GroupInspectorPanel
-                v-else-if="targetType === 'group' && targetData"
-                :group="targetData"
-                mode="workflow"
-                @save="triggerSave" />
+        <GroupInspectorPanel
+            v-else-if="targetType === 'group' && targetData"
+            :group="targetData"
+            mode="workflow"
+            @save="triggerSave" />
 
-            <div v-else class="inspector-empty-tip">
-                <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
-            </div>
-        </template>
-
-        <!-- topology 模式 -->
-        <template v-else>
-            <NodeInspectorPanel
-                v-if="topologyNode"
-                :node="topologyNode"
-                @save="triggerTopologySave" />
-            <div v-else class="inspector-empty-tip">
-                <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在拓扑画布中选中一个节点以查看属性</span>
-            </div>
-        </template>
+        <div v-else class="inspector-empty-tip">
+            <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
+        </div>
     </div>
 </template>
 
 <script setup>
     import { ref, computed, watch } from 'vue'
-    import { useMainStore, useTopologyStore } from '@/stores'
+    import { useMainStore, useUiStore } from '@/stores'
     import { MousePointerClick } from 'lucide-vue-next'
-    import { fileNodeToFlat, flatNodeToFile, pruneTopologyEdgesForNode } from '@/utils/topologyModel'
+    import { pruneTopologyEdgesForNode } from '@/utils/topologyModel'
     import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
     import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
     import GroupInspectorPanel from './panels/GroupInspectorPanel.vue'
 
     const store = useMainStore()
-    const topoStore = useTopologyStore()
+    const uiStore = useUiStore()
 
-    // ===== workflow 模式状态 =====
+    const isTopology = computed(() => store.canvasMode === 'topology')
+
+    // 当前画布数据源（两 Tab 同构 {tasks, edges}）
+    const canvasData = computed(() => (
+        isTopology.value
+            ? { tasks: store.blueprint?.topology?.tasks || [], edges: store.blueprint?.topology?.edges || [] }
+            : { tasks: store.blueprint?.tasks || [], edges: store.blueprint?.edges || [] }
+    ))
+
     const currentNode = ref(null)
     const targetType = ref('node')
     const targetData = ref(null)
 
     const selectedNodes = computed(() => {
-        const ids = store.selectedNodeIds || []
-        const tasks = store.blueprint?.tasks || []
+        const ids = uiStore.selectedNodeIds || []
+        const tasks = canvasData.value.tasks || []
         let list = []
         tasks.forEach(t => {
             (t.nodes || []).forEach(n => {
@@ -70,9 +64,9 @@
         return list
     })
 
-    watch(() => [store.selectedNodeIds, store.selectedGroupId], () => {
-        const nodeIds = store.selectedNodeIds || []
-        const tasks = store.blueprint?.tasks || []
+    watch(() => [uiStore.selectedNodeIds, uiStore.selectedGroupId], () => {
+        const nodeIds = uiStore.selectedNodeIds || []
+        const tasks = canvasData.value.tasks || []
 
         if (nodeIds.length > 1) {
             targetType.value = 'batch'
@@ -90,12 +84,12 @@
                 if (!nodeCopy.params) nodeCopy.params = {}
                 currentNode.value = nodeCopy
             }
-        } else if (store.selectedGroupId) {
+        } else if (uiStore.selectedGroupId) {
             targetType.value = 'group'
-            const t = tasks.find((task, idx) => `group_${task.task_id || idx}` === store.selectedGroupId)
+            const t = tasks.find((task, idx) => `group_${task.task_id || idx}` === uiStore.selectedGroupId)
             if (t) {
                 targetData.value = {
-                    groupId: store.selectedGroupId,
+                    groupId: uiStore.selectedGroupId,
                     taskId: t.task_id,
                     groupName: t.task_name,
                     loopCount: t.loop_count || 1,
@@ -113,7 +107,7 @@
     const triggerSave = async () => {
         try {
             if (targetType.value === 'node' && currentNode.value) {
-                const tasks = store.blueprint?.tasks || []
+                const tasks = canvasData.value.tasks || []
                 for (const task of tasks) {
                     if (task.nodes) {
                         const idx = task.nodes.findIndex(n => n.node_id === currentNode.value.node_id)
@@ -125,51 +119,37 @@
                         }
                     }
                 }
+                // 页面状态节点：exits 删除后修剪索引越界的 exit 连线
+                if (isTopology.value && currentNode.value.node_type === 'page_state') {
+                    const exitsLength = (currentNode.value.params?.exits || []).length
+                    const edges = canvasData.value.edges || []
+                    const pruned = pruneTopologyEdgesForNode(edges, currentNode.value.node_id, exitsLength)
+                    if (pruned.length !== edges.length) {
+                        if (isTopology.value) {
+                            store.blueprint.topology = { ...store.blueprint.topology, edges: pruned }
+                        } else {
+                            store.blueprint.edges = pruned
+                        }
+                    }
+                }
             } else if (targetType.value === 'group' && targetData.value) {
                 targetData.value.loopCount = Number(targetData.value.loopCount) || 1
                 targetData.value.loopInterval = Number(targetData.value.loopInterval) || 0
-                const groupTask = store.blueprint?.tasks?.find(t => t.task_id === targetData.value.taskId || `group_${t.task_id}` === targetData.value.groupId)
+                const groupTask = (canvasData.value.tasks || []).find(t =>
+                    t.task_id === targetData.value.taskId || `group_${t.task_id}` === targetData.value.groupId)
                 if (groupTask) {
                     groupTask.task_name = targetData.value.groupName
                     groupTask.loop_count = targetData.value.loopCount
                     groupTask.loop_interval = targetData.value.loopInterval
                 }
             }
-            await store.saveWorkflowImmediately()
+            if (isTopology.value) {
+                await store.saveTopologyData()
+            } else {
+                await store.saveWorkflowImmediately()
+            }
         } catch (err) {
             console.error('保存节点配置失败:', err)
-        }
-    }
-
-    // ===== topology 模式状态 =====
-    const topologyNode = ref(null)
-
-    // 仅监听选中 id（不深度监听节点数据，避免画布拖拽位置保存时覆盖编辑中的字段）
-    watch(() => topoStore.selectedTopologyNodeId, () => {
-        const selectedId = topoStore.selectedTopologyNodeId
-        if (!selectedId) {
-            topologyNode.value = null
-            return
-        }
-        const flat = (topoStore.topologyNodes || []).find(n => n.node_id === selectedId)
-        if (!flat) {
-            topologyNode.value = null
-            return
-        }
-        // 转文件形态供 NodeInspectorPanel 编辑（params 内 page_id/features/feature_mode/exits）
-        topologyNode.value = JSON.parse(JSON.stringify(flatNodeToFile(flat)))
-    }, { immediate: true })
-
-    const triggerTopologySave = async () => {
-        try {
-            if (!topologyNode.value || !topoStore.selectedTopologyNodeId) return
-            const nodeId = topoStore.selectedTopologyNodeId
-            const editedFlat = fileNodeToFlat(JSON.parse(JSON.stringify(topologyNode.value)))
-            topoStore.updateTopologyNode(nodeId, editedFlat)
-            // D3：exits 删除后修剪索引越界的 exit 连线
-            topoStore.pruneEdgesForNode(nodeId, (editedFlat.exits || []).length)
-        } catch (err) {
-            console.error('保存拓扑节点配置失败:', err)
         }
     }
 </script>

@@ -3,6 +3,7 @@
 PARAM_DEFINITIONS = {
     'branch': {
         'label': '分支选择',
+        'modes': ['workflow'],
         'params': {
             'match_strategy': {
                 'type': 'select',
@@ -15,14 +16,6 @@ PARAM_DEFINITIONS = {
             },
             'candidates': {'type': 'branch_candidate_editor', 'default': [], 'label': '多分支判定列表'},
             'timeout': {'type': 'int', 'default': 3000, 'label': '匹配超时时长', 'suffix': 'ms', 'min': 0, 'step': 500},
-            'on_failure': {
-                'type': 'dict',
-                'label': 'Else 兜底跳转 (所有分支均未满足时)',
-                'sub': {
-                    'target_task': {'type': 'select', 'options': [], 'label': '目标任务', 'default': ''},
-                    'target_node': {'type': 'select', 'options': [], 'label': '目标节点', 'default': ''},
-                },
             },
-        },
     }
 }

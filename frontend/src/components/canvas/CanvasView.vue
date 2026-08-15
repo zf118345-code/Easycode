@@ -138,9 +138,9 @@
         getPortPosition, getArrowDirection
     } from '@/utils/nodeModel'
     import { NODE_WIDTH, computeCanvasNodeHeight } from '@/utils/canvasShared'
+    import { getNodeContentSpec, estimateNodeContentHeight } from '@/config/nodeRegistry'
     import { getNextZIndex } from '@/utils/zIndexManager'
-    import { deriveWorkflowEdges } from '@/utils/workflowEdgeModel'
-    import { topologyFileToFlat } from '@/utils/topologyModel'
+    import { deriveEdges, normalizePort } from '@/utils/workflowEdgeModel'
 
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { useViewport } from '@/composables/useViewport'
@@ -171,8 +171,7 @@
     })
 
     const emit = defineEmits([
-        'update-tasks',            // (tasks) 节点/组拖拽结算后的完整任务组数组
-        'update-node-positions',   // ([{node_id, position}]) 拓扑节点拖拽结算
+        'update-tasks',            // (tasks) 节点/组拖拽结算后的完整任务组数组（两 Tab 同构）
         'add-edge',                // ({source, target, source_port})
         'remove-edge',             // ({sourceNodeId, legacyPort, candIndex, edge_id, targetNodeId})
         'create-node',             // ({nodeId, type, position, groupId, sourceNodeId, portType})
@@ -227,6 +226,20 @@
     const tallImageFlags = reactive({})
     const selectedEdgeId = ref(null)
     const localSelectedNodeIds = ref([])
+    // 边路径缓存：key = 两端点(id/坐标/高度)+端口+选项+障碍签名（排除被拖节点）
+    const routeCache = new Map()
+
+    // ===== 选中状态（两 Tab 共用 uiStore 同一套选中） =====
+    const syncSelectionToStore = () => {
+        store.selectNodes([...localSelectedNodeIds.value])
+        store.setSelectedGroup(null)
+    }
+
+    const clearSelection = () => {
+        localSelectedNodeIds.value = []
+        store.clearSelection()
+        store.setSelectedGroup(null)
+    }
 
     // 拖拽辅助状态
     const dragStartMouse = ref({ x: 0, y: 0 })
@@ -237,8 +250,6 @@
     const localTasksOverride = ref(null)
     const dataTasks = computed(() => localTasksOverride.value || props.tasks)
     watch(() => props.tasks, () => { localTasksOverride.value = null })
-
-    const isTopology = computed(() => props.mode === 'topology')
 
     const getNodeShortLabel = (nodeType) => {
         const label = props.availableNodeTypes[nodeType] || nodeType
@@ -281,51 +292,64 @@
         return null
     })
 
-    // ===== 拓扑扁平节点（供渲染/命中检测） =====
-    const flatTopologyNodes = computed(() => topologyFileToFlat({ tasks: dataTasks.value, edges: props.edges }).nodes)
-    const flatTopologyEdges = computed(() => topologyFileToFlat({ tasks: dataTasks.value, edges: props.edges }).edges)
+    // ===== 统一扁平数据流（两数据源同构 {tasks, edges}，渲染/交互层完全共用） =====
 
-    // ===== 已连线端口集合（从原始数据派生，避免与 renderNodes 循环依赖） =====
-    const connectedWorkflowPorts = computed(() => {
+    // 扁平节点：展开任务组为扁平数组（workflow 与 topology 结构一致）
+    const flatNodes = computed(() => {
+        const tasks = dataTasks.value || []
+        const list = []
+        tasks.forEach((task) => {
+            (task.nodes || []).forEach((node, nIndex) => {
+                list.push({
+                    ...node,
+                    _taskId: task.task_id,
+                    _fallbackPos: { x: 60 + (nIndex % 3) * 200, y: 60 + Math.floor(nIndex / 3) * 120 }
+                })
+            })
+        })
+        return list
+    })
+
+    // 扁平边：统一结构 { sourceNodeId, targetNodeId, legacyPort, isFailFlag, edgeId?, extra }
+    const flatEdges = computed(() => deriveEdges(props.edges))
+
+    // 已连线端口集合（从统一扁平边派生，避免与 renderNodes 循环依赖）
+    const connectedPorts = computed(() => {
         const map = {}
-        for (const edge of deriveWorkflowEdges(dataTasks.value)) {
+        for (const edge of flatEdges.value) {
             const ports = map[edge.sourceNodeId] || (map[edge.sourceNodeId] = new Set())
             ports.add(edge.legacyPort)
         }
         return map
     })
 
-    const connectedTopologyPorts = computed(() => {
-        const map = {}
-        for (const edge of flatTopologyEdges.value) {
-            const ports = map[edge.source] || (map[edge.source] = new Set())
-            ports.add(edge.source_port || 'exit')
-        }
-        return map
-    })
-
     const FAILURE_PORT_TYPES = ['image_recognition', 'ocr_recognition', 'branch', 'logic_check']
 
-    // 为节点构建端口模型（定义存在 ∪ 已连线；含 success/failure/dynamic 可见性与 connected 状态）
-    function buildNodePorts(node) {
-        const connectedSet = isTopology.value
-            ? connectedTopologyPorts.value[node.node_id]
-            : connectedWorkflowPorts.value[node.node_id]
-        const has = (p) => (connectedSet ? connectedSet.has(p) : false)
-        const nodeType = isTopology.value ? (node.type || node.node_type) : node.node_type
-
-        let definedDynamic = []
-        if (!isTopology.value && nodeType === 'branch') {
-            definedDynamic = (node.params?.candidates || []).map((c, i) => ({
+    // 动态端口定义（按节点类型统一：branch→候选条件、page_state→出口列表）
+    function getDefinedDynamicPorts(node, nodeType) {
+        if (nodeType === 'branch') {
+            return (node.params?.candidates || []).map((c, i) => ({
                 name: `branch_${i}`,
                 label: `分支 ${i + 1}`
             }))
-        } else if (isTopology.value && nodeType === 'page_state') {
-            definedDynamic = (node.exits || []).map((ex, i) => ({
+        }
+        if (nodeType === 'page_state') {
+            // 页面状态出口列表内嵌 params（文件形态，与 workflow 节点同构）
+            return (node.params?.exits || []).map((ex, i) => ({
                 name: `exit_${i}`,
                 label: ex?.label || ex?.exit_action || `出口 ${i + 1}`
             }))
         }
+        return []
+    }
+
+    // 为节点构建端口模型（定义存在 ∪ 已连线；含 success/failure/dynamic 可见性与 connected 状态）
+    function buildNodePorts(node) {
+        const connectedSet = connectedPorts.value[node.node_id]
+        const has = (p) => (connectedSet ? connectedSet.has(p) : false)
+        const nodeType = node.type || node.node_type
+
+        const definedDynamic = getDefinedDynamicPorts(node, nodeType)
 
         const definedNames = definedDynamic.map(d => d.name)
         const connectedDynamic = []
@@ -355,77 +379,39 @@
         }
     }
 
-    // 拓扑内容区高度（Step 4 网格化）：基础 2 格，page_state 按 page_id/features/exits 各 +1 格
-    const computeTopologyContentHeight = (node) => {
-        let h = 40
-        if ((node.type || node.node_type) === 'page_state') {
-            if (node.page_id) h += 20
-            if (node.features?.length) h += 20
-            if (node.exits?.length) h += 20
+    // 内容区高度（注册表驱动，两模式同一套估算；图片节点用加载后的实际宽高比二次修正）
+    const resolveContentHeight = (node) => {
+        const nodeType = node.type || node.node_type
+        const spec = getNodeContentSpec(nodeType)
+        if (!spec) return 0
+        if (spec.kind === 'image') {
+            return Math.max(spec.minHeight, dynamicImageHeights[node.node_id] || 0)
         }
-        return h
+        return estimateNodeContentHeight(node)
     }
 
+    // 渲染节点（两模式单一实现：统一遍历扁平节点流，尺寸/端口/选中逻辑完全共用）
     const renderNodes = computed(() => {
-        if (isTopology.value) {
-            const raw = flatTopologyNodes.value.map(n => {
-                const ports = buildNodePorts(n)
-                const rawPos = localDraftPositions[n.node_id] || n.position || { x: 0, y: 0 }
-                const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
-                const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
-                const w = NODE_WIDTH
-                const h = computeCanvasNodeHeight(computeTopologyContentHeight(n), ports.dynamic.length)
-                return {
-                    ...n,
-                    node_type: n.type,
-                    node_name: n.node_name || n.label || n.page_id || '未命名',
-                    position: { x: gridX, y: gridY },
-                    w,
-                    h,
-                    size: { w, h },
-                    ports,
-                    selected: localSelectedNodeIds.value.includes(n.node_id)
-                }
-            })
-            return normalizeNodeList(raw)
-        }
-
-        // workflow：遍历任务组展开节点
-        const tasks = dataTasks.value || []
-        let allNodesList = []
-        tasks.forEach((task) => {
-            const rawNodes = task.nodes || []
-            rawNodes.forEach((node, nIndex) => {
-                const ports = buildNodePorts(node)
-                const rawPos = localDraftPositions[node.node_id] || node.position || { x: 60 + (nIndex % 3) * 200, y: 60 + Math.floor(nIndex / 3) * 120 }
-                const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
-                const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
-                const isSel = localSelectedNodeIds.value.includes(node.node_id)
-
-                let contentHeightPx = 40
-                if (node.node_type === 'image_recognition') {
-                    contentHeightPx = Math.max(80, dynamicImageHeights[node.node_id] || 80)
-                } else if (node.node_type === 'ocr_recognition') {
-                    contentHeightPx = 60
-                } else if (node.node_type === 'branch') {
-                    const candCount = node.params?.candidates?.length || 0
-                    contentHeightPx = Math.max(candCount * 24 + 12, 40)
-                }
-
-                const finalHeight = computeCanvasNodeHeight(contentHeightPx, ports.dynamic.length)
-                const w = NODE_GRID_W * GRID_SIZE
-                allNodesList.push({
-                    ...node,
-                    position: { x: gridX, y: gridY },
-                    w,
-                    h: finalHeight,
-                    size: { w, h: finalHeight },
-                    ports,
-                    selected: isSel
-                })
-            })
+        const raw = flatNodes.value.map(n => {
+            const ports = buildNodePorts(n)
+            const rawPos = localDraftPositions[n.node_id] || n.position || n._fallbackPos || { x: 0, y: 0 }
+            const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
+            const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
+            const w = NODE_WIDTH
+            const h = computeCanvasNodeHeight(resolveContentHeight(n), ports.dynamic.length)
+            return {
+                ...n,
+                node_type: n.node_type || n.type,
+                node_name: n.node_name || n.label || n.page_id || '未命名',
+                position: { x: gridX, y: gridY },
+                w,
+                h,
+                size: { w, h },
+                ports,
+                selected: localSelectedNodeIds.value.includes(n.node_id)
+            }
         })
-        return allNodesList
+        return normalizeNodeList(raw)
     })
 
     const onImageLoaded = (data) => {
@@ -470,7 +456,7 @@
     }
 
     const dynamicGroups = computed(() => {
-        if (isTopology.value || !props.hasGroups) return []
+        if (!props.hasGroups) return []
         const tasks = dataTasks.value || []
         let groups = []
         const PADDING_GRIDS = 3
@@ -629,7 +615,7 @@
     }
 
     const handleRunFromNode = async () => {
-        if (isTopology.value) return
+        if (!props.hasGroups) return
         const nodeId = customContextMenu.targetId
         customContextMenu.visible = false
         if (!nodeId) return
@@ -705,17 +691,12 @@
 
         const taskId = findTargetTaskId(nodeId)
         emit('delete-node', { nodeId, taskId })
-        if (isTopology.value) {
-            store.selectTopologyNode(null)
-        } else {
-            store.clearSelection()
-        }
-        localSelectedNodeIds.value = []
+        clearSelection()
         ElMessage.success('节点已删除')
     }
 
     const handleDeleteGroup = () => {
-        if (isTopology.value) return
+        if (!props.hasGroups) return
         const taskId = customContextMenu.targetId
         customContextMenu.visible = false
         if (!taskId) return
@@ -737,8 +718,8 @@
     }
 
     const handleCanvasNewGroup = async () => {
-        if (isTopology.value) {
-            // 拓扑模式无任务组：退化为新建节点
+        if (!props.hasGroups) {
+            // 无任务组模式：退化为新建节点
             handleCanvasNewNode()
             return
         }
@@ -771,6 +752,13 @@
         let edges = []
         const routerNodes = normalizeNodeList(allNodes)
 
+        // 障碍签名：排除正在拖拽的节点（拖拽期间其他边形状稳定，落定后签名变化全量重算）
+        let obstacleSig = ''
+        for (const n of allNodes) {
+            if (activeDraggingId && isActuallyMoving && n.node_id === activeDraggingId) continue
+            obstacleSig += `${n.node_id}:${n.position.x},${n.position.y},${n.w},${n.h}|`
+        }
+
         const pushEdge = ({ sourceNode, targetNode, legacyPort, edgeIdBase, isFailFlag, extra = {}, edgeId, candIndex }) => {
             const standardPort = normalizePortType(legacyPort)
             const isThisEdgeDragging = activeDraggingId && isActuallyMoving &&
@@ -782,8 +770,48 @@
             let endPt = null
             let rawPixelPoints = []
 
-            if (isThisEdgeDragging) {
-                // 拖拽中：使用简单正交折线 + 圆角，避免每帧 BFS 开销
+            // 拓扑平行边：把已算好的 parallel 参数真正传给路由（垂直偏移分离）
+            const routeOptions = extra?.parallel
+                ? { offsetIndex: extra.parallel.offsetIndex, totalParallel: extra.parallel.totalParallel }
+                : {}
+
+            const computeRoute = () => {
+                const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort, routeOptions)
+                path = result.pathD
+                arrowDir = result.arrowDir
+                rawPixelPoints = result.points || []
+                if (rawPixelPoints.length) {
+                    startPt = rawPixelPoints[0]
+                    endPt = rawPixelPoints[rawPixelPoints.length - 1]
+                }
+            }
+
+            try {
+                if (isThisEdgeDragging) {
+                    // 拖拽中：被拖节点相关边每帧全量绕障重算（A* 网格小，亚毫秒级）
+                    computeRoute()
+                } else {
+                    // 静态：端点+障碍签名缓存，拖拽其他节点时命中缓存零重算
+                    const key = [
+                        sourceNode.node_id, sourceNode.position.x, sourceNode.position.y, sourceNode.h,
+                        targetNode.node_id, targetNode.position.x, targetNode.position.y, targetNode.h,
+                        standardPort, JSON.stringify(routeOptions), obstacleSig
+                    ].join('|')
+                    const cached = routeCache.get(key)
+                    if (cached) {
+                        path = cached.path
+                        arrowDir = cached.arrowDir
+                        rawPixelPoints = cached.rawPixelPoints
+                        startPt = rawPixelPoints[0] || null
+                        endPt = rawPixelPoints[rawPixelPoints.length - 1] || null
+                    } else {
+                        computeRoute()
+                        if (routeCache.size > 2000) routeCache.clear()
+                        routeCache.set(key, { path, arrowDir, rawPixelPoints })
+                    }
+                }
+            } catch (e) {
+                console.warn('[CanvasView] computeEdgePath 失败，使用兜底路径:', e)
                 const sPt = getPortPosition(sourceNode, legacyPort)
                 const ePt = getPortPosition(targetNode, 'entry')
                 startPt = sPt
@@ -791,27 +819,6 @@
                 path = getSimpleOrthoPath(sPt, ePt, standardPort)
                 rawPixelPoints = [sPt, ePt]
                 arrowDir = getArrowDirection(rawPixelPoints)
-            } else {
-                // 静态：canvasRouter BFS 寻路
-                try {
-                    const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort, {})
-                    path = result.pathD
-                    arrowDir = result.arrowDir
-                    rawPixelPoints = result.points || []
-                    if (rawPixelPoints.length) {
-                        startPt = rawPixelPoints[0]
-                        endPt = rawPixelPoints[rawPixelPoints.length - 1]
-                    }
-                } catch (e) {
-                    console.warn('[CanvasView] computeEdgePath 失败，使用兜底路径:', e)
-                    const sPt = getPortPosition(sourceNode, legacyPort)
-                    const ePt = getPortPosition(targetNode, 'entry')
-                    startPt = sPt
-                    endPt = ePt
-                    path = getSimpleOrthoPath(sPt, ePt, standardPort)
-                    rawPixelPoints = [sPt, ePt]
-                    arrowDir = getArrowDirection(rawPixelPoints)
-                }
             }
 
             const isFail = !!isFailFlag
@@ -836,58 +843,40 @@
             })
         }
 
-        if (isTopology.value) {
-            // topology：实体连线列表（source_node/target_node 已归一化为 source/target）
-            const flatEdges = flatTopologyEdges.value
-            const parallelCount = {}
-            const parallelIndex = {}
-            flatEdges.forEach(edge => {
-                const key = `${edge.source}-${edge.target}`
-                parallelCount[key] = (parallelCount[key] || 0) + 1
-            })
-            for (const edge of flatEdges) {
-                const sourceNode = allNodes.find(n => n.node_id === edge.source)
-                const targetNode = allNodes.find(n => n.node_id === edge.target)
-                if (!sourceNode || !targetNode) continue
+        // 统一扁平边流：同一走廊的多条边（同源同目标）按平行序列分离，两模式一致
+        const parallelCount = {}
+        const parallelIndex = {}
+        const flatEdgeList = flatEdges.value
+        flatEdgeList.forEach(edge => {
+            const key = `${edge.sourceNodeId}-${edge.targetNodeId}`
+            parallelCount[key] = (parallelCount[key] || 0) + 1
+        })
+        for (const derived of flatEdgeList) {
+            const sourceNode = allNodes.find(n => n.node_id === derived.sourceNodeId)
+            const targetNode = allNodes.find(n => n.node_id === derived.targetNodeId)
+            if (!sourceNode || !targetNode) continue
 
-                const sourcePort = edge.source_port || 'exit'
-                const key = `${edge.source}-${edge.target}`
-                parallelIndex[key] = (parallelIndex[key] || 0) + 1
-                const offsetIndex = parallelIndex[key] - 1
-                const totalParallel = parallelCount[key]
+            const key = `${derived.sourceNodeId}-${derived.targetNodeId}`
+            parallelIndex[key] = (parallelIndex[key] || 0) + 1
+            const offsetIndex = parallelIndex[key] - 1
+            const totalParallel = parallelCount[key]
 
-                pushEdge({
-                    sourceNode,
-                    targetNode,
-                    legacyPort: sourcePort,
-                    edgeIdBase: edge.edge_id || `e_${edge.source}_${edge.target}_${parallelIndex[key]}`,
-                    isFailFlag: sourcePort === 'failure' || sourcePort === 'fail',
-                    edgeId: edge.edge_id,
-                    extra: {
-                        sourcePort,
-                        parallel: { offsetIndex, totalParallel }
-                    }
-                })
-            }
-        } else {
-            // workflow：从节点 params 派生连线
-            deriveWorkflowEdges(dataTasks.value).forEach(derived => {
-                const sourceNode = allNodes.find(n => n.node_id === derived.sourceNodeId)
-                const targetNode = allNodes.find(n => n.node_id === derived.targetNodeId)
-                if (sourceNode && targetNode) {
-                    pushEdge({
-                        sourceNode,
-                        targetNode,
-                        legacyPort: derived.legacyPort,
-                        edgeIdBase: derived.edgeIdBase,
-                        isFailFlag: derived.isFailFlag,
-                        extra: derived.extra
-                    })
+            pushEdge({
+                sourceNode,
+                targetNode,
+                legacyPort: derived.legacyPort,
+                edgeIdBase: derived.edgeIdBase || `e_${derived.sourceNodeId}_${derived.targetNodeId}_${parallelIndex[key]}`,
+                isFailFlag: derived.isFailFlag,
+                edgeId: derived.edgeId,
+                candIndex: derived.candIndex,
+                extra: {
+                    ...derived.extra,
+                    parallel: { offsetIndex, totalParallel }
                 }
             })
         }
 
-        // 用户实时拉线预览（Step 4 网格化端口：按端口方向绘制预览路径）
+        // 用户实时拉线预览：无箭头（终点用发光球，由 CanvasEdgeLayer 渲染）
         if (drawingConnection.value.active) {
             const sourceNode = allNodes.find(n => n.node_id === drawingConnection.value.sourceNodeId)
             if (sourceNode) {
@@ -896,16 +885,13 @@
                 const mousePt = { x: drawingConnection.value.currentX, y: drawingConnection.value.currentY }
 
                 const pathStr = getSimpleOrthoPath(startPt, mousePt, portType)
-                const arrowDir = getArrowDirection([startPt, mousePt])
-                const markerPrefix = portType === 'fail' ? 'fail' : 'succ'
-                drawingConnection.value.previewMarkerUrl = `url(#arrow-${markerPrefix}-${arrowDir})`
 
                 edges.push({
                     id: 'temp_drawing',
                     path: pathStr,
                     label: '',
-                    isFail: portType === 'fail',
-                    markerUrl: drawingConnection.value.previewMarkerUrl,
+                    isFail: portType === 'fail' || portType === 'failure',
+                    markerUrl: '',
                     selected: false,
                     labelX: 0,
                     labelY: 0,
@@ -1048,13 +1034,7 @@
                 return
             }
 
-            localSelectedNodeIds.value = []
-            if (isTopology.value) {
-                store.selectTopologyNode(null)
-            } else {
-                store.clearSelection()
-                store.setSelectedGroup(null)
-            }
+            clearSelection()
             selectedEdgeId.value = null
         }
 
@@ -1093,7 +1073,7 @@
             })
         }
 
-        if (!isTopology.value && e.ctrlKey) {
+        if (e.ctrlKey) {
             if (localSelectedNodeIds.value.includes(node.node_id)) {
                 localSelectedNodeIds.value = localSelectedNodeIds.value.filter(id => id !== node.node_id)
             } else {
@@ -1103,12 +1083,7 @@
             localSelectedNodeIds.value = [node.node_id]
         }
 
-        if (isTopology.value) {
-            store.selectTopologyNode(node.node_id)
-        } else {
-            store.selectNodes([...localSelectedNodeIds.value])
-            store.setSelectedGroup(null)
-        }
+        syncSelectionToStore()
 
         draggingNodeId.value = node.node_id
         dragStartMouse.value = { x: e.clientX, y: e.clientY }
@@ -1203,34 +1178,6 @@
             drawingConnection.value.currentX = Math.round(rawX / GRID_SIZE) * GRID_SIZE
             drawingConnection.value.currentY = Math.round(rawY / GRID_SIZE) * GRID_SIZE
         }
-    }
-
-    const settleTopologyDrag = (nodeId, finalPos, currentNodeSize) => {
-        // 拓扑模式：节点级碰撞推挤（在扁平克隆上计算，避免污染 props）
-        const flatClone = JSON.parse(JSON.stringify(flatTopologyNodes.value))
-        const enriched = flatClone.map(n => {
-            const ports = buildNodePorts(n)
-            return {
-                ...n,
-                w: NODE_WIDTH,
-                h: computeCanvasNodeHeight(computeTopologyContentHeight(n), ports.dynamic.length)
-            }
-        })
-        resolveCollisionsAndPushOthers(nodeId, finalPos, enriched, currentNodeSize)
-
-        const moved = []
-        for (const n of enriched) {
-            if (localDraftPositions[n.node_id]) {
-                moved.push({ node_id: n.node_id, position: { ...localDraftPositions[n.node_id] } })
-            }
-        }
-        for (const key of Object.keys(localDraftPositions)) {
-            delete localDraftPositions[key]
-        }
-        if (moved.length) {
-            emit('update-node-positions', moved)
-        }
-        ElMessage.success('节点排版更新成功')
     }
 
     const settleWorkflowDrag = async (nodeId, isCtrlHeld) => {
@@ -1407,20 +1354,16 @@
                 const targetNodeObj = renderNodes.value.find(n => n.node_id === nodeId)
                 const currentNodeSize = { w: targetNodeObj?.w || (NODE_GRID_W * GRID_SIZE), h: targetNodeObj?.h || 120 }
 
-                if (isTopology.value) {
-                    settleTopologyDrag(nodeId, finalPos, currentNodeSize)
-                } else {
-                    await settleWorkflowDrag(nodeId, isCtrlHeld)
-                }
+                // 统一结算：两 Tab 同一套拖拽逻辑（碰撞推挤 + 组归属/组推挤，任务组两 Tab 启用）
+                await settleWorkflowDrag(nodeId, isCtrlHeld)
             }
             hasMoved.value = false
         }
 
         // 拖拽空放断开原有连线 / 弹 spawn 菜单
         if (wasDrawing) {
-            const hasExisting = isTopology.value
-                ? flatTopologyEdges.value.some(ed => ed.source === sourceId && (ed.source_port || 'exit') === (portType || 'exit'))
-                : deriveWorkflowEdges(dataTasks.value).some(ed => ed.sourceNodeId === sourceId && ed.legacyPort === portType)
+            const hasExisting = flatEdges.value.some(ed =>
+                ed.sourceNodeId === sourceId && ed.legacyPort === normalizePort(portType))
 
             if (hasExisting) {
                 emit('remove-edge', { sourceNodeId: sourceId, legacyPort: portType })
@@ -1490,18 +1433,13 @@
     }
 
     const onNodeDoubleClick = (e, node) => {
-        if (isTopology.value) {
-            store.selectTopologyNode(node.node_id)
-        } else {
-            store.selectNode(node.node_id)
-            store.setSelectedGroup(null)
-        }
         localSelectedNodeIds.value = [node.node_id]
+        syncSelectionToStore()
         e.stopPropagation()
     }
 
     const openGroupInspector = (e, group) => {
-        if (isTopology.value) return
+        if (!props.hasGroups) return
         store.setSelectedGroup(group.groupId)
         store.clearSelection()
         localSelectedNodeIds.value = []
@@ -1509,7 +1447,7 @@
     }
 
     const startGroupDrag = (e, groupId) => {
-        if (isTopology.value) return
+        if (!props.hasGroups) return
         e.stopPropagation()
         const startX = e.clientX
         const startY = e.clientY
@@ -1643,7 +1581,7 @@
             sourceY: sourcePt?.y ?? 0,
             currentX: (clientX - viewport.value.x) / viewport.value.zoom,
             currentY: (clientY - viewport.value.y) / viewport.value.zoom,
-            previewMarkerUrl: 'url(#arrow-preview)'
+            previewMarkerUrl: ''
         }
         e.stopPropagation()
     }
@@ -1719,17 +1657,13 @@
             y: Math.round(rawSpawnY / GRID_SIZE) * GRID_SIZE
         }
 
-        const nodeId = isTopology.value ? `topo_${Date.now()}` : `node_${Date.now()}`
+        const nodeId = `node_${Date.now()}`
         const groupId = customContextMenu.targetType === 'canvas_in_group' ? customContextMenu.targetId : null
 
         emit('create-node', { nodeId, type: nodeType, position, groupId, sourceNodeId: sourceId, portType })
 
         localSelectedNodeIds.value = [nodeId]
-        if (isTopology.value) {
-            store.selectTopologyNode(nodeId)
-        } else {
-            store.selectNode(nodeId)
-        }
+        syncSelectionToStore()
 
         const chineseLabel = getNodeShortLabel(nodeType)
         ElMessage.success(`成功创建节点: [${chineseLabel}]`)

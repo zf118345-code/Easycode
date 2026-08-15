@@ -1,9 +1,8 @@
 // stores/index.js - 向后兼容的重导出
-// 大 Store 已拆分为 5 个独立 Store，此处保持旧 API 兼容
+// 大 Store 已拆分为 4 个独立 Store（拓扑数据已收编进 projectStore.blueprint.topology），此处保持旧 API 兼容
 export { useProjectStore } from './projectStore'
 export { useUiStore } from './uiStore'
 export { useExecutionStore } from './executionStore'
-export { useTopologyStore } from './topologyStore'
 export { useContextStore } from './contextStore'
 export { DEFAULT_UI_STATE } from './projectStore'
 
@@ -12,7 +11,6 @@ import { defineStore } from 'pinia'
 import { useProjectStore } from './projectStore'
 import { useUiStore } from './uiStore'
 import { useExecutionStore } from './executionStore'
-import { useTopologyStore } from './topologyStore'
 import { useContextStore } from './contextStore'
 
 export const useMainStore = defineStore('main', {
@@ -22,7 +20,6 @@ export const useMainStore = defineStore('main', {
         projectStore() { return useProjectStore() },
         uiStore() { return useUiStore() },
         executionStore() { return useExecutionStore() },
-        topologyStore() { return useTopologyStore() },
         contextStore() { return useContextStore() },
 
         // ===== projectStore 关键字段代理（向后兼容） =====
@@ -61,13 +58,6 @@ export const useMainStore = defineStore('main', {
         currentActiveNodeId() { return useExecutionStore().currentActiveNodeId },
         isRunning() { return useExecutionStore().isRunning },
         isPaused() { return useExecutionStore().isPaused },
-
-        // ===== topologyStore 关键字段代理 =====
-        topologyBlueprint() { return useTopologyStore().topologyBlueprint },
-        selectedTopologyNodeId() { return useTopologyStore().selectedTopologyNodeId },
-        topologyNodes() { return useTopologyStore().topologyNodes },
-        topologyEdges() { return useTopologyStore().topologyEdges },
-        currentTopologyNode() { return useTopologyStore().currentTopologyNode },
 
         // ===== contextStore 关键字段代理 =====
         currentContext() { return useContextStore().currentContext }
@@ -125,17 +115,6 @@ export const useMainStore = defineStore('main', {
         async getExecutionVariables(level) { return useExecutionStore().getExecutionVariables(level) },
         startDebugPolling(intervalMs) { return useExecutionStore().startDebugPolling(intervalMs) },
         stopDebugPolling() { return useExecutionStore().stopDebugPolling() },
-
-        // ===== topologyStore 关键方法代理 =====
-        async loadTopologyFromBlueprint(bp) { return useTopologyStore().loadTopologyFromBlueprint(bp) },
-        syncTopologyToBlueprint() { return useTopologyStore().syncTopologyToBlueprint() },
-        async saveTopologyToBlueprint() { return useTopologyStore().saveTopologyToBlueprint() },
-        addTopologyNode(nodeData) { return useTopologyStore().addTopologyNode(nodeData) },
-        selectTopologyNode(nodeId) { return useTopologyStore().selectTopologyNode(nodeId) },
-        updateTopologyNode(nodeId, data) { return useTopologyStore().updateTopologyNode(nodeId, data) },
-        removeTopologyNode(nodeId) { return useTopologyStore().removeTopologyNode(nodeId) },
-        addTopologyEdge(edgeData) { return useTopologyStore().addTopologyEdge(edgeData) },
-        removeTopologyEdge(edgeId) { return useTopologyStore().removeTopologyEdge(edgeId) },
 
         // ===== contextStore 关键方法代理 =====
         async loadContext() { return useContextStore().loadContext() },

@@ -34,6 +34,10 @@ class DebugSession:
         self._step_event = threading.Event()
         self._resume_event = threading.Event()
         self._resume_event.set()  # 初始允许执行
+        # 暂停已完全就绪（_resume_event 已 clear、执行线程已进入等待）——供外部精确等待暂停完成
+        self._paused_ready = threading.Event()
+        # 暂停序号（每次 _do_pause 递增，供外部区分"同一次暂停的残留"与"新的暂停"）
+        self._pause_count = 0
 
         # 状态
         self._is_paused = False
@@ -41,9 +45,12 @@ class DebugSession:
         self._current_node_id = None
         self._current_task_id = None
         self._pause_reason = None  # 'breakpoint' | 'step' | 'manual'
+        # 手动暂停请求（一次性，被 should_pause 消费）
+        self._manual_pause_request = False
 
-        # 暂停时的变量快照
+        # 暂停时的变量快照（当前 + 上一节点，供对比观察）
         self._variable_snapshot = {}
+        self._prev_variable_snapshot = {}
 
         # 锁
         self._lock = threading.Lock()
@@ -73,6 +80,11 @@ class DebugSession:
     def should_pause(self, node_id: str) -> bool:
         """检查是否应该在当前节点暂停（由 executor 调用）"""
         with self._lock:
+            if self._manual_pause_request:
+                # 手动暂停：消费请求，在下一个节点执行前生效
+                self._manual_pause_request = False
+                self._pause_reason = 'manual'
+                return True
             if node_id in self.breakpoints:
                 self._pause_reason = 'breakpoint'
                 return True
@@ -83,10 +95,9 @@ class DebugSession:
         return False
 
     def pause(self):
-        """手动暂停"""
+        """手动暂停（请求在下一个节点执行前生效，一次性）"""
         with self._lock:
-            self._pause_reason = 'manual'
-            self._is_paused = True
+            self._manual_pause_request = True
 
     def on_node_enter(self, node_id: str, task_id: str):
         """节点执行前回调（由 executor 调用）"""
@@ -103,14 +114,19 @@ class DebugSession:
     def _do_pause(self):
         """执行暂停"""
         with self._lock:
-            self._is_paused = True
+            # 快照轮换：当前值存入"上一节点"，再取新快照（供变量对比观察）
+            self._prev_variable_snapshot = dict(self._variable_snapshot)
             self._variable_snapshot = dict(self.executor.variables) if self.executor.variables else {}
+            self._is_paused = True
+            self._pause_count += 1
             logger.info(f'调试 [{self.session_id}]: 暂停在节点 {self._current_node_id} (原因: {self._pause_reason})')
 
-        # 等待恢复信号
+        # 等待恢复信号（先 clear 再置就绪，保证外部 resume/step 一定在 clear 之后生效）
         self._resume_event.clear()
+        self._paused_ready.set()
         self._resume_event.wait()
         self._resume_event.set()
+        self._paused_ready.clear()
 
         with self._lock:
             self._is_paused = False
@@ -138,6 +154,7 @@ class DebugSession:
                 'pause_reason': self._pause_reason,
                 'breakpoints': list(self.breakpoints),
                 'variables': dict(self._variable_snapshot) if self._is_paused else {},
+                'prev_variables': dict(self._prev_variable_snapshot) if self._is_paused else {},
                 'executor_variables': dict(self.executor.variables) if self.executor.variables else {},
                 'call_stack': getattr(self.executor, '_call_stack', []),
                 'visited_count': dict(getattr(self.executor, '_visited_count', {})),
@@ -158,6 +175,13 @@ class DebugService:
     _lock = threading.Lock()
 
     @staticmethod
+    def register_session(session: DebugSession):
+        """注册调试会话（execution_service 集成时使用，session_id 与 execution_id 对齐）"""
+        with DebugService._lock:
+            DebugService._sessions[session.session_id] = session
+        logger.info(f'调试会话已注册: {session.session_id}')
+
+    @staticmethod
     def start_debug_session(
         project_path: str,
         task_id: str,
@@ -165,8 +189,9 @@ class DebugService:
         breakpoints: list[str] = None,
         blueprint_data: dict = None,
         background_tasks: BackgroundTasks = None,
+        session_id: str = None,
     ) -> dict:
-        """启动调试会话"""
+        """启动调试会话（session_id 可由外部指定，与执行记录对齐）"""
         if not os.path.exists(project_path):
             raise HTTPException(status_code=404, detail='项目不存在')
 
@@ -184,7 +209,7 @@ class DebugService:
                 saved_context = json.load(f)
 
         project = load_project(project_path)
-        session_id = f'debug_{task_id}_{int(time.time() * 1000)}'
+        session_id = session_id or f'debug_{task_id}_{int(time.time() * 1000)}'
 
         original_failsafe = pyautogui.FAILSAFE
         pyautogui.FAILSAFE = False
@@ -204,8 +229,7 @@ class DebugService:
             for bp in breakpoints:
                 session.add_breakpoint(bp)
 
-        with DebugService._lock:
-            DebugService._sessions[session_id] = session
+        DebugService.register_session(session)
 
         def run_debug_background():
             try:
@@ -257,6 +281,18 @@ class DebugService:
         return {'status': 'success', 'breakpoints': session.get_breakpoints()}
 
     @staticmethod
+    def set_breakpoints(session_id: str, node_ids: list[str]) -> dict:
+        """批量设置断点（覆盖式）"""
+        with DebugService._lock:
+            session = DebugService._sessions.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail='调试会话不存在')
+        session.clear_breakpoints()
+        for node_id in node_ids or []:
+            session.add_breakpoint(node_id)
+        return {'status': 'success', 'breakpoints': session.get_breakpoints()}
+
+    @staticmethod
     def resume_session(session_id: str) -> dict:
         """恢复执行"""
         with DebugService._lock:
@@ -267,14 +303,14 @@ class DebugService:
         return {'status': 'resumed'}
 
     @staticmethod
-    def step_session(session_id: str) -> dict:
-        """单步执行"""
+    def step_session(session_id: str, step_type: str = 'over') -> dict:
+        """单步执行（step_type: over/into/out，当前统一按单节点暂停处理）"""
         with DebugService._lock:
             session = DebugService._sessions.get(session_id)
         if not session:
             raise HTTPException(status_code=404, detail='调试会话不存在')
         session.step()
-        return {'status': 'stepping'}
+        return {'status': 'stepping', 'step_type': step_type}
 
     @staticmethod
     def pause_session(session_id: str) -> dict:
@@ -295,6 +331,16 @@ class DebugService:
             raise HTTPException(status_code=404, detail='调试会话不存在')
         session.stop()
         return {'status': 'stopped'}
+
+    @staticmethod
+    def inspect_variables(session_id: str, level: str = 'all') -> dict:
+        """获取当前变量（路由 /variables 对接）"""
+        with DebugService._lock:
+            session = DebugService._sessions.get(session_id)
+        if not session:
+            raise HTTPException(status_code=404, detail='调试会话不存在')
+        state = session.get_state()
+        return {'variables': state.get('executor_variables', {})}
 
     @staticmethod
     def get_variables(session_id: str) -> dict:

@@ -3,6 +3,7 @@
 PARAM_DEFINITIONS = {
     'set_window': {
         'label': '设置工作窗口',
+        'modes': ['workflow'],
         'params': {
             'work_mode': {
                 'type': 'select',
@@ -36,68 +37,6 @@ PARAM_DEFINITIONS = {
                 'label': '目标尺寸 (W, H)',
                 'visible_if': {'field': 'work_mode', 'operator': 'eq', 'value': 'window'},
             },
-            'on_success': {
-                'type': 'dict',
-                'label': '成功跳转',
-                'sub': {
-                    'jump_type': {
-                        'type': 'select',
-                        'options': [
-                            {'value': 'next', 'label': '下一个节点'},
-                            {'value': 'node', 'label': '跳转节点'},
-                            {'value': 'task', 'label': '跳转任务'},
-                            {'value': 'end', 'label': '结束流程'},
-                        ],
-                        'default': 'next',
-                        'label': '跳转类型',
-                    },
-                    'target_task': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标任务',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'eq', 'value': 'task'},
-                    },
-                    'target_node': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标节点',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'in', 'value': ['node', 'task']},
-                    },
-                },
             },
-            'on_failure': {
-                'type': 'dict',
-                'label': '失败跳转',
-                'sub': {
-                    'jump_type': {
-                        'type': 'select',
-                        'options': [
-                            {'value': 'next', 'label': '下一个节点'},
-                            {'value': 'node', 'label': '跳转节点'},
-                            {'value': 'task', 'label': '跳转任务'},
-                            {'value': 'end', 'label': '结束流程'},
-                        ],
-                        'default': 'next',
-                        'label': '跳转类型',
-                    },
-                    'target_task': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标任务',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'eq', 'value': 'task'},
-                    },
-                    'target_node': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标节点',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'in', 'value': ['node', 'task']},
-                    },
-                },
-            },
-        },
     }
 }

@@ -14,6 +14,7 @@ from fastapi import BackgroundTasks, HTTPException
 from core.executor import GraphExecutor
 from core.project_loader import load_project
 from core.services.blueprint_service import BlueprintService
+from core.services.debug_service import DebugService, DebugSession
 
 CONTEXT_FILE = 'context.json'
 MAX_LOG_ENTRIES = 100
@@ -63,6 +64,12 @@ class ExecutionService:
         execution_id = f'{task_id}_{int(time.time() * 1000)}'
         record_execution(execution_id, {'status': 'running', 'message': '执行中...'}, [])
 
+        # 调试能力：前端随 blueprint_data.__debug 下发（含 breakpoints；存在即启用暂停/单步/变量）
+        debug_breakpoints = []
+        debug_enabled = isinstance(blueprint_data, dict) and '__debug' in blueprint_data
+        if debug_enabled:
+            debug_breakpoints = (blueprint_data.get('__debug') or {}).get('breakpoints', []) or []
+
         def execute_background():
             original_failsafe = pyautogui.FAILSAFE
             pyautogui.FAILSAFE = False
@@ -73,6 +80,16 @@ class ExecutionService:
                 image_log_enabled=True,
                 initial_context=saved_context,
             )
+
+            # 调试会话：session_id 与 execution_id 对齐，注入执行器（断点/暂停/单步/变量）
+            debug_session = None
+            if debug_enabled:
+                debug_session = DebugSession(execution_id, executor, task_id, start_node_id)
+                for bp in debug_breakpoints:
+                    debug_session.add_breakpoint(bp)
+                debug_session._is_running = True
+                executor.debug_session = debug_session
+                DebugService.register_session(debug_session)
 
             # P0 修复：注册 executor 实例，供 stop_execution 使用
             with _status_lock:
@@ -94,6 +111,9 @@ class ExecutionService:
                     execution_logs[execution_id] = executor.logs
                 with _status_lock:
                     _active_executors.pop(execution_id, None)
+                if debug_session is not None:
+                    with DebugService._lock:
+                        DebugService._sessions.pop(execution_id, None)
                 pyautogui.FAILSAFE = original_failsafe
 
         background_tasks.add_task(execute_background)

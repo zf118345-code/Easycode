@@ -62,29 +62,13 @@ v-for="node in (task.nodes || [])"
 <script setup>
     import { ref, computed } from 'vue'
     import { useMainStore } from '@/stores'
-    import {
-        Folder, FolderOpen, ChevronDown, MousePointerClick, Clock,
-        Image, ScanText, GitBranch, SearchCheck, Binary, ListOrdered, FileCode
-    } from 'lucide-vue-next'
+    import { Folder, FolderOpen, ChevronDown } from 'lucide-vue-next'
+    import { getNodeIcon } from '@/config/nodeIconsConfig'
 
     const store = useMainStore()
 
-    // 记录折叠状态的任务组 ID/索引
+    // 记录折叠状态的任务组 ID/索引（两模式共用，与边栏展开状态一样不随模式隔离）
     const collapsedGroups = ref([])
-
-    // 节图标类型映射
-    const nodeIconComponentMap = {
-        click: MousePointerClick,
-        wait: Clock,
-        image_recognition: Image,
-        ocr_recognition: ScanText,
-        branch: GitBranch,
-        logic_check: SearchCheck,
-        variable_op: Binary,
-        log: ListOrdered,
-        script_call: FileCode
-    }
-    const getNodeIcon = (type) => nodeIconComponentMap[type] || FileCode
 
     // 项目目录名
     const projectFolderName = computed(() => {
@@ -93,8 +77,11 @@ v-for="node in (task.nodes || [])"
         return p.split(/[/\\]/).pop() || p
     })
 
-    // 任务组与节点列表
+    // 任务组与节点列表：随画布模式切换数据源（workflow.json / topology.json 同构 {tasks, edges}）
     const tasksList = computed(() => {
+        if (store.canvasMode === 'topology') {
+            return store.blueprint?.topology?.tasks || []
+        }
         return store.blueprint?.tasks || []
     })
 

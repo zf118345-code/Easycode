@@ -12,6 +12,7 @@ from typing import Any
 PARAM_DEFINITIONS: dict[str, dict[str, Any]] = {
     'page_state': {
         'label': '页面状态',
+        'modes': ['topology'],
         'params': {
             # 页面唯一标识，对应拓扑地图邻接表中的节点 ID
             'page_id': {

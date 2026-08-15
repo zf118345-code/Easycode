@@ -3,55 +3,33 @@
 // All visual styles are centralized here and injected once by useCanvasSharedStyle.
 // This is the SINGLE SOURCE OF TRUTH for canvas styling — no component-level CSS overrides.
 
+import { NODE_REGISTRY, DEFAULT_NODE_CONFIG, getNodeConfig } from '../config/nodeRegistry'
+
 // ========== 尺寸常量 ==========
 
 export const GRID_SIZE = 20
 export const NODE_GRID_W = 8
 export const NODE_WIDTH = NODE_GRID_W * GRID_SIZE
-export const NODE_MIN_HEIGHT = 100   // 最小高度 5 格（Step 4 网格化）
+export const NODE_MIN_HEIGHT = 60   // 最小高度 3 格（头部 32 + footer 24 向上取整）
 export const PORT_RADIUS = 7
 export const EDGE_STROKE_WIDTH = 2
 export const EDGE_HOVER_STROKE_WIDTH = 4
 export const EDGE_FLOW_DASH = '8 12'
 export const EDGE_FLOW_DURATION = '0.8s'
 
-// ========== 端口网格布局常量（Step 4：一切以网格为单位） ==========
+// ========== 端口网格布局常量（一切以网格为单位） ==========
 
 export const PORT_GRID_TOP = 1        // entry / success 距顶格数
 export const PORT_GRID_BOTTOM = 1     // failure 距底格数
-export const PORT_GRID_STEP = 1       // 动态出口间距格数
+export const PORT_GRID_STEP = 2       // 动态出口间距格数
 export const PORT_DIAMETER = 14       // 端口直径 (px)
-export const PORT_MAX_VISIBLE = 10    // 高度增长封顶的动态端口数（超出后 body 内部滚动）
 export const NODE_HEADER_H = 32       // 头部高度 (px)
 export const NODE_FOOTER_H = 24       // Footer 高度 (px)
-export const NODE_BODY_MIN_H = 40     // 内容区最小高度 2 格
 
-// ========== 节点类型配置 ==========
+// ========== 节点类型配置（统一注册表，两模式共用，见 config/nodeRegistry.js） ==========
 
-export const NODE_TYPE_CONFIG = {
-    click:            { color: '#409eff', icon: 'MousePointerClick', label: '点击动作' },
-    wait:             { color: '#e6a23c', icon: 'Timer',           label: '等待' },
-    log:              { color: '#909399', icon: 'ScrollText',      label: '日志' },
-    image_recognition:{ color: '#67c23a', icon: 'Image',           label: '图像识别' },
-    ocr_recognition:  { color: '#9b59b6', icon: 'Type',            label: 'OCR 识别' },
-    branch:           { color: '#f56c6c', icon: 'GitBranch',      label: '分支选择' },
-    logic_check:      { color: '#fd7e14', icon: 'Filter',          label: '逻辑判断' },
-    variable_op:      { color: '#17a2b8', icon: 'Variable',       label: '变量操作' },
-    script_call:      { color: '#6f42c1', icon: 'Code',           label: '脚本调用' },
-    set_window:       { color: '#20c997', icon: 'AppWindow',       label: '窗口设置' },
-    page_state:       { color: '#4ed19c', icon: 'MapPin',          label: '页面状态' },
-    smart_jump:       { color: '#ff6b6b', icon: 'Navigation',      label: '智能跳转' }
-}
-
-export const DEFAULT_NODE_CONFIG = {
-    color: '#5a6478',
-    icon: 'Square',
-    label: '节点'
-}
-
-export function getNodeConfig(nodeType) {
-    return NODE_TYPE_CONFIG[nodeType] || DEFAULT_NODE_CONFIG
-}
+export const NODE_TYPE_CONFIG = NODE_REGISTRY
+export { DEFAULT_NODE_CONFIG, getNodeConfig }
 
 // ========== 通用工具 ==========
 
@@ -76,8 +54,8 @@ export function getNodeDynamicPorts(node) {
  * 端口中心距节点顶部的像素偏移（网格坐标）
  *   - entry   : 距顶 1 格
  *   - success : 距顶 1 格
- *   - failure : 距底 1 格
- *   - branch_N / exit_N：success 下方每隔 1 格一个（第 k 个 = (k+2) 格），
+ *   - failure : 距底 1 格（随节点最新高度 h 联动）
+ *   - branch_N / exit_N：success 下方每隔 2 格一个（第 k 个 = (1 + 2(k+1)) 格），
  *     向上不超过 failure（越界时向底部 clamp，保证端口留在卡片边缘）
  */
 export function getNodePortTop(node, portType) {
@@ -116,15 +94,18 @@ export function getPortPosition(node, portType, _options = {}) {
 }
 
 /**
- * 节点高度计算（C1 网格化公式）
- * 总高度 = ceil(max(头部 + 内容区 + Footer + min(动态端口数, 上限) × 1 格, 100) / 格) × 格
- * @param {number} contentHeight 内容区估算高度(px)
+ * 节点高度计算（内容驱动 + 网格向上取整，两模式共用）
+ * 总高度 = ceil(头部 32 + max(内容区, 动态端口预留) + Footer 24, 最小 60) 向上取整到网格
+ * 动态端口预留：第 k 个动态端口位于 (1 + 2(k+1)) 格处，预留保证最后一枚
+ * 位于 failure（距底 1 格）之上至少 1 格：reserve = max(0, 40×N + 4)
+ * @param {number} contentHeight 内容区估算高度(px)，0 表示无内容
  * @param {number} dynamicCount  动态端口数量
  */
 export function computeCanvasNodeHeight(contentHeight, dynamicCount) {
     const count = Math.max(0, dynamicCount || 0)
-    const capped = Math.min(count, PORT_MAX_VISIBLE)
-    const raw = NODE_HEADER_H + Math.max(contentHeight || NODE_BODY_MIN_H, NODE_BODY_MIN_H) + NODE_FOOTER_H + capped * GRID_SIZE
+    const reserve = Math.max(0, 40 * count + 4)
+    const content = Math.max(contentHeight || 0, reserve)
+    const raw = NODE_HEADER_H + content + NODE_FOOTER_H
     return Math.ceil(Math.max(raw, NODE_MIN_HEIGHT) / GRID_SIZE) * GRID_SIZE
 }
 
@@ -286,6 +267,20 @@ export const SHARED_EDGE_CSS = `
     animation: edgeFlow 1s linear infinite;
 }
 .edge-path.preview-path.is-failure {
+    stroke: #f56c6c;
+}
+
+/* 拖动连线预览终点：连线颜色的发光球（无箭头，松手后恢复箭头） */
+.preview-drawing .preview-drag-ball {
+    fill: #4ed19c;
+    filter: drop-shadow(0 0 5px rgba(78, 209, 156, 0.9)) drop-shadow(0 0 14px rgba(78, 209, 156, 0.6));
+    pointer-events: none;
+}
+.preview-drawing.is-failure .preview-drag-ball {
+    fill: #f56c6c;
+    filter: drop-shadow(0 0 5px rgba(245, 108, 108, 0.9)) drop-shadow(0 0 14px rgba(245, 108, 108, 0.6));
+}
+.preview-drawing.is-failure .edge-path.preview-path {
     stroke: #f56c6c;
 }
 
@@ -540,23 +535,19 @@ export const SHARED_NODE_CSS = `
 }
 
 /* ---------- Node Body ---------- */
+/* 内容驱动：body 高度 = 节点高 - 头部 - footer（含网格取整松弛区）；
+   无内容时 padding 为 0，只留取整后的松弛空隙 */
 .node-body {
-    padding: 8px 12px;
+    padding: 0;
     font-size: 11px;
     color: #c4c9d4;
     flex: 1;
     display: flex;
     flex-direction: column;
-    justify-content: center;
-    overflow: visible;
-    background: var(--node-content-bg, rgba(0, 0, 0, 0.15));
-    gap: 4px;
-}
-.node-body.is-scrollable {
-    max-height: 280px;
-    overflow-y: auto;
-    overflow-x: hidden;
     justify-content: flex-start;
+    overflow: hidden;
+    background: var(--node-content-bg, rgba(0, 0, 0, 0.15));
+    gap: 0;
 }
 .node-info { line-height: 18px; }
 .info-label { color: #7a8296; margin-right: 4px; }
@@ -661,39 +652,48 @@ export const SHARED_NODE_CSS = `
 }
 
 /* ---------- Breakpoint / Debug ---------- */
+/* 断点槽：标题栏右侧；三态样式——
+   未设置：空心圆环（hover 变亮）；已设置：实心红点 + 外发光；命中：脉冲放大 */
 .node-breakpoint-gutter {
-    width: 18px;
-    height: 18px;
+    width: 12px;
+    height: 12px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
-    margin-right: 4px;
+    margin-left: 8px;
     cursor: pointer;
     user-select: none;
     border-radius: 50%;
-    transition: background-color 0.15s;
+    border: 2px solid rgba(255, 255, 255, 0.15);
+    box-sizing: border-box;
+    transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
 }
 .node-breakpoint-gutter:hover {
-    background: rgba(255, 255, 255, 0.15);
-}
-/* 拓扑模式等宽占位：与流程模式头部图标/标题起始位置像素级一致 */
-.node-breakpoint-gutter.is-placeholder {
-    cursor: default;
-    pointer-events: none;
-}
-.node-breakpoint-gutter.is-placeholder:hover {
-    background: transparent;
+    border-color: rgba(255, 255, 255, 0.3);
 }
 .node-breakpoint-gutter .bp-dot {
-    width: 11px;
-    height: 11px;
+    width: 8px;
+    height: 8px;
     border-radius: 50%;
     background: #e5484d;
-    box-shadow: 0 0 8px rgba(229, 72, 77, 0.85), inset 0 -2px 0 rgba(0, 0, 0, 0.25);
+    box-shadow: 0 0 8px rgba(229, 72, 77, 0.6);
+    transition: box-shadow 0.15s;
 }
 .node-breakpoint-gutter.active {
-    background: rgba(229, 72, 77, 0.18);
+    border-color: rgba(229, 72, 77, 0.6);
+}
+.node-breakpoint-gutter.active:hover {
+    border-color: rgba(229, 72, 77, 0.9);
+}
+/* 断点命中（调试暂停于此节点）：脉冲呼吸灯 + 发光放大 */
+.canvas-node-card.is-active-debug .node-breakpoint-gutter.active .bp-dot {
+    animation: breakpoint-pulse 0.9s ease-in-out infinite;
+    box-shadow: 0 0 16px rgba(229, 72, 77, 0.9);
+}
+@keyframes breakpoint-pulse {
+    0%, 100% { transform: scale(1); }
+    50%      { transform: scale(1.35); }
 }
 .node-debug-tag {
     display: inline-flex;
@@ -711,13 +711,15 @@ export const SHARED_NODE_CSS = `
 .debug-pulse-icon { width: 12px; height: 12px; }
 
 /* ---------- Branch Node ---------- */
+/* 行高/间距与 config/nodeRegistry.js 的 rowHeight=24 / rowGap=4 / rowPadding=12 保持一致 */
 .branch-candidates-list {
     display: flex;
     flex-direction: column;
     gap: 4px;
     width: 100%;
-    padding: 2px 0;
-    overflow: visible;
+    padding: 6px 12px;
+    box-sizing: border-box;
+    overflow: hidden;
 }
 .branch-candidate-item {
     position: relative;
@@ -728,11 +730,12 @@ export const SHARED_NODE_CSS = `
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 6px;
-    padding: 5px 10px;
+    padding: 0 10px;
     font-size: 11px;
-    min-height: 26px;
-    overflow: visible;
-    z-index: 2;
+    height: 24px;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    overflow: hidden;
     transition: background 0.12s, border-color 0.12s;
 }
 .branch-candidate-item:hover {
@@ -751,22 +754,26 @@ export const SHARED_NODE_CSS = `
     font-size: 11px;
     color: #6b7280;
     text-align: center;
-    padding: 10px 0;
+    height: 24px;
+    line-height: 24px;
     font-style: italic;
 }
 
 /* ---------- Image Node ---------- */
+/* 缩略图块：最小高度 80px（与 nodeRegistry minHeight 一致），padding 计入块高 */
 .node-image-embedded {
     position: relative;
     width: 100%;
     height: 100%;
+    padding: 8px 12px;
+    box-sizing: border-box;
     background: rgba(18, 19, 28, 0.8);
     border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
     overflow: hidden;
-    min-height: 60px;
+    min-height: 80px;
 }
 .embedded-template-img {
     position: relative;
@@ -790,6 +797,64 @@ export const SHARED_NODE_CSS = `
     font-size: 11px;
     color: #6b7280;
     z-index: 2;
+}
+
+/* ---------- OCR Node ---------- */
+/* 缩略图 + 配置行，最小高度 60px（与 nodeRegistry minHeight 一致） */
+.ocr-preview-block {
+    width: 100%;
+    height: 100%;
+    min-height: 60px;
+    padding: 8px 12px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    overflow: hidden;
+}
+.ocr-thumb {
+    width: 44px;
+    height: 44px;
+    object-fit: cover;
+    border-radius: 6px;
+    flex-shrink: 0;
+    background: rgba(18, 19, 28, 0.8);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ocr-thumb-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #6b7280;
+}
+.ocr-info-col {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+.ocr-info-col .node-info {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* ---------- Page State Node ---------- */
+/* 信息行：行高 20px、内边距 12px（与 nodeRegistry lineHeight/rowPadding 一致） */
+.page-info-list {
+    width: 100%;
+    padding: 6px 12px;
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+.page-info-list .node-info {
+    line-height: 20px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 /* ---------- Group Box ---------- */

@@ -3,6 +3,7 @@
 PARAM_DEFINITIONS = {
     'image_recognition': {
         'label': '图像识别',
+        'modes': ['workflow', 'topology'],
         'params': {
             'image_source': {'type': 'file', 'default': '', 'label': '模板图片'},
             'gray_scale': {'type': 'bool', 'default': True, 'label': '去除背景干扰 (灰度处理)'},
@@ -53,68 +54,6 @@ PARAM_DEFINITIONS = {
                 'default': 'click_center',
                 'label': '识别成功后操作',
             },
-            'on_success': {
-                'type': 'dict',
-                'label': '成功跳转',
-                'sub': {
-                    'jump_type': {
-                        'type': 'select',
-                        'options': [
-                            {'value': 'next', 'label': '下一个节点'},
-                            {'value': 'node', 'label': '跳转节点'},
-                            {'value': 'task', 'label': '跳转任务'},
-                            {'value': 'end', 'label': '结束流程'},
-                        ],
-                        'default': 'next',
-                        'label': '跳转类型',
-                    },
-                    'target_task': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标任务',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'eq', 'value': 'task'},
-                    },
-                    'target_node': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标节点',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'in', 'value': ['node', 'task']},
-                    },
-                },
             },
-            'on_failure': {
-                'type': 'dict',
-                'label': '失败跳转',
-                'sub': {
-                    'jump_type': {
-                        'type': 'select',
-                        'options': [
-                            {'value': 'next', 'label': '下一个节点'},
-                            {'value': 'node', 'label': '跳转节点'},
-                            {'value': 'task', 'label': '跳转任务'},
-                            {'value': 'end', 'label': '结束流程'},
-                        ],
-                        'default': 'next',
-                        'label': '跳转类型',
-                    },
-                    'target_task': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标任务',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'eq', 'value': 'task'},
-                    },
-                    'target_node': {
-                        'type': 'select',
-                        'options': [],
-                        'label': '目标节点',
-                        'default': '',
-                        'visible_if': {'field': 'jump_type', 'operator': 'in', 'value': ['node', 'task']},
-                    },
-                },
-            },
-        },
     }
 }

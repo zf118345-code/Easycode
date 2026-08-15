@@ -38,7 +38,7 @@ describe('canvasShared 网格化端口布局', () => {
         expect(pos).toEqual({ x: 80 + 160, y: 40 + PORT_GRID_TOP * GRID_SIZE })
     })
 
-    it('failure 位于右缘距底 1 格', () => {
+    it('failure 位于右缘距底 1 格（随节点最新高度联动）', () => {
         const node = makeNode({ h: 140 })
         expect(getNodePortTop(node, 'failure')).toBe(140 - PORT_GRID_BOTTOM * GRID_SIZE)
         const pos = getPortPosition(node, 'fail')
@@ -46,7 +46,7 @@ describe('canvasShared 网格化端口布局', () => {
         expect(pos.y).toBe(40 + 140 - PORT_GRID_BOTTOM * GRID_SIZE)
     })
 
-    it('动态端口从 success 下方每隔 1 格排列', () => {
+    it('动态端口从 success 下方每隔 2 格排列', () => {
         const node = makeNode({ h: 200, dynamicCount: 3 })
         for (let k = 0; k < 3; k++) {
             const expectedTop = (PORT_GRID_TOP + PORT_GRID_STEP * (k + 1)) * GRID_SIZE
@@ -65,34 +65,43 @@ describe('canvasShared 网格化端口布局', () => {
         expect(top).toBe(100 - PORT_GRID_BOTTOM * GRID_SIZE)
     })
 
-    it('exit / exit_0 视为第一个动态端口', () => {
+    it('exit / exit_0 视为第一个动态端口（距顶 3 格）', () => {
         const node = makeNode({ h: 100 })
         expect(getNodePortTop(node, 'exit')).toBe((PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE)
         expect(getNodePortTop(node, 'exit_0')).toBe((PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE)
     })
 
-    it('computeCanvasNodeHeight 最小 5 格且吸附网格', () => {
-        const h = computeCanvasNodeHeight(40, 0)
-        expect(h).toBeGreaterThanOrEqual(100)
+    it('computeCanvasNodeHeight 无内容时最小 3 格（头部32+footer24 向上取整 = 60px）', () => {
+        const h = computeCanvasNodeHeight(0, 0)
+        expect(h).toBe(60)
         expect(h % GRID_SIZE).toBe(0)
     })
 
-    it('computeCanvasNodeHeight 随动态端口数增长（每端口 1 格）', () => {
-        const h0 = computeCanvasNodeHeight(40, 0)
-        const h3 = computeCanvasNodeHeight(40, 3)
-        expect(h3 - h0).toBe(3 * GRID_SIZE)
+    it('computeCanvasNodeHeight 随动态端口数增长（每端口 +2 格）', () => {
+        expect(computeCanvasNodeHeight(0, 0)).toBe(60)
+        expect(computeCanvasNodeHeight(0, 1)).toBe(100)
+        expect(computeCanvasNodeHeight(0, 2)).toBe(140)
+        expect(computeCanvasNodeHeight(0, 3)).toBe(180)
     })
 
-    it('computeCanvasNodeHeight 动态端口超上限时封顶增长', () => {
-        const h10 = computeCanvasNodeHeight(40, 10)
-        const h12 = computeCanvasNodeHeight(40, 12)
-        expect(h12).toBe(h10)
+    it('computeCanvasNodeHeight 动态端口数无上限（严格随内容增长）', () => {
+        const h12 = computeCanvasNodeHeight(0, 12)
+        expect(h12).toBe(540)   // 56 + max(0, 40*12+4) = 540
+        expect(h12 % GRID_SIZE).toBe(0)
     })
 
-    it('computeCanvasNodeHeight 内容高度参与计算（图片节点更高）', () => {
-        const normal = computeCanvasNodeHeight(40, 0)
+    it('computeCanvasNodeHeight 内容高度参与计算（内容多的节点更高）', () => {
+        const empty = computeCanvasNodeHeight(0, 0)
         const image = computeCanvasNodeHeight(120, 0)
-        expect(image).toBeGreaterThan(normal)
+        expect(image).toBeGreaterThan(empty)
         expect(image % GRID_SIZE).toBe(0)
+        expect(image).toBe(180)  // ceil((32+120+24)/20)*20
+    })
+
+    it('computeCanvasNodeHeight 内容与端口预留取较大者（端口永不重叠）', () => {
+        // 1 个候选（内容 36px）vs 2 个动态端口的预留 84px → 取 84
+        expect(computeCanvasNodeHeight(36, 2)).toBe(140)
+        // 内容 200px 压过 1 个端口的预留 44px → 取 200
+        expect(computeCanvasNodeHeight(200, 1)).toBe(260)
     })
 })

@@ -1,10 +1,11 @@
 import { describe, it, expect } from 'vitest'
 import {
-    deriveWorkflowEdges,
-    applyWorkflowEdge,
-    removeWorkflowEdge,
-    disconnectWorkflowPort,
-    removeWorkflowNode,
+    deriveEdges,
+    applyEdge,
+    removeEdge,
+    disconnectPort,
+    removeNode,
+    normalizePort,
     findNodeInTasks,
     findTaskByNodeId
 } from '../workflowEdgeModel'
@@ -16,13 +17,7 @@ function makeTasks() {
             task_name: '组一',
             nodes: [
                 { node_id: 'n1', node_name: '点击', node_type: 'click', params: {}, position: { x: 0, y: 0 } },
-                {
-                    node_id: 'n2',
-                    node_name: '分支',
-                    node_type: 'branch',
-                    params: { candidates: [{ on_success: {} }, { on_success: {} }] },
-                    position: { x: 200, y: 0 }
-                },
+                { node_id: 'n2', node_name: '分支', node_type: 'branch', params: {}, position: { x: 200, y: 0 } },
                 { node_id: 'n3', node_name: '日志', node_type: 'log', params: {}, position: { x: 400, y: 0 } }
             ]
         },
@@ -34,77 +29,97 @@ function makeTasks() {
     ]
 }
 
-describe('workflowEdgeModel', () => {
-    it('deriveWorkflowEdges 从 params 派生三类连线', () => {
-        const tasks = makeTasks()
-        tasks[0].nodes[0].params.on_success = { target_node: 'n2' }
-        tasks[0].nodes[0].params.on_failure = { target_node: 'n3' }
-        tasks[0].nodes[1].params.candidates[0].on_success = { target_node: 'n3' }
-
-        const edges = deriveWorkflowEdges(tasks)
-        expect(edges).toHaveLength(3)
-        const succ = edges.find(e => e.legacyPort === 'succ')
+describe('workflowEdgeModel（统一实体边）', () => {
+    it('deriveEdges 从实体边派生统一扁平结构（标准端口名）', () => {
+        const edges = [
+            { edge_id: 'e1', source_node: 'n1', target_node: 'n2', source_port: 'success', canvas: 'workflow' },
+            { edge_id: 'e2', source_node: 'n1', target_node: 'n3', source_port: 'failure', canvas: 'workflow' },
+            { edge_id: 'e3', source_node: 'n2', target_node: 'n3', source_port: 'branch_0', canvas: 'workflow' },
+            { edge_id: 'e4', source_node: 'p1', target_node: 'p2', source_port: 'exit_1', canvas: 'topology' }
+        ]
+        const derived = deriveEdges(edges)
+        expect(derived).toHaveLength(4)
+        const succ = derived.find(e => e.legacyPort === 'success')
         expect(succ.sourceNodeId).toBe('n1')
         expect(succ.targetNodeId).toBe('n2')
-        const fail = edges.find(e => e.legacyPort === 'fail')
+        expect(succ.edgeId).toBe('e1')
+        expect(succ.isFailFlag).toBe(false)
+        const fail = derived.find(e => e.legacyPort === 'failure')
         expect(fail.isFailFlag).toBe(true)
-        const branch = edges.find(e => e.legacyPort === 'branch_0')
+        const branch = derived.find(e => e.legacyPort === 'branch_0')
         expect(branch.extra.candIndex).toBe(0)
+        expect(derived.find(e => e.legacyPort === 'exit_1')).toBeTruthy()
     })
 
-    it('deriveWorkflowEdges 忽略目标不存在的连线', () => {
-        const tasks = makeTasks()
-        tasks[0].nodes[0].params.on_success = { target_node: 'ghost' }
-        expect(deriveWorkflowEdges(tasks)).toHaveLength(0)
+    it('normalizePort 画布端口名 → 标准名', () => {
+        expect(normalizePort('succ')).toBe('success')
+        expect(normalizePort('fail')).toBe('failure')
+        expect(normalizePort('branch_0')).toBe('branch_0')
+        expect(normalizePort('exit_2')).toBe('exit_2')
+        expect(normalizePort(undefined)).toBe('success')
     })
 
-    it('deriveWorkflowEdges 派生 branch 节点的 success 连线（Step 4）', () => {
-        const tasks = makeTasks()
-        tasks[0].nodes[1].params.on_success = { target_node: 'n3' }
-        const edges = deriveWorkflowEdges(tasks)
-        const succ = edges.find(e => e.legacyPort === 'succ' && e.sourceNodeId === 'n2')
-        expect(succ).toBeTruthy()
-        expect(succ.targetNodeId).toBe('n3')
+    it('applyEdge 添加实体边并同源同端口覆盖', () => {
+        const edges = []
+        expect(applyEdge(edges, { source: 'n1', target: 'n4', source_port: 'succ', canvas: 'workflow' })).toBe(true)
+        expect(edges).toHaveLength(1)
+        expect(edges[0].source_port).toBe('success')
+        expect(edges[0].target_node).toBe('n4')
+        expect(edges[0].canvas).toBe('workflow')
+
+        // 同源同端口覆盖
+        expect(applyEdge(edges, { source: 'n1', target: 'n3', source_port: 'succ', canvas: 'workflow' })).toBe(true)
+        expect(edges).toHaveLength(1)
+        expect(edges[0].target_node).toBe('n3')
+
+        // 不同端口追加
+        expect(applyEdge(edges, { source: 'n1', target: 'n2', source_port: 'fail', canvas: 'workflow' })).toBe(true)
+        expect(edges).toHaveLength(2)
     })
 
-    it('applyWorkflowEdge 写入 success/failure/branch 端口', () => {
-        const tasks = makeTasks()
-        expect(applyWorkflowEdge(tasks, { source: 'n1', target: 'n4', source_port: 'succ' })).toBe(true)
-        expect(tasks[0].nodes[0].params.on_success).toEqual({ target_task: 't2', target_node: 'n4' })
-
-        expect(applyWorkflowEdge(tasks, { source: 'n1', target: 'n3', source_port: 'fail' })).toBe(true)
-        expect(tasks[0].nodes[0].params.on_failure).toEqual({ target_task: 't1', target_node: 'n3' })
-
-        expect(applyWorkflowEdge(tasks, { source: 'n2', target: 'n3', source_port: 'branch_0' })).toBe(true)
-        expect(tasks[0].nodes[1].params.candidates[0].on_success.target_node).toBe('n3')
+    it('applyEdge 拒绝自连与无效源', () => {
+        const edges = []
+        expect(applyEdge(edges, { source: 'n1', target: 'n1', source_port: 'succ' })).toBe(false)
+        expect(applyEdge(edges, { source: '', target: 'n2', source_port: 'succ' })).toBe(false)
+        expect(edges).toHaveLength(0)
     })
 
-    it('applyWorkflowEdge 拒绝自连/无效源/无效分支索引', () => {
-        const tasks = makeTasks()
-        expect(applyWorkflowEdge(tasks, { source: 'n1', target: 'n1', source_port: 'succ' })).toBe(false)
-        expect(applyWorkflowEdge(tasks, { source: 'ghost', target: 'n2', source_port: 'succ' })).toBe(false)
-        // branch_5 不存在
-        expect(applyWorkflowEdge(tasks, { source: 'n2', target: 'n3', source_port: 'branch_5' })).toBe(false)
+    it('removeEdge 按 edge_id / 源+端口断开', () => {
+        const edges = []
+        applyEdge(edges, { source: 'n1', target: 'n2', source_port: 'succ' })
+        applyEdge(edges, { source: 'n1', target: 'n3', source_port: 'fail' })
+
+        expect(removeEdge(edges, { edgeId: edges[0].edge_id })).toBe(true)
+        expect(edges).toHaveLength(1)
+        expect(removeEdge(edges, { sourceNodeId: 'n1', legacyPort: 'fail' })).toBe(true)
+        expect(edges).toHaveLength(0)
+        expect(removeEdge(edges, { sourceNodeId: 'n1', legacyPort: 'success' })).toBe(false)
     })
 
-    it('removeWorkflowEdge / disconnectWorkflowPort 断开连线', () => {
-        const tasks = makeTasks()
-        applyWorkflowEdge(tasks, { source: 'n1', target: 'n2', source_port: 'succ' })
-        expect(removeWorkflowEdge(tasks, { sourceNodeId: 'n1', legacyPort: 'succ' })).toBe(true)
-        expect(tasks[0].nodes[0].params.on_success).toEqual({})
-
-        applyWorkflowEdge(tasks, { source: 'n2', target: 'n3', source_port: 'branch_1' })
-        expect(disconnectWorkflowPort(tasks, 'n2', 'branch_1')).toBe(true)
-        expect(tasks[0].nodes[1].params.candidates[1].on_success).toEqual({})
+    it('disconnectPort 拉线空放断线', () => {
+        const edges = []
+        applyEdge(edges, { source: 'n2', target: 'n3', source_port: 'branch_1' })
+        expect(disconnectPort(edges, 'n2', 'branch_1')).toBe(true)
+        expect(edges).toHaveLength(0)
+        expect(disconnectPort(edges, 'n2', 'branch_1')).toBe(false)
     })
 
-    it('removeWorkflowNode 删除节点并清理空任务组', () => {
+    it('removeNode 删除节点并清理关联边与空任务组', () => {
         const tasks = makeTasks()
-        const next = removeWorkflowNode(tasks, 'n4')
-        expect(next).toHaveLength(1)
-        expect(findNodeInTasks(next, 'n4')).toBeNull()
+        const edges = [
+            { edge_id: 'e1', source_node: 'n1', target_node: 'n2', source_port: 'success' },
+            { edge_id: 'e2', source_node: 'n2', target_node: 'n3', source_port: 'success' },
+            { edge_id: 'e3', source_node: 'n3', target_node: 'n4', source_port: 'success' }
+        ]
+        const next = removeNode(tasks, edges, 'n2')
+        expect(next).toHaveLength(2)
+        expect(findNodeInTasks(next, 'n2')).toBeNull()
+        // 关联边（源或目标）全部清理
+        expect(edges.map(e => e.edge_id)).toEqual(['e3'])
 
-        const next2 = removeWorkflowNode(next, 'n1')
-        expect(findTaskByNodeId(next2, 'n1')).toBeNull()
+        const next2 = removeNode(next, edges, 'n4')
+        expect(next2).toHaveLength(1)
+        expect(edges).toHaveLength(0)
+        expect(findTaskByNodeId(next2, 'n4')).toBeNull()
     })
 })

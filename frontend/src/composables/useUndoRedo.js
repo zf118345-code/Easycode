@@ -3,7 +3,6 @@
 import { ref, computed } from 'vue'
 import { logger } from '@/utils/logger'
 import { useProjectStore } from '@/stores/projectStore'
-import { useTopologyStore } from '@/stores/topologyStore'
 
 const MAX_HISTORY = 50
 
@@ -147,43 +146,41 @@ export function useUndoRedo(options = {}) {
 }
 
 /**
- * 创建按画布模式集成 Pinia 的 Undo/Redo 实例
- *   mode='workflow'：快照 projectStore.workflowData（tasks + edges），恢复后 saveWorkflowImmediately
- *   mode='topology'：快照 topologyStore.topologyBlueprint（扁平结构），恢复后 saveTopologyDebounced
+ * 创建按画布数据源集成 Pinia 的 Undo/Redo 实例
+ *   mode='workflow'：快照 projectStore.blueprint（顶层 tasks + edges）
+ *   mode='topology'：快照 projectStore.blueprint.topology（tasks + edges，与 workflow 同构）
  * 使用方式：
  *   const undoRedo = createCanvasUndoRedo('workflow')
  *   undoRedo.commit()  // 修改前调用
  *   // ... 修改数据 ...
  *   undoRedo.undo()    // 撤销
- *
- * 注意：useProjectStore()/useTopologyStore() 仅在 getState/setState 运行时被调用
- * （此时 Pinia 已安装），因此顶层静态导入是安全的。
  */
 export function createCanvasUndoRedo(mode = 'workflow') {
-    if (mode === 'topology') {
-        function getState() {
-            const topo = useTopologyStore()
-            return JSON.parse(JSON.stringify(topo.topologyBlueprint))
-        }
-        function setState(snapshot) {
-            const topo = useTopologyStore()
-            topo.topologyBlueprint = JSON.parse(JSON.stringify(snapshot || { nodes: [], edges: [] }))
-            useProjectStore().saveTopologyDebounced()
-        }
-        return useUndoRedo({ getState, setState })
-    }
+    const isTopology = mode === 'topology'
 
-    // workflow 默认
     function getState() {
         const store = useProjectStore()
-        const blueprint = store.blueprint || {}
-        return JSON.parse(JSON.stringify({ tasks: blueprint.tasks || [], edges: blueprint.edges || [] }))
+        const data = isTopology
+            ? (store.blueprint.topology || { tasks: [], edges: [] })
+            : store.blueprint
+        return JSON.parse(JSON.stringify({ tasks: data.tasks || [], edges: data.edges || [] }))
     }
+
     function setState(snapshot) {
         const store = useProjectStore()
-        store.blueprint.tasks = JSON.parse(JSON.stringify(snapshot?.tasks || []))
-        store.blueprint.edges = JSON.parse(JSON.stringify(snapshot?.edges || []))
-        store.saveWorkflowImmediately()
+        const restored = {
+            tasks: JSON.parse(JSON.stringify(snapshot?.tasks || [])),
+            edges: JSON.parse(JSON.stringify(snapshot?.edges || []))
+        }
+        if (isTopology) {
+            store.blueprint.topology = restored
+            store.saveTopologyDebounced()
+        } else {
+            store.blueprint.tasks = restored.tasks
+            store.blueprint.edges = restored.edges
+            store.saveWorkflowImmediately()
+        }
     }
+
     return useUndoRedo({ getState, setState })
 }

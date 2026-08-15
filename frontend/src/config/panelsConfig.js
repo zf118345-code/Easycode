@@ -32,7 +32,7 @@ export const rightPanelsConfig = [
     },
     {
         id: 'variable-inspector',
-        title: '调试变量检查器',
+        title: '变量监控',
         icon: Bug,
         component: defineAsyncComponent(() => import('@/components/panels/VariableInspectorPanel.vue'))
     }

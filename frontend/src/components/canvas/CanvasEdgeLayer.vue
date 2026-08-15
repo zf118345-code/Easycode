@@ -72,13 +72,6 @@
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="#8b93a7" />
             </marker>
-
-            <!-- Preview -->
-            <marker
-                id="arrow-preview" viewBox="0 0 10 10" refX="7" refY="5"
-                markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-                <path d="M 0 2 L 10 5 L 0 8 z" fill="#4ed19c" />
-            </marker>
         </defs>
 
         <!-- Vector grid（世界坐标，与连线/节点同源） -->
@@ -117,12 +110,18 @@
                 text-anchor="middle">{{ edge.label }}</text>
         </g>
 
-        <!-- Live drag preview -->
-        <path
+        <!-- Live drag preview：无箭头，终点用连线颜色的发光球（松手后正常边恢复箭头） -->
+        <g
             v-if="drawingConnection?.active"
-            :d="previewPathD"
-            class="edge-path preview-path"
-            :marker-end="drawingConnection?.previewMarkerUrl" />
+            class="preview-drawing"
+            :class="{ 'is-failure': isPreviewFailure }">
+            <path :d="previewPathD" class="edge-path preview-path" />
+            <circle
+                :cx="drawingConnection?.currentX"
+                :cy="drawingConnection?.currentY"
+                r="6"
+                class="preview-drag-ball" />
+        </g>
     </svg>
 </template>
 
@@ -212,5 +211,11 @@
         } catch (e) {
             return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
         }
+    })
+
+    // 预览线颜色：failure 红、其余成功绿（发光球同色）
+    const isPreviewFailure = computed(() => {
+        const t = props.drawingConnection?.portType
+        return t === 'fail' || t === 'failure'
     })
 </script>

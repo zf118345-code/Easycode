@@ -12,6 +12,8 @@ export const useExecutionStore = defineStore('execution', {
         executionState: 'idle', // idle | running | paused | success | error | stopped
         executionPaused: false,
         executionVariables: [],  // [{ name, type, value, level }]
+        executionCurrentVariables: {},  // 暂停时变量快照（对象 {name: value}，变量监控面板用）
+        executionPrevVariables: {},     // 上一节点变量快照（对比用）
         executionCallstack: [],  // [{ function, node_id, task_id, line? }]
         currentActiveNodeId: null, // 调试命中时高亮的节点
         _pollTimer: null
@@ -126,6 +128,8 @@ export const useExecutionStore = defineStore('execution', {
                     logger.warn('Store', 'SSE 日志流连接已关闭或断开', err)
                     this._cleanupSession(eventSource)
                 }
+                // 调试状态轮询：暂停/单步/变量快照以后端调试会话为准
+                this.startDebugPolling()
                 return res
             } catch (err) {
                 logger.error('Store', 'runTask 触发异常', err)
@@ -166,9 +170,8 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return
             try {
                 await executionApi.pause(this.currentExecutionId)
-                this.executionState = 'paused'
-                this.executionPaused = true
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏸ 已请求暂停' })
+                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏸ 已请求暂停（将在下一节点前生效）' })
+                // 状态由调试轮询确认（暂停是异步生效，不做乐观置位）
             } catch (err) { logger.error('暂停失败', err); throw err }
         },
         async resumeExecution() {
@@ -211,11 +214,22 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return null
             try {
                 const state = await executionApi.getDebugState(this.currentExecutionId)
-                if (state?.status) {
-                    this.executionState = state.status
-                    this.executionPaused = state.status === 'paused'
+                if (state?.status || state?.is_paused !== undefined) {
+                    // 兼容两种返回：执行记录状态（status）或调试会话状态（is_paused/current_node_id）
+                    const isPaused = state.is_paused === true || state.status === 'paused'
+                    const status = state.status || (isPaused ? 'paused' : 'running')
+                    this.executionState = status
+                    this.executionPaused = isPaused
                     this.currentActiveNodeId = state.current_node_id || state.node_id || this.currentActiveNodeId
                     if (state.callstack) this.executionCallstack = state.callstack
+                    // 变量快照：一次轮询取全量（当前值 + 上一节点值），暂停时才有对比意义
+                    if (isPaused) {
+                        this.executionCurrentVariables = state.executor_variables || state.variables || {}
+                        this.executionPrevVariables = state.prev_variables || {}
+                    } else {
+                        this.executionCurrentVariables = {}
+                        this.executionPrevVariables = {}
+                    }
                 }
                 return state
             } catch (err) {
@@ -236,11 +250,17 @@ export const useExecutionStore = defineStore('execution', {
         },
         startDebugPolling(intervalMs = 1000) {
             this.stopDebugPolling()
-            this._pollTimer = setInterval(() => {
+            let failCount = 0
+            this._pollTimer = setInterval(async () => {
                 if (!this.currentExecutionId) { this.stopDebugPolling(); return }
-                this.pollDebugState().then(state => {
-                    if (state?.status === 'paused') this.getExecutionVariables().catch(() => {})
-                })
+                const state = await this.pollDebugState()
+                if (state === null) {
+                    // 轮询失败（会话不存在/已结束/后端旧版）：连续 3 次自动停止，避免无效请求空转
+                    failCount += 1
+                    if (failCount >= 3) this.stopDebugPolling()
+                } else {
+                    failCount = 0
+                }
             }, intervalMs)
         },
         stopDebugPolling() {

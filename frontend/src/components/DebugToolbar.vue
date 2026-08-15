@@ -1,14 +1,14 @@
 <!--
-  调试工具栏组件（工业级风格）：
-  提供 ▶ 运行/开始、⏸ 暂停、▶ 继续、⏹ 停止、⏭ 单步跳过(F10)、⏬ 单步进入(F11)、⏫ 单步跳出(Shift+F11)
-  同时显示：执行状态、断点总数量、当前激活节点 ID
+  调试工具栏（精简版）：
+  ▶ 运行(F5) / ⏸ 暂停·继续(F6/F5) / ⏭ 下一步(F10) / ⏹ 停止(S+F5) / 🔴 断点计数
+  状态徽标 + 断点计数 + 命中节点
 -->
 <script setup>
 import { computed, onMounted, onUnmounted } from 'vue'
 import { useMainStore, useExecutionStore, useUiStore } from '@/stores'
 import { ElMessage } from 'element-plus'
 import {
-    Play, Pause, Square, SkipForward, ArrowDownToLine, ArrowUpFromLine, CircleDot, CircleDashed, Clock, Target
+    Play, Pause, Square, SkipForward, CircleDot, CircleDashed, Clock, Target
 } from 'lucide-vue-next'
 
 const store = useMainStore()
@@ -49,32 +49,45 @@ async function runSelectedTask() {
         ElMessage.error('启动失败：' + err.message)
     }
 }
-async function pauseExec() { try { await execStore.pauseExecution(); ElMessage.info('已请求暂停') } catch(e){ ElMessage.error(e.message) } }
-async function resumeExec() { try { await execStore.resumeExecution(); ElMessage.info('继续执行') } catch(e){ ElMessage.error(e.message) } }
+async function togglePause() {
+    try {
+        if (isPaused.value) {
+            await execStore.resumeExecution()
+            ElMessage.info('继续执行')
+        } else {
+            await execStore.pauseExecution()
+            ElMessage.info('已请求暂停')
+        }
+    } catch (e) { ElMessage.error(e.message) }
+}
 async function stopExec() {
     try {
         await execStore.stopExecution()
         ElMessage.info('已停止执行')
     } catch (e) { ElMessage.error(e.message) }
 }
-async function stepOver() { try { await execStore.stepOverExecution() } catch(e){ ElMessage.error(e.message) } }
-async function stepInto() { try { await execStore.stepIntoExecution() } catch(e){ ElMessage.error(e.message) } }
-async function stepOut()  { try { await execStore.stepOutExecution()  } catch(e){ ElMessage.error(e.message) } }
+async function stepNext() { try { await execStore.stepOverExecution() } catch(e){ ElMessage.error(e.message) } }
 function clearAllBreakpoints() {
     uiStore.clearBreakpoints()
     ElMessage.info('已清除所有断点')
 }
 
-// ===== 快捷键 F5/F9/F10/F11/Shift+F11 =====
+// ===== 快捷键 F5/F6/F9/F10/Shift+F5 =====
 function _onDebugHotkey(e) {
     const key = e.key || ''
     if (e.target && /INPUT|TEXTAREA|SELECT/.test(e.target.tagName)) return
 
-    // F5：继续/重跑
-    if (key === 'F5') {
+    // F5：运行 / 继续
+    if (key === 'F5' && !e.shiftKey) {
         e.preventDefault(); e.stopPropagation()
-        if (isPaused.value) resumeExec()
+        if (isPaused.value) togglePause()
         else if (isStopped.value) runSelectedTask()
+        return
+    }
+    // F6：暂停（运行中）
+    if (key === 'F6') {
+        e.preventDefault(); e.stopPropagation()
+        if (isRunning.value && !isPaused.value) togglePause()
         return
     }
     // F9：切换当前选中节点的断点
@@ -86,12 +99,8 @@ function _onDebugHotkey(e) {
         ElMessage.info(added ? '🔴 已设置断点' : '⚪ 已移除断点')
         return
     }
-    // F10：单步跳过
-    if (key === 'F10') { e.preventDefault(); e.stopPropagation(); if (isPaused.value) stepOver() }
-    // F11：单步进入
-    if (key === 'F11' && !e.shiftKey) { e.preventDefault(); e.stopPropagation(); if (isPaused.value) stepInto() }
-    // Shift+F11：单步跳出
-    if (key === 'F11' && e.shiftKey) { e.preventDefault(); e.stopPropagation(); if (isPaused.value) stepOut() }
+    // F10：下一步（暂停时）
+    if (key === 'F10') { e.preventDefault(); e.stopPropagation(); if (isPaused.value) stepNext() }
     // Shift+F5：停止
     if (key === 'F5' && e.shiftKey) { e.preventDefault(); e.stopPropagation(); stopExec() }
 }
@@ -119,33 +128,22 @@ class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
             <span class="dbg-hint">F5</span>
         </button>
 
-        <!-- ⏸ 暂停（运行中可用） -->
-        <button class="dbg-btn" :disabled="!isRunning || isPaused" @click="pauseExec" title="暂停 (请求)">
-            <Pause class="dbg-icon" :size="16" />
+        <!-- ⏸ 暂停 / ▶ 继续（同一按钮，随状态切换） -->
+        <button
+            class="dbg-btn"
+            :class="{ primary: isPaused }"
+            :disabled="isStopped"
+            @click="togglePause"
+            :title="isPaused ? '继续执行 (F5)' : '暂停 (F6)'">
+            <Pause v-if="!isPaused" class="dbg-icon" :size="16" />
+            <Play v-else class="dbg-icon" :size="16" />
+            <span class="dbg-hint">{{ isPaused ? 'F5' : 'F6' }}</span>
         </button>
 
-        <!-- ▶ 继续（暂停时可用，与 F5 统一） -->
-        <button class="dbg-btn primary" :disabled="!isPaused" @click="resumeExec" title="继续执行 (F5)">
-            <Play class="dbg-icon" :size="16" />
-            <span class="dbg-hint">F5</span>
-        </button>
-
-        <!-- ⏭ 单步跳过（暂停时可用） -->
-        <button class="dbg-btn" :disabled="!isPaused" @click="stepOver" title="单步跳过 Step Over (F10)">
+        <!-- ⏭ 下一步（暂停时可用，执行当前节点后自动暂停） -->
+        <button class="dbg-btn" :disabled="!isPaused" @click="stepNext" title="下一步，执行当前节点后暂停 (F10)">
             <SkipForward class="dbg-icon" :size="16" />
             <span class="dbg-hint">F10</span>
-        </button>
-
-        <!-- ⏬ 单步进入 -->
-        <button class="dbg-btn" :disabled="!isPaused" @click="stepInto" title="单步进入 Step Into (F11)">
-            <ArrowDownToLine class="dbg-icon" :size="16" />
-            <span class="dbg-hint">F11</span>
-        </button>
-
-        <!-- ⏫ 单步跳出 -->
-        <button class="dbg-btn" :disabled="!isPaused" @click="stepOut" title="单步跳出 Step Out (Shift+F11)">
-            <ArrowUpFromLine class="dbg-icon" :size="16" />
-            <span class="dbg-hint">S+F11</span>
         </button>
 
         <div class="dbg-sep" />

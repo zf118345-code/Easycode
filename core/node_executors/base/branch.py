@@ -92,7 +92,10 @@ class BranchNodeExecutor(BaseNodeExecutor):
                         context.log(
                             f'🎯 [Branch 命中] [顺序优先] 走向分支 {idx + 1} (branch_{idx}) 连线目标 (第 {attempt} 次轮询)'
                         )
-                        return self.build_jump_result(True, jump_target)
+                        result = self.build_jump_result(True, jump_target)
+                        # 实体边时代：目标由图的 branch_N 出边决定；旧数据（候选内嵌 on_success）经 result['jump'] 兼容
+                        result['branch_index'] = idx
+                        return result
                 else:
                     context.log(
                         f'  ├─ 分支 {idx + 1} ({desc}): 未匹配 ❌ | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms'
@@ -110,7 +113,9 @@ class BranchNodeExecutor(BaseNodeExecutor):
                     f'  ├─ 本轮评估共 {len(passed_candidates)} 项条件成立，最高得分项: 分支 {best_idx + 1} (得分: {best_score:.2f})'
                 )
                 context.log(f'🎯 [Branch 命中] [择优优先] 走向最高得分分支 {best_idx + 1} ({best_desc}) 连线目标')
-                return self.build_jump_result(True, best_match['jump_target'])
+                result = self.build_jump_result(True, best_match['jump_target'])
+                result['branch_index'] = best_idx
+                return result
 
             elapsed = time.time() - start_time
             if elapsed >= timeout_sec:

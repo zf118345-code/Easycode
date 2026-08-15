@@ -1,13 +1,13 @@
 // frontend/src/config/nodeIconsConfig.js
-// 统一节点图标配置，消除 4 处图标映射重复
-// 被 WorkflowCanvas / NodeListPanel / NodeInspectorPanel / ProjectExplorerPanel 共用
+// 统一节点图标配置，消除多处图标映射重复
+// 被 ProjectExplorerPanel / NodeListPanel / NodeInspectorPanel 等共用
 import {
     MousePointerClick, Timer, ScrollText, Image, Type, GitBranch,
     Filter, Variable, Code, AppWindow, MapPin, Navigation, Square,
-    // 以下为旧版组件中使用过的别名图标，保持兼容
+    // 旧版组件中使用过的别名图标（保持兼容）
     Clock, Target, FileSearch, SearchCheck, Binary, ListOrdered,
-    FileCode, Compass, ScanText, Position, Document, Folder,
-    Search, Share, Operation, Reading, Setting, VideoPlay
+    FileCode, Compass, ScanText, Folder,
+    Search, Share
 } from 'lucide-vue-next'
 
 // 统一的节点类型 -> 图标组件映射

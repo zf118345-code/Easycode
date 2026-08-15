@@ -18,8 +18,8 @@
             </div>
         </div>
 
-        <!-- 3. 底部组循环间隔/循环次数（拓扑模式无任务组循环概念，隐藏） -->
-        <div v-if="mode !== 'topology'" class="inspector-fixed-footer">
+        <!-- 3. 底部组循环间隔/循环次数（两 Tab 任务组统一） -->
+        <div class="inspector-fixed-footer">
             <div class="footer-inline-container">
                 <div class="footer-setting-group">
                     <span class="footer-label">循环间隔</span>
@@ -41,7 +41,6 @@
 
     defineProps({
         group: { type: Object, required: true },
-        mode: { type: String, default: 'workflow' }
     })
     const emit = defineEmits(['save'])
     const handleSave = () => emit('save')
