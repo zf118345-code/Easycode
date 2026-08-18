@@ -11,31 +11,23 @@ class NumberVariableType(BaseVariableType):
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
         return {
-            'num_op': {
-                'type': 'select',
-                'label': '操作方式',
-                'options': [
-                    {'value': 'set', 'label': '赋值 (=)'},
-                    {'value': 'add', 'label': '加 (+)'},
-                    {'value': 'sub', 'label': '减 (-)'},
-                    {'value': 'mul', 'label': '乘 (*)'},
-                    {'value': 'div', 'label': '除 (/)'},
-                    {'value': 'mod', 'label': '取余 (%)'},
-                ],
-                'default': 'add',
-                'visible_if': {'field': 'var_type', 'operator': 'eq', 'value': 'number'},
-            },
             'num_value': {
-                'type': 'variable',
-                'label': '操作数值/变量',
+                'type': 'str',  # 普通输入框（取消变量选择器）
+                'label': '操作数值/变量（支持 {var}）',
+
                 'default': '1',
-                'visible_if': {'field': 'var_type', 'operator': 'eq', 'value': 'number'},
+                'placeholder': '可填数字或 {变量名}',
+                'visible_if': {
+                    'field': 'op_action',
+                    'operator': 'in',
+                    'value': ['set', 'add', 'sub', 'mul', 'div', 'mod'],
+                },
             },
         }
 
     @classmethod
     def execute(cls, op: str, old_val: Any, params: dict, context: Any) -> Any:
-        num_op = params.get('num_op', 'add')
+        num_op = params.get('num_op') or params.get('op_action', 'add')
         operand = cls.resolve_val(context, params.get('num_value', 0), 0)
 
         try:

@@ -12,7 +12,11 @@ export const useUiStore = defineStore('ui', {
         // ===== 断点（调试会话级断点 node_id 集合） =====
         breakpoints: new Set(),
         // ===== 画布镜头聚焦（跨组件通信：ProjectExplorer → WorkflowCanvas） =====
-        focusTarget: null  // { type: 'node' | 'group', id, timestamp }
+        focusTarget: null,  // { type: 'node' | 'group', id, timestamp }
+        // ===== 控件捕获填充（节点表单/条件对话框「捕获控件」按钮注册的填充回调） =====
+        captureFillHandler: null,  // (info) => void，Ctrl+Shift+Enter 捕获成功后调用
+        // ===== 属性检查器外部刷新（捕获填充后强制检查器重新同步当前节点） =====
+        inspectorSyncTick: 0
     }),
 
     getters: {
@@ -143,6 +147,18 @@ export const useUiStore = defineStore('ui', {
         _persistBreakpoints() {
             useProjectStore().updateUiState('breakpoints', Array.from(this.breakpoints))
         },
+        async _syncBreakpointsToSession() {
+            // 运行中/已暂停会话的断点即时同步（覆盖式下发），失败静默（会话可能已结束/网络异常）
+            try {
+                const { useExecutionStore } = await import('./executionStore')
+                const { executionApi } = await import('../api/executionApi')
+                const execStore = useExecutionStore()
+                const sessionId = execStore.currentExecutionId
+                if (!sessionId) return
+                if (execStore.executionState !== 'running' && execStore.executionState !== 'paused') return
+                await executionApi.setBreakpoints(sessionId, this.getBreakpointList())
+            } catch { /* 静默 */ }
+        },
         _restoreBreakpoints() {
             const saved = useProjectStore().blueprint?.ui_state?.breakpoints
             if (Array.isArray(saved)) {
@@ -157,12 +173,14 @@ export const useUiStore = defineStore('ui', {
                 this.breakpoints.add(nodeId)
             }
             this._persistBreakpoints()
+            this._syncBreakpointsToSession()
             return this.breakpoints.has(nodeId)
         },
         addBreakpoint(nodeId) {
             if (nodeId) {
                 this.breakpoints.add(nodeId)
                 this._persistBreakpoints()
+                this._syncBreakpointsToSession()
             }
         },
         enableBreakpoint(nodeId) {
@@ -170,23 +188,27 @@ export const useUiStore = defineStore('ui', {
             if (nodeId) {
                 this.breakpoints.add(nodeId)
                 this._persistBreakpoints()
+                this._syncBreakpointsToSession()
             }
         },
         disableBreakpoint(nodeId) {
             if (nodeId) {
                 this.breakpoints.delete(nodeId)
                 this._persistBreakpoints()
+                this._syncBreakpointsToSession()
             }
         },
         removeBreakpoint(nodeId) {
             if (nodeId) {
                 this.breakpoints.delete(nodeId)
                 this._persistBreakpoints()
+                this._syncBreakpointsToSession()
             }
         },
         clearBreakpoints() {
             this.breakpoints.clear()
             this._persistBreakpoints()
+            this._syncBreakpointsToSession()
         },
         hasBreakpoint(nodeId) {
             return nodeId ? this.breakpoints.has(nodeId) : false
@@ -198,6 +220,17 @@ export const useUiStore = defineStore('ui', {
         // ===== 画布镜头聚焦 =====
         setFocusTarget(target) {
             this.focusTarget = target || null
+        },
+
+        // ===== 控件捕获填充 =====
+        setCaptureFillHandler(handler) {
+            this.captureFillHandler = typeof handler === 'function' ? handler : null
+        },
+        clearCaptureFillHandler() {
+            this.captureFillHandler = null
+        },
+        bumpInspectorSync() {
+            this.inspectorSyncTick += 1
         }
     }
 })

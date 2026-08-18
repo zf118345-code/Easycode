@@ -3,7 +3,18 @@
     <div v-if="isVisible" class="param-renderer" :class="{ 'is-stacked': isStackedType }">
         <!-- 统一标签渲染 -->
         <div v-if="label && !isCoordType" class="param-label">
-            <span>{{ displayLabel }}</span>
+            <span class="param-label-text">{{ displayLabel }}</span>
+            <el-tooltip
+                v-if="hasHelp"
+                placement="top"
+                effect="dark"
+                :show-after="120"
+                popper-class="param-help-popper">
+                <template #content>
+                    <div class="param-help-content"><pre>{{ helpText }}</pre></div>
+                </template>
+                <span class="param-help-icon">?</span>
+            </el-tooltip>
         </div>
 
         <!-- 动态控件分发映射 -->
@@ -17,6 +28,7 @@
                        :image-version="imageVersion"
                        @update:model-value="handleUpdate"
                        @auto-change-type="handleAutoChangeType"
+                       @capture-reset="handleCaptureReset"
                        @open-browser="mode => openBrowser(mode)"
                        @open-screenshot="mode => openScreenshot(mode)"
                        @open-cond-dialog="handleOpenCondDialog" />
@@ -50,6 +62,7 @@ ref="screenshotToolRef"
         <ConditionDialog
 v-model:visible="condDialogVisible"
                          :show-jump-config="isBranchMode"
+                         :schema-set="condSchemaSet"
                          :initial-data="editingCondData"
                          @open-browser="mode => openBrowser(mode || 'select')"
                          @open-screenshot="mode => openScreenshot(mode || 'template')"
@@ -64,7 +77,6 @@ v-model:visible="condDialogVisible"
     import { workspaceApi } from '@/api/workspaceApi'
     import { controlMap } from './controls'
 
-    import VariableInputControl from './controls/VariableInputControl.vue'
     import ScreenshotTool from '@/components/ScreenshotTool.vue'
     import FileBrowser from '@/components/FileBrowser.vue'
     import ConditionDialog from '@/components/conditions/ConditionDialog.vue'
@@ -76,16 +88,12 @@ v-model:visible="condDialogVisible"
         context: { type: Object, default: () => ({}) }
     })
 
-    const emit = defineEmits(['update', 'autoChangeType'])
+    const emit = defineEmits(['update', 'autoChangeType', 'captureReset'])
     const store = useMainStore()
     const projectPath = computed(() => store.currentProjectPath)
 
     const activeControl = computed(() => {
-        const type = props.config.type
-        if (type === 'variable' || type === 'autocomplete') {
-            return VariableInputControl
-        }
-        return controlMap[type] || controlMap.str
+        return controlMap[props.config.type] || controlMap.str
     })
 
     const modelValue = computed(() => props.value)
@@ -100,6 +108,8 @@ v-model:visible="condDialogVisible"
     })
 
     const isVisible = computed(() => {
+        // 隐藏参数（如 page_state 的 page_id 内部标识）：不渲染，数据仍保留在 params 中
+        if (props.config.hidden) return false
         const rule = props.config.visible_if
         if (!rule) return true
         const { field, operator, value } = rule
@@ -114,7 +124,19 @@ v-model:visible="condDialogVisible"
 
     const displayLabel = computed(() => props.config.label || props.label || '')
 
+    // ⚡ 统一帮助提示：schema 配置 help（string 或 string[]）时，标签旁渲染「?」图标悬浮显示语法说明
+    const hasHelp = computed(() => {
+        const h = props.config?.help
+        return Array.isArray(h) ? h.length > 0 : !!h
+    })
+    const helpLines = computed(() => {
+        const h = props.config?.help
+        return Array.isArray(h) ? h : (h ? [h] : [])
+    })
+    const helpText = computed(() => helpLines.value.join('\n'))
+
     const handleUpdate = (val) => emit('update', val)
+    const handleCaptureReset = () => emit('captureReset')
     const handleAutoChangeType = (varType) => emit('autoChangeType', varType)
 
     const fileBrowserRef = ref(null)
@@ -129,6 +151,8 @@ v-model:visible="condDialogVisible"
     const isBranchMode = ref(false)
     const editingIdx = ref(-1)
     const editingCondData = ref(null)
+    // 条件对话框 schema 集合：页面特征（image_exists/text_contains + 组合/取反）或通用判定条件
+    const condSchemaSet = computed(() => (props.config?.pageFeatures ? 'page-feature' : 'condition'))
 
     // ⚡ 参数纯化：保障 mode 为纯字符串
     const openBrowser = (mode = 'select') => {
@@ -245,8 +269,11 @@ v-model:visible="condDialogVisible"
         font-weight: 500;
         white-space: nowrap;
         flex-shrink: 0;
-        width: 120px;
+        min-width: 120px;
         text-align: left;
+        display: flex;
+        align-items: center;
+        gap: 5px;
     }
 
     .param-control {
@@ -255,5 +282,42 @@ v-model:visible="condDialogVisible"
         justify-content: flex-end;
         align-items: center;
         width: 100%;
+    }
+
+    .param-help-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid var(--el-border-color);
+        color: var(--el-text-color-secondary);
+        font-size: 10px;
+        line-height: 1;
+        cursor: help;
+        flex-shrink: 0;
+        user-select: none;
+        transition: color 0.15s, border-color 0.15s;
+    }
+
+    .param-help-icon:hover {
+        color: var(--el-color-primary);
+        border-color: var(--el-color-primary);
+    }
+</style>
+
+<!-- ⚡ 帮助悬浮层内容渲染在 body 下的 popper 中，scoped 不生效，需全局样式 -->
+<style>
+    .param-help-popper .param-help-content pre {
+        margin: 0;
+        font-family: inherit;
+        font-size: 12px;
+        line-height: 1.6;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-width: 320px;
+        text-align: left;
     }
 </style>

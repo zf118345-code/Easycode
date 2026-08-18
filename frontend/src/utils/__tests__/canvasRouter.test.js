@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeEdgePath, routeOrthogonal, buildParallelOffsets } from '../canvasRouter'
+import { computeEdgePath, routeOrthogonal } from '../canvasRouter'
 import { GRID_SIZE } from '../canvasShared'
 
 function makeNode(id, x, y, w = 160, h = 100) {
@@ -60,7 +60,7 @@ describe('canvasRouter 绕障正交路由', () => {
     it('出端口沿法线垂直行驶 1 格（20px），进端口水平垂直进入', () => {
         const src = makeNode('src', 0, 0)
         const tgt = makeNode('tgt', 300, 0)
-        const result = computeEdgePath(src, tgt, [src, tgt], 'success', {})
+        const result = computeEdgePath(src, tgt, [src, tgt], 'success')
 
         const pts = result.points
         // 起点 = success 端口 (0+160, 0+20)
@@ -94,7 +94,7 @@ describe('canvasRouter 绕障正交路由', () => {
         const tgt = makeNode('tgt', 600, 0)
         const allNodes = [src, mid, tgt]
 
-        const result = computeEdgePath(src, tgt, allNodes, 'success', {})
+        const result = computeEdgePath(src, tgt, allNodes, 'success')
         const pts = result.points
         expect(result.pathD).toBeTruthy()
 
@@ -109,7 +109,7 @@ describe('canvasRouter 绕障正交路由', () => {
         const tall = makeNode('tall', 300, 0, 160, 200)
         const tgt = makeNode('tgt', 600, 0)
 
-        const result = computeEdgePath(src, tgt, [src, tall, tgt], 'success', {})
+        const result = computeEdgePath(src, tgt, [src, tall, tgt], 'success')
         expectSegmentsAvoidRect(result.points, { x: 300, y: 0, w: 160, h: 200 })
     })
 
@@ -118,76 +118,9 @@ describe('canvasRouter 绕障正交路由', () => {
         const tgt = makeNode('tgt', 600, 0)
         const wall = makeNode('wall', -1000, -1000, 2600, 2600)
 
-        const result = computeEdgePath(src, tgt, [src, tgt, wall], 'success', {})
+        const result = computeEdgePath(src, tgt, [src, tgt, wall], 'success')
         expect(result.pathD).toBeTruthy()
         expect(result.points.length).toBeGreaterThanOrEqual(2)
-    })
-
-    it('buildParallelOffsets 偏移序列：居中 + 交替 ±step，超限后重叠', () => {
-        expect(buildParallelOffsets(1)).toEqual([0])
-        expect(buildParallelOffsets(2)).toEqual([0, 3])
-        expect(buildParallelOffsets(3)).toEqual([0, 3, -3])
-        expect(buildParallelOffsets(4)).toEqual([0, 3, -3, 6])
-        expect(buildParallelOffsets(5)).toEqual([0, 3, -3, 6, -6])
-        expect(buildParallelOffsets(7)).toEqual([0, 3, -3, 6, -6, 9, -9])
-        // 第 8 条候选 +12 > 9 → 触发停止条件，与最近一条（-9）重叠
-        expect(buildParallelOffsets(8)).toEqual([0, 3, -3, 6, -6, 9, -9, -9])
-        expect(buildParallelOffsets(12)).toEqual([0, 3, -3, 6, -6, 9, -9, -9, -9, -9, -9, -9])
-        // 所有偏移绝对值不得超过 9px
-        const offs = buildParallelOffsets(20)
-        expect(Math.max(...offs.map(Math.abs))).toBe(9)
-    })
-
-    it('水平走廊平行边按 Y 轴错开（序列 [0, +3]）', () => {
-        const src = makeNode('src', 0, 0)
-        const tgt = makeNode('tgt', 600, 0)
-        const allNodes = [src, tgt]
-
-        const edge0 = computeEdgePath(src, tgt, allNodes, 'success', { offsetIndex: 0, totalParallel: 2 })
-        const edge1 = computeEdgePath(src, tgt, allNodes, 'success', { offsetIndex: 1, totalParallel: 2 })
-
-        expect(edge0.pathD).not.toBe(edge1.pathD)
-        // 第 1 条居中（无偏移），第 2 条 +3px
-        expect(edge0.points[2].y).toBe(20)
-        expect(edge1.points[2].y).toBe(23)
-        // 垂直间距 3px ≥ LINE_WIDTH + MIN_GAP
-        expect(edge1.points[2].y - edge0.points[2].y).toBe(3)
-
-        for (const pts of [edge0.points, edge1.points]) {
-            expectOrthogonal(pts)
-        }
-    })
-
-    it('纵走廊（垂直主导段）平行边按 X 轴错开', () => {
-        const src = makeNode('src', 0, 0)
-        const tgt = makeNode('tgt', 0, 300)
-        const allNodes = [src, tgt]
-
-        const edge0 = computeEdgePath(src, tgt, allNodes, 'success', { offsetIndex: 0, totalParallel: 2 })
-        const edge1 = computeEdgePath(src, tgt, allNodes, 'success', { offsetIndex: 1, totalParallel: 2 })
-
-        expect(edge0.pathD).not.toBe(edge1.pathD)
-        // 中间段为垂直走廊：edge0 无偏移（points[2]=(180,440)）、edge1 X 错开 3px（points[3]=(183,440)）
-        expect(edge0.points[2].y).toBe(edge1.points[3].y)
-        expect(edge1.points[3].x - edge0.points[2].x).toBe(3)
-
-        for (const pts of [edge0.points, edge1.points]) {
-            expectOrthogonal(pts)
-        }
-    })
-
-    it('平行边偏移后线边缘距节点边界 ≥10px（停止阈值）', () => {
-        const src = makeNode('src', 0, 0)
-        const mid = makeNode('mid', 300, 0)
-        const tgt = makeNode('tgt', 600, 0)
-        const allNodes = [src, mid, tgt]
-        const rects = allNodes.map(n => ({ x: n.position.x, y: n.position.y, w: n.w, h: n.h }))
-
-        for (const offsetIndex of [0, 1]) {
-            const result = computeEdgePath(src, tgt, allNodes, 'success', { offsetIndex, totalParallel: 2 })
-            // 偏移后的中间段不得进入节点外扩 10px 后的区域（线边缘 ≥10px）
-            expectMiddleSegmentsKeepMargin(result.points, rects, 10)
-        }
     })
 
     it('中间路径段与所有节点保持至少 1 格（20px）间距（基础安全间距）', () => {
@@ -197,7 +130,7 @@ describe('canvasRouter 绕障正交路由', () => {
         const allNodes = [src, mid, tgt]
         const rects = allNodes.map(n => ({ x: n.position.x, y: n.position.y, w: n.w, h: n.h }))
 
-        const result = computeEdgePath(src, tgt, allNodes, 'success', {})
+        const result = computeEdgePath(src, tgt, allNodes, 'success')
         const pts = result.points
         // 中间段（跳过首尾 stub 段）不得进入任何节点外扩 20px 后的区域
         expectMiddleSegmentsKeepMargin(pts, rects, GRID_SIZE)
@@ -205,5 +138,20 @@ describe('canvasRouter 绕障正交路由', () => {
         expect(pts[0]).toEqual({ x: 160, y: 20 })
         expect(pts[1].x - pts[0].x).toBe(GRID_SIZE)
         expect(pts[1].y).toBe(20)
+    })
+
+    it('路径点全部沿网格（相邻点轴对齐且中间点落在 20px 网格线上）', () => {
+        const src = makeNode('src', 0, 0)
+        const mid = makeNode('mid', 300, 0)
+        const tgt = makeNode('tgt', 600, 0)
+
+        const result = computeEdgePath(src, tgt, [src, mid, tgt], 'success')
+        const pts = result.points
+        expectOrthogonal(pts)
+        // 中间点（不含端口首尾与 stub 出线点）必须落在网格线上
+        for (let i = 2; i < pts.length - 2; i++) {
+            expect(pts[i].x % GRID_SIZE === 0).toBe(true)
+            expect(pts[i].y % GRID_SIZE === 0).toBe(true)
+        }
     })
 })

@@ -56,6 +56,47 @@ export function deriveEdges(edges) {
 }
 
 /**
+ * 解析出口端口序号：exit → 0、exit_N → N；非出口端口返回 null
+ */
+export function parseExitPortIndex(port) {
+    if (typeof port !== 'string') return null
+    if (port === 'exit') return 0
+    const m = port.match(/^exit_(\d+)$/)
+    return m ? parseInt(m[1], 10) : null
+}
+
+/**
+ * 出口边重编号：某节点的 exit 边按序号升序重新分配连续 exit_0..N-1
+ * （断连中间出口后，后续出口上移补位，与画布端口“第二个移到第一个位置”联动）
+ * @returns {boolean} 是否发生了重编号
+ */
+export function renumberExitEdges(edges, sourceNodeId) {
+    if (!sourceNodeId) return false
+    const exits = []
+    for (let i = 0; i < (edges || []).length; i++) {
+        const e = edges[i]
+        const idx = parseExitPortIndex(e?.source_port)
+        if (e.source_node === sourceNodeId && idx !== null) {
+            exits.push({ e, idx })
+        }
+    }
+    if (exits.length === 0) return false
+    exits.sort((a, b) => a.idx - b.idx)
+    let changed = false
+    exits.forEach((x, newIdx) => {
+        const want = `exit_${newIdx}`
+        if (x.e.source_port !== want) {
+            x.e.source_port = want
+            if (x.e.edge_id) {
+                x.e.edge_id = `e_${x.e.source_node}_${want}_${x.e.target_node}`
+            }
+            changed = true
+        }
+    })
+    return changed
+}
+
+/**
  * 应用连线（实体边）：同源同端口覆盖旧连线，其余原样保留
  * @param {Array} edges 实体边数组（原样修改）
  * @param {{source, target, source_port, canvas?}} payload source_port 为画布端口名
@@ -79,6 +120,7 @@ export function applyEdge(edges, { source, target, source_port, canvas = 'workfl
 
 /**
  * 断开连线：按 edge 描述（edge_id 优先，回退 sourceNodeId + legacyPort）
+ * 断开拓扑出口边后，同源节点的其余出口边自动重编号补位
  * @returns {boolean} 是否确实断开了连线
  */
 export function removeEdge(edges, edge) {
@@ -93,12 +135,17 @@ export function removeEdge(edges, edge) {
         )
     }
     if (idx === -1) return false
+    const removed = edges[idx]
     edges.splice(idx, 1)
+    if (parseExitPortIndex(removed?.source_port) !== null) {
+        renumberExitEdges(edges, removed.source_node)
+    }
     return true
 }
 
 /**
  * 断开指定节点的指定端口连线（拉线空放断线）
+ * 断开拓扑出口边后，同源节点的其余出口边自动重编号补位
  * @returns {boolean} 是否确实断开了连线
  */
 export function disconnectPort(edges, nodeId, portType) {
@@ -107,6 +154,9 @@ export function disconnectPort(edges, nodeId, portType) {
     const idx = (edges || []).findIndex(e => e.source_node === nodeId && e.source_port === port)
     if (idx === -1) return false
     edges.splice(idx, 1)
+    if (parseExitPortIndex(port) !== null) {
+        renumberExitEdges(edges, nodeId)
+    }
     return true
 }
 

@@ -7,13 +7,15 @@ v-model="dialogVisible"
                destroy-on-close
                :close-on-click-modal="false"
                custom-class="condition-dialog-custom">
-        <template #title>
-            <Settings v-if="isBranch" :size="16" style="vertical-align: middle;" />
-            <Plus v-else :size="16" style="vertical-align: middle;" />
-            {{ isBranch ? '设置分流条件分支' : '设置判定条件' }}
+        <template #header>
+            <span class="el-dialog__title">
+                <Settings v-if="isBranch" :size="16" style="vertical-align: middle;" />
+                <Plus v-else :size="16" style="vertical-align: middle;" />
+                {{ dialogTitle }}
+            </span>
         </template>
         <div class="condition-form-body">
-            <!-- 1. 条件类别切换 (5大判定场景) -->
+            <!-- 1. 条件类别切换（页面特征仅 图像/文本 两类） -->
             <div class="type-selector-item">
                 <span class="selector-label">条件判定类型</span>
                 <el-select
@@ -21,11 +23,11 @@ v-model="activeConditionType"
                            placeholder="请选择条件类型"
                            style="width: 100%"
                            @change="handleTypeChange">
-                    <el-option label="屏幕/区域存在指定图片" value="image_exists" />
-                    <el-option label="屏幕/区域包含指定文本 (OCR)" value="text_contains" />
-                    <el-option label="变量数值/逻辑比较" value="variable_check" />
-                    <el-option label="指定窗口状态 (存在/激活/关闭)" value="window_state" />
-                    <el-option label="本地文件/文件夹是否存在" value="file_exists" />
+                    <el-option
+                        v-for="opt in conditionTypeOptions"
+                        :key="opt.value"
+                        :label="opt.label"
+                        :value="opt.value" />
                 </el-select>
             </div>
 
@@ -56,6 +58,7 @@ v-model="conditionPayload.gray_threshold"
                                        :label="config.label || paramName"
                                        :context="conditionPayload"
                                        @update="val => handleParamChange(paramName, val)"
+                                       @capture-reset="handleCaptureReset"
                                        @open-browser="mode => $emit('open-browser', mode)"
                                        @open-screenshot="mode => $emit('open-screenshot', mode)" />
                     </div>
@@ -75,7 +78,7 @@ v-model="conditionPayload.gray_threshold"
 <script setup>
     import { ref, computed, watch } from 'vue'
     import ParamRenderer from '@/components/ParamRenderer.vue'
-    import { CONDITION_SCHEMAS } from './conditionSchemas.js'
+    import { CONDITION_SCHEMAS, PAGE_FEATURE_SCHEMAS } from './conditionSchemas.js'
     import { useMainStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
     import { ElMessage } from 'element-plus'
@@ -84,6 +87,7 @@ v-model="conditionPayload.gray_threshold"
     const props = defineProps({
         visible: { type: Boolean, default: false },
         showJumpConfig: { type: Boolean, default: false },
+        schemaSet: { type: String, default: 'condition' },   // 'condition' | 'page-feature'
         initialData: { type: Object, default: null }
     })
 
@@ -96,15 +100,45 @@ v-model="conditionPayload.gray_threshold"
     })
 
     const isBranch = computed(() => props.showJumpConfig)
+    const isPageFeature = computed(() => props.schemaSet === 'page-feature')
+
+    const dialogTitle = computed(() => {
+        if (isBranch.value) return '设置分流条件分支'
+        return isPageFeature.value ? '设置页面特征' : '设置判定条件'
+    })
+
+    // 页面特征仅支持 图像存在 / 文本包含 两类判定
+    const conditionTypeOptions = computed(() => {
+        const options = [
+            { label: '屏幕/区域存在指定图片', value: 'image_exists' },
+            { label: '屏幕/区域包含指定文本 (OCR)', value: 'text_contains' }
+        ]
+        if (isPageFeature.value) {
+            return [
+                ...options,
+                { label: '存在/不存在控件（控件特征）', value: 'control_exists' }
+            ]
+        }
+        return [
+            ...options,
+            { label: '变量数值/逻辑比较', value: 'variable_check' },
+            { label: '指定窗口状态 (存在/激活/关闭)', value: 'window_state' },
+            { label: '本地文件/文件夹是否存在', value: 'file_exists' },
+            { label: '存在/不存在控件', value: 'control_exists' }
+        ]
+    })
+
     const activeConditionType = ref('image_exists')
     const conditionPayload = ref({})
 
+    const currentSchemas = computed(() => isPageFeature.value ? PAGE_FEATURE_SCHEMAS : CONDITION_SCHEMAS)
+
     const currentParamsSchema = computed(() => {
-        return CONDITION_SCHEMAS[activeConditionType.value]?.params || {}
+        return currentSchemas.value[activeConditionType.value]?.params || {}
     })
 
     const initDefaultPayload = (type) => {
-        const schema = CONDITION_SCHEMAS[type]?.params || {}
+        const schema = currentSchemas.value[type]?.params || {}
         const payload = { condition_type: type }
         Object.keys(schema).forEach(key => {
             payload[key] = schema[key].default
@@ -157,6 +191,15 @@ v-model="conditionPayload.gray_threshold"
             await autoFillRecordedRegion(conditionPayload.value.image_source)
         }
 
+        conditionPayload.value = { ...conditionPayload.value }
+    }
+
+    // ⚡ 条件/分支/页面特征里的「重置控件」：target 与捕获时写入的定位字段一并清空
+    // （此前只清 target，by/window_title/index/control_info 残留会导致 textarea 仍显示旧信息）
+    const handleCaptureReset = () => {
+        for (const key of ['by', 'window_title', 'index', 'control_info']) {
+            delete conditionPayload.value[key]
+        }
         conditionPayload.value = { ...conditionPayload.value }
     }
 

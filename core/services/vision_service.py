@@ -209,15 +209,14 @@ class VisionService:
         else:
             processed_img = frame_bgr
 
-        # 4. 执行 OCR 识字
-        engine_type, ocr_engine = get_ocr_engine()
-        detected_text = ''
-        if engine_type == 'ddddocr' and ocr_engine:
-            _, img_bytes = cv2.imencode('.png', processed_img)
-            raw_res = ocr_engine.classification(img_bytes.tobytes())
-            detected_text = str(raw_res).strip() if raw_res else ''
-        else:
-            detected_text = '未激活识别库'
+        # 4. 执行 OCR 识字（⚡ #2 统一识别入口：RapidOCR 优先，ddddocr 兜底；引擎缺失时明确提示）
+        from core.node_executors.base.ocr_recognition import ocr_engine_recognize
+
+        detected_text = ocr_engine_recognize(processed_img).strip()
+        if not detected_text:
+            engine_type, _ = get_ocr_engine()
+            if engine_type == 'none':
+                detected_text = '未激活识别库（rapidocr/ddddocr 均未安装）'
 
         _, buffer = cv2.imencode('.png', processed_img)
         img_b64 = 'data:image/png;base64,' + base64.b64encode(buffer).decode('utf-8')

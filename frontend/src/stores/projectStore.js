@@ -206,6 +206,16 @@ export const useProjectStore = defineStore('project', {
             }
         }, 400),
 
+        // ⚡ #8 工作流防抖保存：参数编辑（打字/滑块）不再每字符全量写盘，合并为 400ms 一次
+        saveWorkflowDebounced: debounce(async function () {
+            if (!this.currentProjectPath) return
+            try {
+                await this.saveWorkflowImmediately()
+            } catch (err) {
+                console.error('防抖保存工作流失败', err)
+            }
+        }, 400),
+
         saveTopologyDebounced: debounce(async function () {
             if (!this.currentProjectPath) return
             try {

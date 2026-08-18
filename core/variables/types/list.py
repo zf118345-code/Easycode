@@ -12,64 +12,33 @@ class ListVariableType(BaseVariableType):
     def get_schema(cls) -> dict[str, Any]:
         """完全自定义的数组操作表单配置 Schema"""
         return {
-            'list_op': {
-                'type': 'select',
-                'label': '操作方式',
-                'options': [
-                    {'value': 'push', 'label': '追加元素 (Push)'},
-                    {'value': 'pop', 'label': '移除末尾元素 (Pop)'},
-                    {'value': 'clear', 'label': '清空列表'},
-                    {'value': 'join', 'label': '拼接为文本 (Join)'},
-                ],
-                'default': 'push',
-                'visible_if': {'field': 'var_type', 'operator': 'eq', 'value': 'list'},
-            },
             'list_item_value': {
-                'type': 'variable',
-                'label': '追加元素值/变量',
+                'type': 'str',  # 普通输入框（取消变量选择器）
+                'label': '追加元素值/变量（支持 {var}）',
+
                 'default': '',
-                'visible_if': {
-                    'field': 'var_type',
-                    'operator': 'eq',
-                    'value': 'list',
-                    'sub_field': 'list_op',
-                    'sub_operator': 'eq',
-                    'sub_value': 'push',
-                },
+                'placeholder': '可填值或 {变量名}',
+                'visible_if': {'field': 'op_action', 'operator': 'eq', 'value': 'push'},
             },
             'list_join_delimiter': {
-                'type': 'string',
+                'type': 'str',
                 'label': '连接分隔符',
                 'default': ',',
-                'visible_if': {
-                    'field': 'var_type',
-                    'operator': 'eq',
-                    'value': 'list',
-                    'sub_field': 'list_op',
-                    'sub_operator': 'eq',
-                    'sub_value': 'join',
-                },
+                'visible_if': {'field': 'op_action', 'operator': 'eq', 'value': 'join'},
             },
             'list_join_target_var': {
-                'type': 'string',
+                'type': 'str',
                 'label': '输出到文本变量名',
                 'default': '',
                 'placeholder': '请输入用于接收拼接结果的字符串变量名',
-                'visible_if': {
-                    'field': 'var_type',
-                    'operator': 'eq',
-                    'value': 'list',
-                    'sub_field': 'list_op',
-                    'sub_operator': 'eq',
-                    'sub_value': 'join',
-                },
+                'visible_if': {'field': 'op_action', 'operator': 'eq', 'value': 'join'},
             },
         }
 
     @classmethod
     def execute(cls, op: str, old_val: Any, params: dict, context: Any) -> Any:
         curr_list = list(old_val) if isinstance(old_val, list) else []
-        op = params.get('list_op', 'push')
+        op = params.get('list_op') or params.get('op_action', 'push')
 
         if op == 'push':
             item = cls.resolve_val(context, params.get('list_item_value', ''))

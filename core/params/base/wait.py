@@ -5,13 +5,14 @@ PARAM_DEFINITIONS = {
         'label': '等待',
         'modes': ['workflow', 'topology'],
         'params': {
-            'seconds': {
-                'type': 'float',
-                'default': 1.0,
+            'duration_ms': {
+                'type': 'int',
+                'default': 1000,
                 'min': 0,
-                'max': 60,
+                'max': 600000,
+                'step': 100,
                 'label': '等待时长',
-                'suffix': '秒',  # ⚡ 增加单位后缀
+                'suffix': 'ms',  # ⚡ 统一毫秒单位
             },
             },
     }

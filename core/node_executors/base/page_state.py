@@ -23,12 +23,11 @@ class PageStateNodeExecutor(BaseNodeExecutor):
     """页面状态节点执行器（拓扑画布）"""
 
     # 运行时默认参数（与 PARAM_DEFINITIONS 保持一致，供 merge_defaults 兜底）
+    # 页面名称 = 节点标题；出口 = 拓扑连线（边即出口），均不再是节点参数
     default_params: dict[str, Any] = {
         'page_id': '',
-        'page_name': '',
         'features': [],
         'feature_mode': 'and',
-        'exits': [],
     }
 
     def execute(self, node, context) -> dict[str, Any]:
@@ -100,18 +99,25 @@ class PageStateNodeExecutor(BaseNodeExecutor):
     def _build_condition(feature: dict[str, Any]) -> dict[str, Any]:
         """
         将特征定义归一化为 evaluate_condition 可识别的条件字典
-        - feature_type / type 映射为条件的 type 字段
-        - 展开 params 中的具体参数（template / text / region / threshold 等）
-        - 兼容特征层级直接平铺参数的情况
+        - feature_type / condition_type / type 映射为条件的 type 字段
+        - params 嵌套结构与特征层级平铺结构均兼容（新条件编辑器产出 condition_type + 平铺字段）
+        - 组合/取反等页面组合键（combine_mode / negate）由执行器消费，不进入条件参数
         """
-        cond: dict[str, Any] = {'type': feature.get('feature_type') or feature.get('type') or 'image_exists'}
+        cond: dict[str, Any] = {
+            'type': feature.get('feature_type')
+            or feature.get('condition_type')
+            or feature.get('type')
+            or 'image_exists'
+        }
         params = feature.get('params')
         if isinstance(params, dict):
             cond.update(params)
-        # 兼容：特征层级直接平铺的参数
-        for key in ('template', 'text', 'region', 'threshold', 'gray_scale', 'gray_threshold'):
-            if key in feature:
-                cond.setdefault(key, feature[key])
+        # 兼容：特征层级直接平铺的参数（image_source / target_text / region / threshold 等）
+        for key, value in feature.items():
+            if key in ('feature_type', 'condition_type', 'type', 'params', 'combine_mode', 'negate'):
+                continue
+            if key not in cond:
+                cond[key] = value
         return cond
 
     @staticmethod

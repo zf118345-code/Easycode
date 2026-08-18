@@ -6,6 +6,7 @@ import json
 import os
 
 import pyautogui
+from core.services import screenshot_service
 import win32con
 import win32gui
 import win32process
@@ -148,7 +149,7 @@ class WorkspaceService:
                 except Exception as e:
                     print(f'读取工作区失败: {e}')
 
-        screenshot = pyautogui.screenshot(region=region) if region else pyautogui.screenshot()
+        screenshot = screenshot_service.capture(region=region)
         buffer = io.BytesIO()
         screenshot.save(buffer, format='PNG')
         img_str = base64.b64encode(buffer.getvalue()).decode('utf-8')
@@ -191,8 +192,8 @@ class WorkspaceService:
                     abs_x = left + ctx.get('offset_left', 0) + rel_x
                     abs_y = top + ctx.get('offset_top', 0) + rel_y
 
-        full_img = pyautogui.screenshot()
-        cropped_img = full_img.crop((abs_x, abs_y, abs_x + w, abs_y + h))
+        # ⚡ 直接截取区域（不再全屏截图后内存裁剪）
+        cropped_img = screenshot_service.capture(region=(abs_x, abs_y, abs_x + w, abs_y + h))
         cropped_img.save(save_path)
 
         # 统一复用 VisionService 写入 regions 坐标索引
@@ -226,7 +227,7 @@ class WorkspaceService:
             screen_w, screen_h = pyautogui.size()
             region = (0, 0, screen_w, screen_h)
 
-        screenshot = pyautogui.screenshot(region=region)
+        screenshot = screenshot_service.capture(region=region)
         buffered = io.BytesIO()
         screenshot.save(buffered, format='PNG')
         img_base64 = base64.b64encode(buffered.getvalue()).decode('utf-8')

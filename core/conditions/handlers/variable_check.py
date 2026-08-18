@@ -21,8 +21,12 @@ class VariableCheckEvaluator(BaseConditionEvaluator):
         if not raw_var_name:
             return False
 
-        # 清洗变量名中的 {$var.xxx} 或 {xxx} 包装
-        clean_var_name = re.sub(r'^\{?(\$var\.)?([^}]+)\}?$', r'\2', raw_var_name)
+        # 清洗变量名：新语法 $var{xxx} / $ctx{xxx} / $env{xxx} / $sys{xxx}；旧 {$var.xxx} / {xxx} 兼容
+        m = re.match(r'^\$(?:var|ctx|env|sys)\{([^{}]+)\}$', raw_var_name)
+        if m:
+            clean_var_name = m.group(1).strip()
+        else:
+            clean_var_name = re.sub(r'^\{?(\$var\.)?([^}]+)\}?$', r'\2', raw_var_name)
 
         # 1. 获取变量实际值
         var_val = None

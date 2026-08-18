@@ -53,7 +53,8 @@ v-model="node.params.gray_threshold"
                                        :label="config.label || paramName"
                                        :context="node.params"
                                        @update="val => handleParamUpdate(paramName, val)"
-                                       @auto-change-type="handleAutoChangeType" />
+                                       @auto-change-type="handleAutoChangeType"
+                                       @capture-reset="handleCaptureReset(paramName)" />
                     </div>
                 </template>
             </div>
@@ -84,7 +85,7 @@ v-model="node.params.gray_threshold"
     import ParamRenderer from '@/components/ParamRenderer.vue'
     import {
         MousePointerClick, Clock, Image, ScanText, GitBranch,
-        SearchCheck, Binary, ListOrdered, FileCode, RefreshCcw
+        SearchCheck, Binary, ListOrdered, FileCode, RefreshCcw, ScanSearch
     } from 'lucide-vue-next'
     import { NODE_TYPE_CONFIG } from '@/utils/canvasShared'
 
@@ -104,7 +105,7 @@ v-model="node.params.gray_threshold"
     // 图标映射统一从 canvasShared.NODE_TYPE_CONFIG 获取
     const _iconComponentCache = {
         MousePointerClick, Clock, Image, ScanText, GitBranch,
-        SearchCheck, Binary, ListOrdered, FileCode
+        SearchCheck, Binary, ListOrdered, FileCode, ScanSearch
     }
     const getNodeIcon = (type) => {
         const config = NODE_TYPE_CONFIG[type]
@@ -173,6 +174,14 @@ v-model="node.params.gray_threshold"
             props.node.params.var_type = inferredType
             handleSave()
         }
+    }
+
+    // ⚡「重置控件」：清空控件名称 + 节点上存储的控件信息
+    const handleCaptureReset = (paramName) => {
+        props.node.params[paramName] = ''
+        delete props.node.params.control_info
+        props.node.params = { ...props.node.params }
+        handleSave()
     }
 
     const handleParamUpdate = (paramName, value) => {

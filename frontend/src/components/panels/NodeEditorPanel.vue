@@ -337,7 +337,8 @@ v-else-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'cand
                             project_path: store.currentProjectPath,
                             region_value: node.params.region_value || [0, 0, 0, 0],
                             gray_scale: node.params.gray_scale ?? true,
-                            gray_threshold: node.params.gray_threshold ?? 127
+                            gray_threshold: node.params.gray_threshold ?? 127,
+                            image_source: node.params.image_source || ''
                         })
                         previewText.value = res.data.text
                         previewImg.value = res.data.image

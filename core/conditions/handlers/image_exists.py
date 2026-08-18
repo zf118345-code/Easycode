@@ -5,6 +5,7 @@ from typing import Any
 import cv2
 import numpy as np
 import pyautogui
+from core.services import screenshot_service
 
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
 from core.vision.memory_matcher import MemoryTemplateMatcher
@@ -62,7 +63,7 @@ class ImageExistsEvaluator(BaseConditionEvaluator):
 
         try:
             # 4. 截取全屏图像 (BGR 格式)
-            screen = pyautogui.screenshot()
+            screen = screenshot_service.capture()
             screen_bgr = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
 
             # 5. 提取匹配区域参数

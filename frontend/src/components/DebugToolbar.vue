@@ -1,6 +1,7 @@
 <!--
-  调试工具栏（精简版）：
-  ▶ 运行(F5) / ⏸ 暂停·继续(F6/F5) / ⏭ 下一步(F10) / ⏹ 停止(S+F5) / 🔴 断点计数
+  调试工具栏（三态主控版）：
+  ① 主控按钮：就绪=运行（需选中节点）/ 运行中=暂停 / 暂停=运行到下一个断点
+  ② 下一步（仅暂停时可用） ③ 停止（运行中/暂停时可用，退出并复位）
   状态徽标 + 断点计数 + 命中节点
 -->
 <script setup>
@@ -15,8 +16,6 @@ const store = useMainStore()
 const execStore = useExecutionStore()
 const uiStore = useUiStore()
 
-// ===== 当前选择任务（若无选中任务则禁用 ▶ 运行） =====
-const selectedTaskId = computed(() => store.currentTaskId)
 const hasTasks = computed(() => (store.blueprint?.tasks?.length || 0) > 0)
 
 const isRunning = computed(() => execStore.isRunning)
@@ -24,6 +23,17 @@ const isPaused = computed(() => execStore.isPaused)
 const isStopped = computed(() => !isRunning.value && !isPaused.value)
 const breakpointCount = computed(() => uiStore.getBreakpointList?.()?.length ?? uiStore.breakpoints?.size ?? 0)
 const currentActiveNodeId = computed(() => execStore.currentActiveNodeId)
+const activeNodeLabel = computed(() => {
+    // 命中显示节点名（找不到回落 node_id）
+    const id = currentActiveNodeId.value
+    if (!id) return ''
+    const tasks = store.blueprint?.tasks || []
+    for (const task of tasks) {
+        const found = (task.nodes || []).find(n => n.node_id === id)
+        if (found) return found.node_name || id
+    }
+    return id
+})
 const stateText = computed(() => {
     if (isPaused.value) return '已暂停'
     if (isRunning.value) return '执行中'
@@ -35,19 +45,54 @@ const stateClass = computed(() => ({
     'state-paused': isPaused.value,
 }))
 
+// ===== 主控按钮：就绪=从选中节点运行 / 运行中=暂停 / 暂停=继续到下一断点 =====
+const selectedRunNodeId = computed(() => uiStore.selectedNodeIds?.[0] || uiStore.selectedNodeId || null)
+const mainBtnDisabled = computed(() => {
+    if (isRunning.value || isPaused.value) return false
+    return !hasTasks.value || !selectedRunNodeId.value
+})
+const mainBtnTitle = computed(() => {
+    if (isPaused.value) return '继续运行到下一个断点 (F5)'
+    if (isRunning.value) return '暂停 (F6)'
+    if (!selectedRunNodeId.value) return '请先在画布中选中一个节点'
+    return '从选中节点开始运行 (F5)'
+})
+const mainBtnHint = computed(() => (isPaused.value ? 'F5' : isRunning.value ? 'F6' : 'F5'))
+
+function findTaskIdByNode(nodeId) {
+    const tasks = store.blueprint?.tasks || []
+    for (const task of tasks) {
+        if ((task.nodes || []).some(n => n.node_id === nodeId)) return task.task_id
+    }
+    return null
+}
+
 // ===== 操作 =====
 async function runSelectedTask() {
-    if (!selectedTaskId.value) {
-        ElMessage.warning('请先在左侧列表中选中一个任务再运行')
+    const nodeId = selectedRunNodeId.value
+    if (!nodeId) {
+        ElMessage.warning('请先在画布中选中一个节点再运行')
+        return
+    }
+    const taskId = findTaskIdByNode(nodeId)
+    if (!taskId) {
+        ElMessage.warning('未找到该节点所属的任务')
         return
     }
     try {
-        const result = await execStore.runTask(selectedTaskId.value)
+        const result = await execStore.runTask(taskId, nodeId)
         if (result?.status === 'started') ElMessage.success('任务已启动')
-        else ElMessage.error('启动失败：' + JSON.stringify(result || {}))
+        else ElMessage.error('启动失败：' + (result?.error || JSON.stringify(result || {})))
     } catch (err) {
         ElMessage.error('启动失败：' + err.message)
     }
+}
+async function handleMainButton() {
+    if (isPaused.value || isRunning.value) {
+        await togglePause()  // 暂停→继续 / 运行中→暂停
+        return
+    }
+    await runSelectedTask()
 }
 async function togglePause() {
     try {
@@ -120,36 +165,26 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
 
         <div class="dbg-sep" />
 
-        <!-- ▶ 运行（停止/就绪时可用） -->
-        <button
-class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
-                @click="runSelectedTask" title="运行选中任务 (F5)">
-            <Play class="dbg-icon" :size="16" />
-            <span class="dbg-hint">F5</span>
-        </button>
-
-        <!-- ⏸ 暂停 / ▶ 继续（同一按钮，随状态切换） -->
+        <!-- ① 主控按钮：就绪=运行（需选中节点）/ 运行中=暂停 / 暂停=运行到下一个断点 -->
         <button
             class="dbg-btn"
             :class="{ primary: isPaused }"
-            :disabled="isStopped"
-            @click="togglePause"
-            :title="isPaused ? '继续执行 (F5)' : '暂停 (F6)'">
-            <Pause v-if="!isPaused" class="dbg-icon" :size="16" />
+            :disabled="mainBtnDisabled"
+            @click="handleMainButton"
+            :title="mainBtnTitle">
+            <Pause v-if="isRunning && !isPaused" class="dbg-icon" :size="16" />
             <Play v-else class="dbg-icon" :size="16" />
-            <span class="dbg-hint">{{ isPaused ? 'F5' : 'F6' }}</span>
+            <span class="dbg-hint">{{ mainBtnHint }}</span>
         </button>
 
-        <!-- ⏭ 下一步（暂停时可用，执行当前节点后自动暂停） -->
+        <!-- ② 下一步：仅暂停时可用（执行当前节点后暂停，不跳到断点） -->
         <button class="dbg-btn" :disabled="!isPaused" @click="stepNext" title="下一步，执行当前节点后暂停 (F10)">
             <SkipForward class="dbg-icon" :size="16" />
             <span class="dbg-hint">F10</span>
         </button>
 
-        <div class="dbg-sep" />
-
-        <!-- ⏹ 停止 -->
-        <button class="dbg-btn danger" :disabled="!isRunning && !isPaused" @click="stopExec" title="停止 (Shift+F5)">
+        <!-- ③ 停止：运行中/暂停时可用（退出流程并复位为未启动状态） -->
+        <button class="dbg-btn danger" :disabled="!isRunning && !isPaused" @click="stopExec" title="停止，退出流程并复位 (Shift+F5)">
             <Square class="dbg-icon" :size="16" />
             <span class="dbg-hint">S+F5</span>
         </button>
@@ -164,11 +199,11 @@ class="dbg-btn" :disabled="isRunning && !isPaused || !hasTasks"
             <button v-if="breakpointCount > 0" class="dbg-mini-btn" @click="clearAllBreakpoints" title="清除所有断点">清除</button>
         </div>
 
-        <!-- 激活节点 -->
-        <div v-if="currentActiveNodeId" class="dbg-meta active-node" title="当前调试命中节点">
+        <!-- 激活节点（显示节点名；与断点无关，仅指示当前执行位置） -->
+        <div v-if="currentActiveNodeId" class="dbg-meta active-node" title="当前执行节点">
             <Target class="dbg-active-icon" :size="12" />
-            <span class="dbg-meta-label">命中：</span>
-            <span class="dbg-node-id">{{ currentActiveNodeId }}</span>
+            <span class="dbg-meta-label">执行：</span>
+            <span class="dbg-node-id">{{ activeNodeLabel }}</span>
         </div>
     </div>
 </template>

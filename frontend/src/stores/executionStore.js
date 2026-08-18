@@ -3,6 +3,9 @@ import { blueprintApi } from '@/api/blueprintApi'
 import { executionApi } from '@/api/executionApi'
 import { logger } from '@/utils/logger'
 
+// ⚡ #6 日志条数上限（长任务不无限增长）
+const MAX_EXECUTION_LOGS = 500
+
 export const useExecutionStore = defineStore('execution', {
     state: () => ({
         executionLogs: [],
@@ -27,6 +30,11 @@ export const useExecutionStore = defineStore('execution', {
 
     actions: {
         async runTask(taskId, startNodeId, options = {}) {
+            // ⚡ 并发防护：已有会话在执行/暂停时拒绝二次启动（UI 层已禁用入口，此处为最后防线）
+            if (this.executionState === 'running' || this.executionState === 'paused') {
+                logger.warn('Store', '已有执行会话，拒绝并发启动')
+                return { status: 'busy', error: '已有任务正在执行/暂停，请先停止再运行' }
+            }
             if (this.activeEventSource) {
                 this.activeEventSource.close()
                 this.activeEventSource = null
@@ -61,14 +69,14 @@ export const useExecutionStore = defineStore('execution', {
                 const executionId = res.execution_id || res.data?.execution_id
                 if (!executionId) {
                     logger.error('Store', '启动任务失败: 未获得 execution_id', res)
-                    this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '任务启动失败: 未获得 execution_id' })
+                    this._pushLog({ time: new Date().toLocaleTimeString(), message: '任务启动失败: 未获得 execution_id' })
                     this.executionState = 'error'
                     return res
                 }
                 this.currentExecutionId = executionId
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: `任务 [${taskId}] 已启动...` })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: `任务 [${taskId}] 已启动...` })
                 if (breakpoints?.length) {
-                    this.executionLogs.push({
+                    this._pushLog({
                         time: new Date().toLocaleTimeString(),
                         message: `⚙ 调试模式开启，已下发 ${breakpoints.length} 个断点`
                     })
@@ -84,37 +92,39 @@ export const useExecutionStore = defineStore('execution', {
                         if (Array.isArray(newLogs) && newLogs.length > 0) {
                             newLogs.forEach(logItem => {
                                 const msg = typeof logItem === 'string' ? logItem : logItem.message
-                                this.executionLogs.push(typeof logItem === 'string' ? { time: new Date().toLocaleTimeString(), message: logItem } : logItem)
+                                this._pushLog(typeof logItem === 'string' ? { time: new Date().toLocaleTimeString(), message: logItem } : logItem)
                                 logger.debug('SSE-Stream', msg)
                             })
                         }
-                        // SSE 推送调试状态（命中断点时）
-                        if (status.state === 'paused' || payload.debug_state === 'paused') {
+                        // ⚡ #5 调试状态随 SSE 即时推送（暂停/恢复/单步 0.2s 内反映，取代 1s 轮询）
+                        const debugState = payload.debug_state
+                        if (debugState && debugState.state === 'paused') {
                             this.executionState = 'paused'
                             this.executionPaused = true
-                            this.currentActiveNodeId = status.node_id || payload.node_id || null
-                            if (payload.callstack) this.executionCallstack = payload.callstack
-                            this.executionLogs.push({
+                            this.currentActiveNodeId = debugState.node_id || null
+                            const reason = debugState.pause_reason === 'breakpoint' ? '命中断点' : '已暂停'
+                            this._pushLog({
                                 time: new Date().toLocaleTimeString(),
-                                message: `⏸ 命中断点 @ ${this.currentActiveNodeId || '未知节点'}`
+                                message: `⏸ ${reason} @ ${this.currentActiveNodeId || '未知节点'}`
                             })
                             this.getExecutionVariables().catch(e => logger.warn('拉取变量失败', e))
-                        } else if (status.state === 'running') {
+                        } else if (debugState && debugState.state === 'running') {
                             this.executionState = 'running'
                             this.executionPaused = false
+                            if (debugState.node_id) this.currentActiveNodeId = debugState.node_id
                         }
                         if (status.status === 'success') {
                             logger.info('Store', `任务流程结束, 最终状态: success`)
                             this.executionState = 'success'
-                            this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '✅ 任务流程执行完毕' })
+                            this._pushLog({ time: new Date().toLocaleTimeString(), message: '✅ 任务流程执行完毕' })
                             this._cleanupSession(eventSource)
                         } else if (status.status === 'stopped') {
                             this.executionState = 'stopped'
-                            this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⛔ 任务已停止' })
+                            this._pushLog({ time: new Date().toLocaleTimeString(), message: '⛔ 任务已停止' })
                             this._cleanupSession(eventSource)
                         } else if (status.status === 'error') {
                             this.executionState = 'error'
-                            this.executionLogs.push({
+                            this._pushLog({
                                 time: new Date().toLocaleTimeString(),
                                 message: `❌ 任务终止: ${status.message || '未知错误'}`
                             })
@@ -134,7 +144,7 @@ export const useExecutionStore = defineStore('execution', {
             } catch (err) {
                 logger.error('Store', 'runTask 触发异常', err)
                 this.executionState = 'error'
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: `启动任务失败: ${err.message}` })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: `启动任务失败: ${err.message}` })
                 throw err
             }
         },
@@ -143,11 +153,12 @@ export const useExecutionStore = defineStore('execution', {
             try { eventSource?.close() } catch {}
             if (this.activeEventSource === eventSource) this.activeEventSource = null
             this.stopDebugPolling()
-            if (['success', 'error', 'stopped'].includes(this.executionState)) {
-                this.currentExecutionId = null
-                this.currentActiveNodeId = null
-                this.executionPaused = false
-            }
+            // 会话已结束/断开：无条件清理调试态，避免 UI 卡在暂停高亮（状态由调用方按需设置）
+            this.currentExecutionId = null
+            this.currentActiveNodeId = null
+            this.executionPaused = false
+            this.executionCurrentVariables = {}
+            this.executionPrevVariables = {}
         },
 
         async stopExecution() {
@@ -157,11 +168,23 @@ export const useExecutionStore = defineStore('execution', {
             }
             try {
                 await executionApi.stop(this.currentExecutionId)
+                // 乐观复位：停止信号已下发，UI 立即回到未启动状态（线程退出由后端收敛）
+                this.executionState = 'stopped'
+                this.executionPaused = false
+                this.currentActiveNodeId = null
+                this.executionCurrentVariables = {}
+                this.executionPrevVariables = {}
+                this.stopDebugPolling()
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '⛔ 已发送停止信号，任务正在退出' })
                 logger.info('Store', `已发送停止信号: ${this.currentExecutionId}`)
             } catch (err) {
                 logger.error('Store', '停止执行失败', err)
                 // 回退：调用旧 blueprintApi.stopExecution
                 try { await blueprintApi.stopExecution(this.currentExecutionId) } catch (_) {}
+                this.executionState = 'stopped'
+                this.executionPaused = false
+                this.currentActiveNodeId = null
+                this.stopDebugPolling()
             }
         },
 
@@ -170,7 +193,7 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return
             try {
                 await executionApi.pause(this.currentExecutionId)
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏸ 已请求暂停（将在下一节点前生效）' })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '⏸ 已请求暂停（将在下一节点前生效）' })
                 // 状态由调试轮询确认（暂停是异步生效，不做乐观置位）
             } catch (err) { logger.error('暂停失败', err); throw err }
         },
@@ -181,14 +204,14 @@ export const useExecutionStore = defineStore('execution', {
                 this.executionState = 'running'
                 this.executionPaused = false
                 this.currentActiveNodeId = null
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '▶ 已恢复执行' })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '▶ 已恢复执行' })
             } catch (err) { logger.error('恢复失败', err); throw err }
         },
         async stepOverExecution() {
             if (!this.currentExecutionId) return
             try {
                 await executionApi.step(this.currentExecutionId, 'over')
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏭ 单步跳过' })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '⏭ 单步跳过' })
                 setTimeout(() => this.pollDebugState(), 300)
             } catch (err) { logger.error('单步跳过失败', err); throw err }
         },
@@ -196,7 +219,7 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return
             try {
                 await executionApi.step(this.currentExecutionId, 'into')
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏬ 单步进入' })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '⏬ 单步进入' })
                 setTimeout(() => this.pollDebugState(), 300)
             } catch (err) { logger.error('单步进入失败', err); throw err }
         },
@@ -204,7 +227,7 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return
             try {
                 await executionApi.step(this.currentExecutionId, 'out')
-                this.executionLogs.push({ time: new Date().toLocaleTimeString(), message: '⏫ 单步跳出' })
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: '⏫ 单步跳出' })
                 setTimeout(() => this.pollDebugState(), 300)
             } catch (err) { logger.error('单步跳出失败', err); throw err }
         },
@@ -214,6 +237,9 @@ export const useExecutionStore = defineStore('execution', {
             if (!this.currentExecutionId) return null
             try {
                 const state = await executionApi.getDebugState(this.currentExecutionId)
+                // ⚡ 会话已结束（cleanup 已清 currentExecutionId）：忽略飞行中的旧响应，
+                // 避免"执行："标签在运行结束后被最后一批轮询响应重新点亮
+                if (!this.currentExecutionId) return null
                 if (state?.status || state?.is_paused !== undefined) {
                     // 兼容两种返回：执行记录状态（status）或调试会话状态（is_paused/current_node_id）
                     const isPaused = state.is_paused === true || state.status === 'paused'
@@ -222,17 +248,17 @@ export const useExecutionStore = defineStore('execution', {
                     this.executionPaused = isPaused
                     this.currentActiveNodeId = state.current_node_id || state.node_id || this.currentActiveNodeId
                     if (state.callstack) this.executionCallstack = state.callstack
-                    // 变量快照：一次轮询取全量（当前值 + 上一节点值），暂停时才有对比意义
-                    if (isPaused) {
-                        this.executionCurrentVariables = state.executor_variables || state.variables || {}
-                        this.executionPrevVariables = state.prev_variables || {}
-                    } else {
-                        this.executionCurrentVariables = {}
-                        this.executionPrevVariables = {}
-                    }
+                    // 变量快照：current 始终取实时值；prev 仅暂停时替换，非暂停保留旧值（避免单步瞬间闪为 —）
+                    this.executionCurrentVariables = state.executor_variables || state.variables || {}
+                    if (isPaused) this.executionPrevVariables = state.prev_variables || {}
                 }
                 return state
             } catch (err) {
+                // 会话已不存在（执行已结束，SSE 终态尚未到达）：静默收敛，不再无效轮询与打印噪音
+                if (err?.status === 404 || /调试会话不存在/.test(err?.message || '')) {
+                    this.stopDebugPolling()
+                    return null
+                }
                 logger.warn('调试轮询失败', err)
                 return null
             }
@@ -249,19 +275,10 @@ export const useExecutionStore = defineStore('execution', {
             }
         },
         startDebugPolling(intervalMs = 1000) {
+            // ⚡ #5 调试状态已随 SSE 即时推送，不再启动 1s 轮询；
+            // 保留一次性手动拉取（暂停/单步后立即同步变量快照）
             this.stopDebugPolling()
-            let failCount = 0
-            this._pollTimer = setInterval(async () => {
-                if (!this.currentExecutionId) { this.stopDebugPolling(); return }
-                const state = await this.pollDebugState()
-                if (state === null) {
-                    // 轮询失败（会话不存在/已结束/后端旧版）：连续 3 次自动停止，避免无效请求空转
-                    failCount += 1
-                    if (failCount >= 3) this.stopDebugPolling()
-                } else {
-                    failCount = 0
-                }
-            }, intervalMs)
+            this.pollDebugState().catch(() => {})
         },
         stopDebugPolling() {
             if (this._pollTimer) {
@@ -271,6 +288,14 @@ export const useExecutionStore = defineStore('execution', {
         },
         clearLogs() {
             this.executionLogs = []
+        },
+
+        // ⚡ #6 日志条数上限：保留最近 500 条，防止长任务 DOM/内存无限增长
+        _pushLog(item) {
+            this.executionLogs.push(item)
+            if (this.executionLogs.length > MAX_EXECUTION_LOGS) {
+                this.executionLogs.splice(0, this.executionLogs.length - MAX_EXECUTION_LOGS)
+            }
         }
     }
 })

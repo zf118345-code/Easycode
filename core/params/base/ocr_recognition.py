@@ -1,15 +1,18 @@
 # core/params/base/ocr_recognition.py
 
+from .defaults import NODE_DEFAULTS
+
+
 PARAM_DEFINITIONS = {
     'ocr_recognition': {
         'label': '文字识别 (OCR)',
         'modes': ['workflow', 'topology'],
         'params': {
             'image_source': {'type': 'file', 'default': '', 'label': 'OCR 文字视角模板'},
-            'gray_scale': {'type': 'bool', 'default': True, 'label': '去除背景干扰 (灰度处理)'},
+            'gray_scale': {'type': 'bool', 'default': NODE_DEFAULTS['gray_scale'], 'label': '去除背景干扰 (灰度处理)'},
             'gray_threshold': {
                 'type': 'int',
-                'default': 127,
+                'default': NODE_DEFAULTS['gray_threshold'],
                 'label': '二值化灰度阈值 (0-255，调节至文字最清晰)',
                 'min': 0,
                 'max': 255,
@@ -17,10 +20,11 @@ PARAM_DEFINITIONS = {
                 'visible_if': {'field': 'gray_scale', 'operator': 'eq', 'value': True},
             },
             'save_to_var': {
-                'type': 'variable',
+                'type': 'str',  # 统一普通输入框（$var{} 语法）
+
                 'default': '',
                 'label': '保存识别文本到变量',
-                'placeholder': '请输入或选择变量名 (如: coin_num)',
+                'placeholder': '请输入或选择变量名 (如: $var{coin_num})',
             },
             'region_type': {
                 'type': 'select',

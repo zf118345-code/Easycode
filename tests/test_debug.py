@@ -167,6 +167,69 @@ def test_stop_releases_pause():
     assert executor.is_stopped is True
 
 
+def test_stop_execution_releases_breakpoint_pause():
+    """ExecutionService.stop_execution：断点暂停中停止 → 释放阻塞并终止执行（无需先 resume）"""
+    from core.services import execution_service as es_mod
+    from core.services.execution_service import ExecutionService
+
+    project = make_project()
+    executor = GraphExecutor(project, text_log_enabled=False, image_log_enabled=False)
+    session = DebugSession('sess_stop', executor, 'task_main')
+    session.add_breakpoint('n1')
+    executor.debug_session = session
+    DebugService.register_session(session)
+    with es_mod._status_lock:
+        es_mod._active_executors['sess_stop'] = executor
+
+    try:
+        t = threading.Thread(target=executor.run, args=('task_main',), daemon=True)
+        t.start()
+        assert wait_paused(session) > 0, '断点 n1 未触发暂停'
+        assert session._current_node_id == 'n1'
+
+        # 模拟前端 /stop：仅置停止标志 + 释放暂停阻塞，不 resume 执行
+        r = ExecutionService.stop_execution('sess_stop')
+        assert r['status'] == 'success'
+
+        t.join(timeout=5)
+        assert not t.is_alive(), '停止后执行未终止（断点阻塞未被释放）'
+        assert executor.is_stopped is True
+    finally:
+        with es_mod._status_lock:
+            es_mod._active_executors.pop('sess_stop', None)
+        with DebugService._lock:
+            DebugService._sessions.pop('sess_stop', None)
+
+
+def test_dynamic_breakpoint_added_while_paused():
+    """暂停期间动态修改断点（移除 n1、新增 n3）→ 恢复后在新断点 n3 前再次暂停"""
+    project = make_project()
+    executor = GraphExecutor(project, text_log_enabled=False, image_log_enabled=False)
+    session = DebugSession('sess_dyn', executor, 'task_main')
+    session.add_breakpoint('n1')
+    executor.debug_session = session
+
+    t = threading.Thread(target=executor.run, args=('task_main',), daemon=True)
+    t.start()
+    c1 = wait_paused(session)
+    assert c1 > 0, '断点 n1 未触发暂停'
+    assert session._current_node_id == 'n1'
+
+    # 暂停期间覆盖断点集合：移除 n1、新增 n3（等价前端 setBreakpoints(['n3'])）
+    session.remove_breakpoint('n1')
+    session.add_breakpoint('n3')
+    session.resume()
+
+    c2 = wait_pause_count(session, c1 + 1)
+    assert c2 > c1, '动态断点 n3 未生效'
+    assert session._pause_reason == 'breakpoint'
+    assert session._current_node_id == 'n3', f'应暂停在 n3，实际 {session._current_node_id}'
+
+    session.resume()
+    t.join(timeout=5)
+    assert not t.is_alive(), '恢复后执行未结束'
+
+
 def test_debug_service_register_and_control():
     """DebugService 注册后：set_breakpoints / inspect_variables / step_session 可用"""
     project = make_project()
@@ -185,3 +248,65 @@ def test_debug_service_register_and_control():
     # 清理
     with DebugService._lock:
         DebugService._sessions.pop('sess_5', None)
+
+
+# ========== #7 执行记录持久化与日志上限 ==========
+
+def test_executor_logs_capped(monkeypatch, tmp_path):
+    """executor.logs 条数上限：超限裁剪保留最近 N 条（防 base64 图片日志撑爆内存）"""
+    from core.executor import GraphExecutor
+
+    ex = GraphExecutor.__new__(GraphExecutor)
+    import threading
+    ex._logs_lock = threading.Lock()
+    ex.logs = []
+    ex.max_logs = 50
+    ex.variables = {}
+    # log() 内 resolve_template_string 需要变量
+    from core.utils import resolve_template_string
+    monkeypatch.setattr('core.executor.resolve_template_string', lambda s, ctx: str(s))
+
+    for i in range(120):
+        ex.log(f'日志第{i}条')
+    assert len(ex.logs) == 50
+    assert ex.logs[0]['message'] == '日志第70条'  # 裁剪保留最近 50 条
+    assert ex.logs[-1]['message'] == '日志第119条'
+
+
+def test_execution_db_persists_logs(tmp_path, monkeypatch):
+    """ExecutionDB 落盘：创建执行 → 写日志 → 查询带回（#7 SQLite 接回）"""
+    import os
+    import core.db as db_mod
+    from core.services.execution_db import ExecutionDB
+
+    db_path = str(tmp_path / 'exec.db')
+    monkeypatch.setenv('EASYCODE_DB_PATH', db_path)
+    monkeypatch.setattr(db_mod, 'get_db_path', lambda: db_path)
+    monkeypatch.setattr(db_mod, 'DB_PATH', db_path)
+    monkeypatch.setattr(db_mod, 'DB_DIR', str(tmp_path))
+    ExecutionDB._ensure_db()
+
+    eid = 'task_test_1'
+    assert ExecutionDB.create_execution(eid, 'D:/proj', 'task_test') is True
+    assert ExecutionDB.update_status(eid, 'success', '执行完成') is True
+    assert ExecutionDB.add_logs(eid, [
+        {'time': '10:00:00', 'message': '第一条', 'level': 'info', 'image': None},
+        {'time': '10:00:01', 'message': '第二条', 'level': 'warning', 'image': None},
+    ]) is True
+
+    status = ExecutionDB.get_status(eid)
+    assert status['status']['status'] == 'success'  # 嵌套结构：{status: {status, message}, logs}
+    assert status['status']['message'] == '执行完成'
+    logs = ExecutionDB.get_logs(eid)
+    assert [l['message'] for l in logs] == ['第一条', '第二条']
+
+    # 变量快照
+    assert ExecutionDB.save_variable(eid, 'count', 42, 'int') is True
+    vars_ = ExecutionDB.get_variables(eid)
+    assert vars_.get('count') == 42
+
+    # 清理
+    assert ExecutionDB.delete_execution(eid) is True
+    assert ExecutionDB.get_status(eid) is None
+    if os.path.exists(db_path):
+        os.remove(db_path)

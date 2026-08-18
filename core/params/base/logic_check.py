@@ -1,11 +1,13 @@
 # core/params/base/logic_check.py
 
+from .defaults import NODE_DEFAULTS
+
 PARAM_DEFINITIONS = {
     'logic_check': {
         'label': '逻辑判断',
         'modes': ['workflow'],
         'params': {
-            'timeout': {'type': 'int', 'default': 3000, 'label': '匹配超时时长', 'suffix': 'ms', 'min': 0, 'step': 500},
+            'timeout': {'type': 'int', 'default': NODE_DEFAULTS['timeout'], 'label': '匹配超时时长', 'suffix': 'ms', 'min': 0, 'step': 500},
             'logic_mode': {
                 'type': 'select',
                 'options': [

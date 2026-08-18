@@ -31,7 +31,6 @@
     import { ref, computed, watch } from 'vue'
     import { useMainStore, useUiStore } from '@/stores'
     import { MousePointerClick } from 'lucide-vue-next'
-    import { pruneTopologyEdgesForNode } from '@/utils/topologyModel'
     import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
     import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
     import GroupInspectorPanel from './panels/GroupInspectorPanel.vue'
@@ -64,7 +63,7 @@
         return list
     })
 
-    watch(() => [uiStore.selectedNodeIds, uiStore.selectedGroupId], () => {
+    watch(() => [uiStore.selectedNodeIds, uiStore.selectedGroupId, uiStore.inspectorSyncTick], () => {
         const nodeIds = uiStore.selectedNodeIds || []
         const tasks = canvasData.value.tasks || []
 
@@ -119,19 +118,7 @@
                         }
                     }
                 }
-                // 页面状态节点：exits 删除后修剪索引越界的 exit 连线
-                if (isTopology.value && currentNode.value.node_type === 'page_state') {
-                    const exitsLength = (currentNode.value.params?.exits || []).length
-                    const edges = canvasData.value.edges || []
-                    const pruned = pruneTopologyEdgesForNode(edges, currentNode.value.node_id, exitsLength)
-                    if (pruned.length !== edges.length) {
-                        if (isTopology.value) {
-                            store.blueprint.topology = { ...store.blueprint.topology, edges: pruned }
-                        } else {
-                            store.blueprint.edges = pruned
-                        }
-                    }
-                }
+                // 出口已由画布连线定义（边即出口），不再修剪 params.exits 相关连线
             } else if (targetType.value === 'group' && targetData.value) {
                 targetData.value.loopCount = Number(targetData.value.loopCount) || 1
                 targetData.value.loopInterval = Number(targetData.value.loopInterval) || 0
@@ -144,9 +131,10 @@
                 }
             }
             if (isTopology.value) {
-                await store.saveTopologyData()
+                await store.saveTopologyDebounced()
             } else {
-                await store.saveWorkflowImmediately()
+                // ⚡ #8 参数编辑防抖保存（打字/滑块合并为 400ms 一次全量写，IO 减少 ~90%）
+                await store.saveWorkflowDebounced()
             }
         } catch (err) {
             console.error('保存节点配置失败:', err)

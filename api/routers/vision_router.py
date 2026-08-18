@@ -70,6 +70,7 @@ def create_vision_router(vision_service):
             request.region_value,
             request.gray_scale,
             request.gray_threshold,
+            request.image_source,
         )
 
     @router.post('/api/image/test')

@@ -4,9 +4,8 @@
 //   1. Port stubs — 连线从端口沿所在边的法线先垂直行驶 1 格（20px），进入终点时同样垂直进入。
 //   2. Obstacle avoidance — stub 之间在网格上做 A* 寻路（曼哈顿最短），任意一段不进入任何节点矩形。
 //   3. Grid-aligned — 所有路径点落在网格线上（世界坐标 = CSS px，与节点同坐标系）。
-//   4. Fallback — 无路可达（节点围死/网格过大）时回退旧策略折线，边永不消失。
-//   5. Parallel edges — 多边平行时对中间段做垂直偏移分离。
-//   6. Final path rendered as rounded polyline via getRoundedPathString.
+//   4. Fallback — 无路可达（节点围死/网格过大）时回退简易折线（同样吸附网格），边永不消失。
+//   5. Final path rendered as rounded polyline via getRoundedPathString.
 
 import {
     GRID_SIZE, NODE_WIDTH, NODE_MIN_HEIGHT,
@@ -15,37 +14,10 @@ import {
 
 const STUB_GRIDS = 1               // 出/入端口垂直行驶的格数（= 基础安全间距 1 格）
 const ROUND_RADIUS = 8             // 路径圆角半径（仅渲染层视觉，不参与路由判断）
-const PARALLEL_STEP = 3            // 平行线最小偏移步长 = LINE_WIDTH(2) + MIN_GAP(1)
-const PARALLEL_MAX_OFFSET = 9      // 最大允许偏移 = 道路宽/2(20) - 最小边界距(10) - 线宽/2(1)
 const TURN_PENALTY = 0.05          // A* 转弯惩罚（偏好少折弯的最短路径）
 const MAX_GRID_CELLS = 250000      // A* 格点上限，超出回退简易折线
 
-const DEFAULT_ROUTE_OFFSET = 50    // legacy 回退路径偏移
-const PARALLEL_OFFSET = 20         // legacy 平行偏移（仅回退路径使用）
-
-/**
- * 平行线偏移序列（需求 2.2 / 2.3）：
- *   第 1 条居中（0），后续按 +step / -step / +2step / -2step ... 交替扩展；
- *   偏移量绝对值不得超过 PARALLEL_MAX_OFFSET（9px）——超出即触发停止条件，
- *   该线及后续所有线保持与最近一条线相同的偏移量（重叠）。
- *   线数 5 → [0, +3, -3, +6, -6]；线数 8 → [0,3,-3,6,-6,9,-9,-9]
- */
-export function buildParallelOffsets(count, step = PARALLEL_STEP, maxOffset = PARALLEL_MAX_OFFSET) {
-    const offsets = [0]
-    let k = 1
-    while (offsets.length < count) {
-        const pos = k * step
-        if (pos <= maxOffset) {
-            offsets.push(pos)
-            if (offsets.length < count) offsets.push(-pos)
-        } else {
-            const last = offsets[offsets.length - 1]
-            while (offsets.length < count) offsets.push(last)
-        }
-        k++
-    }
-    return offsets
-}
+const DEFAULT_ROUTE_OFFSET = 50    // legacy 回退路径偏移（网格倍数）
 
 // ---------------------------------------------------------------------------
 // Obstacles / stubs
@@ -262,27 +234,17 @@ export function routeOrthogonal(start, end, obstacleRects = [], options = {}) {
  * @param sourceNode / targetNode  渲染节点（含最新 position / size，动态高度）
  * @param allNodes  全部渲染节点（作为障碍矩形）
  * @param sourcePort 'success'|'failure'|'branch_N'|'exit_N'|'entry'
- * @param options { offsetIndex, totalParallel }  平行边偏移（拓扑多边）
  */
-export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success', options = {}) {
-    const { offsetIndex = 0, totalParallel = 1 } = options
-
-    const startPt = getPortPosition(sourceNode, sourcePort, options)
-    const endPt = getPortPosition(targetNode, 'entry', options)
+export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success') {
+    const startPt = getPortPosition(sourceNode, sourcePort)
+    const endPt = getPortPosition(targetNode, 'entry')
 
     if (Math.abs(endPt.x - startPt.x) < 3 && Math.abs(endPt.y - startPt.y) < 3) {
         return finalize([startPt, endPt], sourcePort)
     }
 
-    // 平行线偏移（需求 2）：按序列 [0, +step, -step, +2step, -2step, ...] 取第 offsetIndex 条，
-    // |偏移| ≤ PARALLEL_MAX_OFFSET（9px），超出停止扩展（后续线重叠）
-    const parallelShift = totalParallel > 1
-        ? buildParallelOffsets(totalParallel)[Math.min(offsetIndex, totalParallel - 1)]
-        : 0
-
-    // 基础安全间距（需求 1）：路由障碍恒外扩 1 格（20px），不因圆角/平行偏移放大；
+    // 基础安全间距：路由障碍恒外扩 1 格（20px），不因圆角放大；
     // 圆角渲染只影响视觉，不参与路由判断——路由层只保证原始正交拐点 ≥20px。
-    // 平行偏移允许借用安全间距（偏移后线边缘 ≥10px，由 PARALLEL_MAX_OFFSET 保证）。
     const srcDir = portOutwardDir(sourcePort)
     const exitPt = { x: startPt.x + srcDir * STUB_GRIDS * GRID_SIZE, y: startPt.y }
     const enterPt = { x: endPt.x - STUB_GRIDS * GRID_SIZE, y: endPt.y }
@@ -292,95 +254,13 @@ export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = '
     const midPoints = routeOrthogonal(exitPt, enterPt, obstacles, { grid: GRID_SIZE, margin: GRID_SIZE })
 
     if (!midPoints) {
-        // 无路可达 / 网格过大：回退旧策略折线，保证边永不消失
-        return legacyComputeEdgePath(startPt, endPt, sourcePort, offsetIndex, totalParallel)
+        // 无路可达 / 网格过大：回退简易折线，保证边永不消失
+        return legacyComputeEdgePath(startPt, endPt, sourcePort)
     }
 
-    let points = dedupePoints([startPt, ...midPoints, endPt])
-
-    if (parallelShift !== 0) {
-        points = dedupePoints(offsetRoutedPath(points, parallelShift))
-    }
+    const points = dedupePoints([startPt, ...midPoints, endPt])
 
     return finalize(points, sourcePort)
-}
-
-/**
- * 平行线分离（需求 2.4）：中间段整体偏移，方向由走廊主导方向决定——
- *   横走廊（水平段主导）→ 垂直方向（Y 轴）偏移；
- *   纵走廊（垂直段主导）→ 水平方向（X 轴）偏移。
- * 在 stub 列上加正交连接段，保证首尾仍从原端口引出/进入。
- */
-function offsetRoutedPath(points, shift) {
-    // points = [startPt, exitPt, ...route 内部点..., enterPt, endPt]
-    if (!shift || points.length < 4) return points
-    const startPt = points[0]
-    const exitPt = points[1]
-    const enterPt = points[points.length - 2]
-    const endPt = points[points.length - 1]
-    const interior = points.slice(2, points.length - 2)
-
-    // 走廊主导方向：统计 exitPt→enterPt 之间所有段（含连接段）的水平/垂直长度
-    let horizLen = 0
-    let vertLen = 0
-    let prev = exitPt
-    for (const p of [...interior, enterPt]) {
-        if (Math.abs(p.x - prev.x) > Math.abs(p.y - prev.y)) {
-            horizLen += Math.abs(p.x - prev.x)
-        } else {
-            vertLen += Math.abs(p.y - prev.y)
-        }
-        prev = p
-    }
-    const isHorizontal = horizLen >= vertLen
-
-    if (!interior.length) {
-        // 直线短路由（exit 与 enter 直接相连）：在 stub 列间加分离段
-        if (Math.abs(exitPt.x - enterPt.x) + Math.abs(exitPt.y - enterPt.y) > 0) {
-            if (isHorizontal) {
-                return [
-                    startPt,
-                    exitPt,
-                    { x: exitPt.x, y: exitPt.y + shift },
-                    { x: enterPt.x, y: enterPt.y + shift },
-                    enterPt,
-                    endPt
-                ]
-            }
-            return [
-                startPt,
-                exitPt,
-                { x: exitPt.x + shift, y: exitPt.y },
-                { x: enterPt.x + shift, y: enterPt.y },
-                enterPt,
-                endPt
-            ]
-        }
-        return points
-    }
-
-    if (isHorizontal) {
-        const shifted = interior.map(p => ({ x: p.x, y: p.y + shift }))
-        return [
-            startPt,
-            exitPt,
-            { x: exitPt.x, y: exitPt.y + shift },
-            ...shifted,
-            { x: enterPt.x, y: enterPt.y + shift },
-            enterPt,
-            endPt
-        ]
-    }
-    const shifted = interior.map(p => ({ x: p.x + shift, y: p.y }))
-    return [
-        startPt,
-        exitPt,
-        { x: exitPt.x + shift, y: exitPt.y },
-        ...shifted,
-        { x: enterPt.x + shift, y: enterPt.y },
-        enterPt,
-        endPt
-    ]
 }
 
 function finalize(points, sourcePort) {
@@ -394,11 +274,8 @@ function finalize(points, sourcePort) {
 // Legacy strategy path (fallback when A* fails)
 // ---------------------------------------------------------------------------
 
-function legacyComputeEdgePath(startPt, endPt, sourcePort, offsetIndex = 0, totalParallel = 1) {
-    const offset = DEFAULT_ROUTE_OFFSET + Math.max(0, totalParallel - 1) * 10
-    const parallelShift = totalParallel > 1
-        ? (offsetIndex - (totalParallel - 1) / 2) * PARALLEL_OFFSET
-        : 0
+function legacyComputeEdgePath(startPt, endPt, sourcePort) {
+    const offset = DEFAULT_ROUTE_OFFSET
 
     const strategy = selectStrategy(sourcePort, startPt, endPt)
     let points
@@ -414,11 +291,19 @@ function legacyComputeEdgePath(startPt, endPt, sourcePort, offsetIndex = 0, tota
         default:              points = buildFallback(startPt, endPt, offset)
     }
 
-    if (parallelShift !== 0 && points.length >= 3) {
-        points = applyParallelOffset(points, parallelShift)
-    }
+    // 统一沿网格：中间点吸附到 20px 网格（首尾保持端口实际坐标）
+    points = snapPointsToGrid(points)
 
     return finalize(points, sourcePort)
+}
+
+/** 折线中间点吸附网格（首尾保持端口实际坐标），用于回退路径保证线身沿网格 */
+function snapPointsToGrid(points) {
+    if (!points || points.length < 3) return points
+    return compressCollinear(dedupePoints(points.map((p, i) => {
+        if (i === 0 || i === points.length - 1) return p
+        return { x: Math.round(p.x / GRID_SIZE) * GRID_SIZE, y: Math.round(p.y / GRID_SIZE) * GRID_SIZE }
+    })))
 }
 
 function selectStrategy(sourcePort, srcPt, tgtPt) {
@@ -499,23 +384,6 @@ function buildFallback(src, tgt, _offset) {
     return [src, { x: src.x, y: midY }, { x: tgt.x, y: midY }, tgt]
 }
 
-function applyParallelOffset(points, shift) {
-    if (points.length < 3) return points
-    const result = [points[0]]
-    for (let i = 1; i < points.length - 1; i++) {
-        const prev = points[i - 1]
-        const curr = points[i]
-        const isHoriz = Math.abs(curr.x - prev.x) > Math.abs(curr.y - prev.y)
-        if (isHoriz) {
-            result.push({ x: curr.x, y: curr.y + shift })
-        } else {
-            result.push({ x: curr.x + shift, y: curr.y })
-        }
-    }
-    result.push(points[points.length - 1])
-    return result
-}
-
 // ---------------------------------------------------------------------------
 // Rounded polyline (used by edges and preview paths)
 // ---------------------------------------------------------------------------
@@ -573,17 +441,19 @@ export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
     let srcDir = 'right'
     if (sourcePort === 'entry') srcDir = 'up'
 
+    // 中间偏移点吸附网格（40 为网格倍数；比例偏移量取整到 20px 保证预览线沿网格）
+    const snapMid = (v) => Math.round(v / GRID_SIZE) * GRID_SIZE
     const offset = 40
     let points
 
     if (srcDir === 'down') {
-        const midY = start.y + Math.max(offset, absDy * 0.3)
+        const midY = snapMid(start.y + Math.max(offset, absDy * 0.3))
         points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
     } else if (srcDir === 'right') {
-        const midX = start.x + Math.max(offset, absDx * 0.3)
+        const midX = snapMid(start.x + Math.max(offset, absDx * 0.3))
         points = [start, { x: midX, y: start.y }, { x: midX, y: end.y }, end]
     } else {
-        const midY = start.y - Math.max(offset, absDy * 0.3)
+        const midY = snapMid(start.y - Math.max(offset, absDy * 0.3))
         points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
     }
 

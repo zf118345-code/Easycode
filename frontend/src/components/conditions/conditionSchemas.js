@@ -86,7 +86,7 @@ export const CONDITION_SCHEMAS = {
                 type: "str",  // ⚡ 修正：改为常规字符串输入框，方便打字
                 default: "",
                 label: "期望对比的文本内容",
-                placeholder: "请输入固定文本或变量如 {var_name}"
+                placeholder: "请输入固定文本或变量如 $var{name}"
             },
             image_source: {
                 type: "file",
@@ -139,10 +139,10 @@ export const CONDITION_SCHEMAS = {
         label: "变量数值/逻辑比较",
         params: {
             variable_name: {
-                type: "variable",  // ⚡ 保留强变量选择：比较变量必须选择已有变量名
+                type: "str",  // 统一普通输入框（$var{} 语法）
                 default: "",
                 label: "比较变量",
-                placeholder: "请选择变量名"
+                placeholder: "填写变量名，如 $var{coin_num}"
             },
             operator: {
                 type: "select",
@@ -162,7 +162,7 @@ export const CONDITION_SCHEMAS = {
                 type: "str",  // ⚡ 修正：改为常规输入框，既可填数字字符串也可引用变量
                 default: "",
                 label: "目标对比值",
-                placeholder: "请输入数值、常数或 {var_name}"
+                placeholder: "请输入数值、常数或 $var{变量名}"
             }
         }
     },
@@ -208,6 +208,108 @@ export const CONDITION_SCHEMAS = {
                     { label: "文件或目录不存在", value: "not_exists" }
                 ]
             }
+        }
+    },
+
+    // 6. 控件存在性（存在控件/不存在控件，捕获控件自动填充名称）
+    control_exists: {
+        label: "存在/不存在控件",
+        params: {
+            exist_mode: {
+                type: "select",
+                default: "exists",
+                label: "判定要求",
+                options: [
+                    { label: "存在控件", value: "exists" },
+                    { label: "不存在控件", value: "not_exists" }
+                ]
+            },
+            target: {
+                type: "capture_str",
+                default: "",
+                label: "控件名称",
+                placeholder: "点击「捕获控件」自动填入"
+            },
+            window_title: {
+                type: "str",
+                default: "",
+                label: "目标窗口标题",
+                placeholder: "留空则在所有窗口中查找"
+            },
+            index: {
+                type: "int",
+                default: 0,
+                min: 0,
+                label: "匹配序号"
+            },
+            timeout: {
+                type: "int",
+                default: 3000,
+                min: 100,
+                step: 100,
+                suffix: "ms",
+                label: "匹配超时时长"
+            }
+        }
+    }
+}
+
+// ===== 页面特征 schema（page_state 复合特征，条件列表编辑器使用） =====
+// 复用通用条件 schema，并追加页面特征专属字段：组合方式 / 结果取反
+
+const PAGE_FEATURE_COMMON = {
+    combine_mode: {
+        type: "select",
+        label: "与上一特征组合方式",
+        // 默认空 = 跟随全局「特征组合模式」；显式选择 and/or 才覆盖全局
+        default: "",
+        options: [
+            { label: "跟随全局 (默认)", value: "" },
+            { label: "且 (AND)", value: "and" },
+            { label: "或 (OR)", value: "or" }
+        ]
+    },
+    negate: {
+        type: "bool",
+        label: "结果取反（描述不存在该特征）",
+        default: false
+    }
+}
+
+export const PAGE_FEATURE_SCHEMAS = {
+    image_exists: {
+        label: "页面包含指定图片（图像特征）",
+        params: {
+            ...CONDITION_SCHEMAS.image_exists.params,
+            ...PAGE_FEATURE_COMMON
+        }
+    },
+    text_contains: {
+        label: "页面包含指定文本（文本特征）",
+        params: {
+            ...CONDITION_SCHEMAS.text_contains.params,
+            ...PAGE_FEATURE_COMMON
+        }
+    },
+    control_exists: {
+        label: "页面包含/不包含指定控件（控件特征）",
+        params: {
+            exist_mode: {
+                type: "select",
+                default: "exists",
+                label: "判定要求",
+                options: [
+                    { label: "存在控件", value: "exists" },
+                    { label: "不存在控件", value: "not_exists" }
+                ]
+            },
+            target: {
+                type: "capture_str",
+                default: "",
+                label: "控件名称",
+                placeholder: "点击「捕获控件」自动填入"
+            },
+            ...PAGE_FEATURE_COMMON
         }
     }
 }

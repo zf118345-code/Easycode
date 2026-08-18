@@ -123,3 +123,64 @@ describe('workflowEdgeModel（统一实体边）', () => {
         expect(findTaskByNodeId(next2, 'n4')).toBeNull()
     })
 })
+
+describe('workflowEdgeModel 拓扑出口边（exit_N）', () => {
+    it('applyEdge 拓扑出口边创建（无标签字段，线上文字已移除）', () => {
+        const edges = []
+        expect(applyEdge(edges, { source: 'p1', target: 'p2', source_port: 'exit_0', canvas: 'topology' })).toBe(true)
+        expect(edges[0].source_port).toBe('exit_0')
+        expect(edges[0].label).toBeUndefined()
+        expect(applyEdge(edges, { source: 'p1', target: 'p3', source_port: 'exit_2', canvas: 'topology' })).toBe(true)
+        expect(edges[1].source_port).toBe('exit_2')
+    })
+
+    it('applyEdge workflow 边不生成标签', () => {
+        const edges = []
+        applyEdge(edges, { source: 'n1', target: 'n2', source_port: 'succ', canvas: 'workflow' })
+        expect(edges[0].label).toBeUndefined()
+    })
+
+    it('removeEdge 断连中间出口后，同源出口边重编号补位（exit_1→exit_0）', () => {
+        const edges = []
+        applyEdge(edges, { source: 'p1', target: 'p2', source_port: 'exit_0', canvas: 'topology' })
+        applyEdge(edges, { source: 'p1', target: 'p3', source_port: 'exit_1', canvas: 'topology' })
+        applyEdge(edges, { source: 'p1', target: 'p4', source_port: 'exit_2', canvas: 'topology' })
+        const first = edges.find(e => e.source_port === 'exit_0')
+
+        expect(removeEdge(edges, { edgeId: first.edge_id })).toBe(true)
+        expect(edges).toHaveLength(2)
+        expect(edges.map(e => e.source_port)).toEqual(['exit_0', 'exit_1'])
+        // 重编号后 edge_id 同步更新
+        const shifted = edges.find(e => e.source_port === 'exit_0')
+        expect(shifted.target_node).toBe('p3')
+        expect(shifted.edge_id).toBe('e_p1_exit_0_p3')
+        const shifted2 = edges.find(e => e.source_port === 'exit_1')
+        expect(shifted2.target_node).toBe('p4')
+    })
+
+    it('disconnectPort 断开拓扑出口边后同样重编号', () => {
+        const edges = []
+        applyEdge(edges, { source: 'p1', target: 'p2', source_port: 'exit_0', canvas: 'topology' })
+        applyEdge(edges, { source: 'p1', target: 'p3', source_port: 'exit_1', canvas: 'topology' })
+        expect(disconnectPort(edges, 'p1', 'exit_0')).toBe(true)
+        expect(edges).toHaveLength(1)
+        expect(edges[0].source_port).toBe('exit_0')
+        expect(edges[0].target_node).toBe('p3')
+    })
+
+    it('断连非出口边不触发重编号', () => {
+        const edges = []
+        applyEdge(edges, { source: 'n1', target: 'n2', source_port: 'succ' })
+        applyEdge(edges, { source: 'n1', target: 'n3', source_port: 'fail' })
+        expect(removeEdge(edges, { sourceNodeId: 'n1', legacyPort: 'succ' })).toBe(true)
+        expect(edges).toHaveLength(1)
+        expect(edges[0].source_port).toBe('failure')
+    })
+
+    it('单条出口边删除后无需重编号', () => {
+        const edges = []
+        applyEdge(edges, { source: 'p1', target: 'p2', source_port: 'exit_0', canvas: 'topology' })
+        expect(removeEdge(edges, { sourceNodeId: 'p1', legacyPort: 'exit_0' })).toBe(true)
+        expect(edges).toHaveLength(0)
+    })
+})

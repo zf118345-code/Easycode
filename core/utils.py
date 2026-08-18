@@ -30,92 +30,104 @@ def load_json(path):
         return json.load(f)
 
 
-def match_template_cv(screen_img, template_img, gray_scale=False):
+def match_template_cv(screen_img, template_img, gray_scale=False, screen_is_bgr=False):
     """
-    通用 OpenCV 模板匹配函数
+    通用 OpenCV 模板匹配函数（多尺度金字塔 + 通道统一）
     返回: (max_val, max_loc_center)
+
+    ⚡ 通道统一：pyautogui 截图是 RGB（Pillow）、模板是 BGR（cv2.imread）——
+    默认把截图转 BGR 与模板对齐（screen_is_bgr=False）；
+    内存矩阵调用方（screen 已是 BGR）传 screen_is_bgr=True 跳过转换。
+    ⚡ 多尺度：缩放级别越多越慢，默认 3 级（1.0/0.75/0.5）覆盖常见 DPI 缩放。
     """
+    # 截图来自 Pillow（RGB）→ 转 BGR；模板保持 BGR（cv2.imread 约定，不再转）
     screen = np.array(screen_img)
     template = np.array(template_img)
+    if not screen_is_bgr and len(screen.shape) == 3 and screen.shape[2] == 3:
+        screen = cv2.cvtColor(screen, cv2.COLOR_RGB2BGR)
 
     if gray_scale:
         if len(screen.shape) == 3:
-            screen_gray = cv2.cvtColor(screen, cv2.COLOR_RGB2GRAY)
-        else:
-            screen_gray = screen
-
+            screen = cv2.cvtColor(screen, cv2.COLOR_BGR2GRAY)
         if len(template.shape) == 3:
-            template_gray = cv2.cvtColor(template, cv2.COLOR_RGB2GRAY)
-        else:
-            template_gray = template
+            template = cv2.cvtColor(template, cv2.COLOR_BGR2GRAY)
 
-        res_screen = screen_gray
-        res_template = template_gray
-    else:
-        res_screen = screen
-        res_template = template
+    return _match_multi_scale(screen, template)
 
-    # 检查尺寸
-    if res_template.shape[0] > res_screen.shape[0] or res_template.shape[1] > res_screen.shape[1]:
-        return -1.0, None
 
-    match_res = cv2.matchTemplate(res_screen, res_template, cv2.TM_CCOEFF_NORMED)
-    _, max_val, _, max_loc = cv2.minMaxLoc(match_res)
-
-    h, w = res_template.shape[:2]
-    center_pos = (max_loc[0] + w // 2, max_loc[1] + h // 2)
-
-    return max_val, center_pos
+def _match_multi_scale(screen, template, scales=(1.0, 0.75, 0.5)):
+    """多尺度金字塔匹配：模板缩放后在屏幕上匹配，取全局最高分。
+    ⚡ 解决 DPI 缩放（125%/150%）与模拟器窗口缩放下单尺度必然失配的问题。"""
+    best_val = -1.0
+    best_center = None
+    sh, sw = screen.shape[:2]
+    for scale in scales:
+        th = int(round(template.shape[0] * scale))
+        tw = int(round(template.shape[1] * scale))
+        if th < 2 or tw < 2 or th > sh or tw > sw:
+            continue
+        resized = cv2.resize(template, (tw, th), interpolation=cv2.INTER_AREA)
+        match_res = cv2.matchTemplate(screen, resized, cv2.TM_CCOEFF_NORMED)
+        _, max_val, _, max_loc = cv2.minMaxLoc(match_res)
+        if max_val > best_val:
+            best_val = max_val
+            best_center = (max_loc[0] + tw // 2, max_loc[1] + th // 2)
+    return best_val, best_center
 
 
 def resolve_template_string(text: Any, executor_ctx=None) -> Any:
     """
-    ⚡ 工业级模板变量替换引擎
-    支持三大命名空间:
-      - 用户全局变量: {newnum} 或 {$var.newnum}
-      - 节点上下文变量: {$ctx.ocr_text} / {$ctx.click_pos}
-      - 系统环境变量: {$env.current_time} / {$sys.project_path}
+    ⚡ 模板变量替换引擎（统一 $ 前缀语法）
+    推荐语法（所有输入框统一，不可省略 $ 前缀）:
+      - 用户全局变量:   $var{name}
+      - 节点上下文变量: $ctx{name}
+      - 系统环境变量:   $env{name}（兼容 $sys{name}）
+    旧语法兼容（历史数据）: {$var.name} / {$ctx.name} / {$env.name} / {$sys.name}
+    注意：裸 {name} 不再识别为变量（必须带 $ 前缀）。
     """
-    if not isinstance(text, str) or '{' not in text:
+    if not isinstance(text, str) or ('$' not in text and '{' not in text):
         return text
 
-    pattern = r'\{([^}]+)\}'
+    # 新语法 $var{name} / $ctx{name} / $env{name} / $sys{name}；
+    # 旧语法 {$var.name} / {$ctx.name} / {$env.name} / {$sys.name}
+    pattern = re.compile(
+        r'\$((?:var|ctx|env|sys))\{([^{}]*)\}'
+        r'|\{(\$?(?:var|ctx|env|sys))\.([^{}]+)\}'
+    )
 
     def replace_match(match):
-        expression = match.group(1).strip()
-
-        # 1. 系统与环境变量解析 {$env.xxx} 或 {$sys.xxx}
-        if expression.startswith('$env.') or expression.startswith('$sys.'):
-            env_key = expression.split('.', 1)[1]
-            if env_key in ('current_time', 'now'):
-                return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            elif env_key in ('time_short', 'time'):
-                return datetime.now().strftime('%H:%M:%S')
-            elif env_key in ('date', 'today'):
-                return datetime.now().strftime('%Y-%m-%d')
-            elif env_key == 'timestamp':
-                return str(int(datetime.now().timestamp() * 1000))
-            elif env_key == 'project_path':
-                return getattr(executor_ctx, 'project_dir', '') or ''
-            elif env_key == 'task_name':
-                return getattr(executor_ctx, 'current_task_name', '') or ''
-            elif env_key == 'node_name':
-                current_node = getattr(executor_ctx, 'current_node', None)
-                return getattr(current_node, 'node_name', '') if current_node else ''
-            return match.group(0)
-
-        # 2. 节点运行期上下文解析 {$ctx.xxx}
-        elif expression.startswith('$ctx.'):
-            ctx_key = expression.split('.', 1)[1]
-            if executor_ctx and hasattr(executor_ctx, 'variables') and ctx_key in executor_ctx.variables:
-                return str(executor_ctx.variables[ctx_key])
-            return match.group(0)
-
-        # 3. 用户全局变量解析 {xxx} 或 {$var.xxx}
+        if match.group(1):
+            namespace, key = match.group(1), match.group(2).strip()
         else:
-            var_key = expression.split('.', 1)[1] if expression.startswith('$var.') else expression
-            if executor_ctx and hasattr(executor_ctx, 'variables') and var_key in executor_ctx.variables:
-                return str(executor_ctx.variables[var_key])
-            return match.group(0)
+            namespace, key = match.group(3).lstrip('$'), match.group(4).strip()
+        namespace = namespace.lower()
 
-    return re.sub(pattern, replace_match, text)
+        if namespace in ('env', 'sys'):
+            return _resolve_env_var(key, executor_ctx, match.group(0))
+
+        # var / ctx：统一查运行变量
+        if executor_ctx and hasattr(executor_ctx, 'variables') and key in executor_ctx.variables:
+            return str(executor_ctx.variables[key])
+        return match.group(0)
+
+    return pattern.sub(replace_match, text)
+
+
+def _resolve_env_var(key: str, executor_ctx, raw: str) -> str:
+    """系统环境变量解析；未命中返回原样"""
+    if key in ('current_time', 'now'):
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    elif key in ('time_short', 'time'):
+        return datetime.now().strftime('%H:%M:%S')
+    elif key in ('date', 'today'):
+        return datetime.now().strftime('%Y-%m-%d')
+    elif key == 'timestamp':
+        return str(int(datetime.now().timestamp() * 1000))
+    elif key == 'project_path':
+        return getattr(executor_ctx, 'project_dir', '') or ''
+    elif key == 'task_name':
+        return getattr(executor_ctx, 'current_task_name', '') or ''
+    elif key == 'node_name':
+        current_node = getattr(executor_ctx, 'current_node', None)
+        return getattr(current_node, 'node_name', '') if current_node else ''
+    return raw

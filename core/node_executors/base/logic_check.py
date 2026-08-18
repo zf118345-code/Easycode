@@ -32,6 +32,9 @@ class LogicCheckNodeExecutor(BaseNodeExecutor):
             return f'窗口 [{cond_params.get("window_title", "")}] ({cond_params.get("state_check", "exists")})'
         elif cond_type == 'file_exists':
             return f'文件检查 [{cond_params.get("file_path", "")}]'
+        elif cond_type == 'control_exists':
+            mode_str = '不存在' if (cond_params.get('exist_mode') or cond_params.get('operator')) in ('not_exists', 'not_exist') else '存在'
+            return f'控件{mode_str} [{cond_params.get("target", "")}]'
         return f'条件 [{cond_type}]'
 
     def execute(self, node, context):

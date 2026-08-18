@@ -58,15 +58,15 @@ class BaseVariableType(ABC):
 
     @staticmethod
     def resolve_val(context: Any, val_str: Any, default: Any = None) -> Any:
-        """公共工具函数：解析字符串中的 {var_name} 占位符或直接变量引用"""
+        """公共工具函数：解析值 —— 统一走模板变量引擎（$var{} / $ctx{} / $env{} 前缀语法），
+        裸变量名不再识别；解析结果自动尝试转为数字"""
         if val_str is None:
             return default
         val_str_copy = str(val_str)
-        if hasattr(context, 'variables') and context.variables:
-            for k, v in context.variables.items():
-                val_str_copy = val_str_copy.replace(f'{{{k}}}', str(v))
-            if str(val_str) in context.variables:
-                return context.variables[str(val_str)]
+        if hasattr(context, 'variables'):
+            from core.utils import resolve_template_string
+
+            val_str_copy = resolve_template_string(val_str_copy, context)
 
         # 尝试转为数字
         try:

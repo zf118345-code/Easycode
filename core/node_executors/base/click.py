@@ -5,6 +5,7 @@ import pyautogui
 
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
+from core.services.background_input import background_click
 
 
 @NodeExecutorRegistry.register('click')
@@ -19,6 +20,11 @@ class ClickNodeExecutor(BaseNodeExecutor):
             x, y = pos.get('x', 0), pos.get('y', 0)
         else:
             x, y = 0, 0
+
+        # 坐标 (0,0) 视为未设置：避免误点屏幕左上角（旧默认值）导致点错/报错
+        if x == 0 and y == 0:
+            context.log('⚠️ 点击位置未设置（坐标为 0,0），已跳过点击，请先在表单中设置点击位置', 'warning')
+            return self.build_jump_result(False, params.get('on_success', {}))
 
         wx, wy = 0, 0
         if context.is_window_mode():
@@ -52,8 +58,18 @@ class ClickNodeExecutor(BaseNodeExecutor):
                 context.log('⚠️ Android 分辨率未获取，回退为 PC 物理点击', 'warning')
                 pyautogui.click(wx + x, wy + y)
         else:
-            context.log(f'🖱️ PC 物理鼠标点击: 屏幕绝对坐标({wx + x}, {wy + y})')
-            pyautogui.click(wx + x, wy + y)
+            hwnd = getattr(context, 'window_hwnd', None)
+            if hwnd:
+                # ⚡ 多开友好：向绑定窗口投递后台点击，不占用物理鼠标
+                result = background_click(hwnd, wx + x, wy + y)
+                success = result.get('ok', False)
+                context.log(
+                    f'🖱️ 后台点击窗口(#{hwnd}): 屏幕坐标({wx + x}, {wy + y})'
+                    + ('' if success else f' ❌ {result.get("message", "")}')
+                )
+            else:
+                context.log(f'🖱️ PC 物理鼠标点击: 屏幕绝对坐标({wx + x}, {wy + y})')
+                pyautogui.click(wx + x, wy + y)
 
         # ⭐ 支持通过 on_success 灵活控制跳转
         return self.build_jump_result(success, params.get('on_success', {}))

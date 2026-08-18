@@ -94,11 +94,14 @@
     import draggable from 'vuedraggable'
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
-    import { Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting, Reading, Operation } from '@element-plus/icons-vue'
+    import { Timer, Edit, Rank, More, ArrowDown, Grid } from '@element-plus/icons-vue'
     import { Trash2 } from 'lucide-vue-next'
+    import { buildNodeDefaultParams, NODE_DEFAULTS } from '@/utils/nodeDefaults'
+    import { getNodeConfig } from '@/utils/canvasShared'
+    import { NODE_ICON_MAP } from '@/utils/nodeIcons'
 
     export default {
-        components: { draggable, Timer, Edit, Rank, More, ArrowDown, Position, VideoPlay, Clock, Document, Grid, Folder, Search, Share, Setting, Reading, Operation, Trash2 },
+        components: { draggable, Timer, Edit, Rank, More, ArrowDown, Grid, Trash2 },
         setup() {
             const store = useMainStore()
             return { store }
@@ -125,35 +128,19 @@
             'store.batchMode'(val) { if (!val) this.store.clearSelection() }
         },
         methods: {
+            $nodeConfig(type) {
+                return getNodeConfig(type, this.store.paramsDefinitions)
+            },
             getNodeIcon(type) {
-                const map = {
-                    click: 'Position',
-                    wait: 'Clock',
-                    log: 'Document',
-                    set_window: 'Folder',
-                    image_recognition: 'Search',
-                    branch: 'Share',
-                    logic_check: 'Operation',
-                    ocr_recognition: 'Reading',
-                    variable_op: 'Setting',
-                    script_call: 'VideoPlay'
-                }
-                return map[type] || 'Document'
+                // ⚡ B1/B2：图标统一从 nodeRegistry（lucide）读取，与画布卡片一致
+                const config = this.$nodeConfig(type)
+                const iconName = (config && config.icon) || 'Square'
+                return NODE_ICON_MAP[iconName] || NODE_ICON_MAP.Square
             },
             getNodeColor(type) {
-                const map = {
-                    click: '#409EFF',
-                    wait: '#E6A23C',
-                    log: '#909399',
-                    set_window: '#67C23A',
-                    image_recognition: '#F56C6C',
-                    branch: '#9B59B6',
-                    logic_check: '#E67E22',
-                    ocr_recognition: '#3498DB',
-                    variable_op: '#1ABC9C',
-                    script_call: '#2ECC71'
-                }
-                return map[type] || '#909399'
+                // ⚡ B1/B2：颜色统一从 nodeRegistry 读取，与画布卡片一致
+                const config = this.$nodeConfig(type)
+                return (config && config.color) || '#909399'
             },
             startEditName(node) {
                 this.editingName = node.node_id
@@ -211,6 +198,10 @@
                     ElMessage.warning('请先选择一个任务')
                     return
                 }
+                if (this.store.isRunning || this.store.isPaused) {
+                    ElMessage.warning('已有任务正在执行/暂停，请先停止再运行')
+                    return
+                }
                 try {
                     ElMessage.info(`从节点 ${node.node_name} 开始执行...`)
                     const result = await this.store.runTask(taskId, node.node_id)
@@ -244,35 +235,16 @@
                     node_id: nodeId,
                     node_name: def.label || nodeType,
                     node_type: nodeType,
-                    params: {},
-                    delay_before: 0,
-                    loop_count: 1,
+                    // 初始参数从后端 schema default 填充（集中默认值，见 utils/nodeDefaults.js）
+                    params: buildNodeDefaultParams(nodeType, this.store.params),
+                    delay_before: NODE_DEFAULTS.delayBefore,
+                    loop_count: NODE_DEFAULTS.loopCount,
                     enabled: true,
                     position: null
                 }
-                const nodeDefaults = this.store.params[nodeType]?.params || {}
-                for (const [key, config] of Object.entries(nodeDefaults)) {
-                    if (config.type === 'list_int2' || config.type === 'list_int4') {
-                        newNode.params[key] = [0, 0, 0, 0].slice(0, config.type === 'list_int2' ? 2 : 4)
-                    } else if (config.type === 'list_dict') {
-                        newNode.params[key] = []
-                    } else if (config.type === 'dict') {
-                        const subDefaults = {}
-                        for (const [subKey, subConfig] of Object.entries(config.sub || {})) {
-                            if (subConfig.default !== undefined) {
-                                if (Array.isArray(subConfig.default)) {
-                                    subDefaults[subKey] = [...subConfig.default]
-                                } else {
-                                    subDefaults[subKey] = subConfig.default
-                                }
-                            }
-                        }
-                        if (Object.keys(subDefaults).length) {
-                            newNode.params[key] = subDefaults
-                        }
-                    } else if (config.default !== undefined) {
-                        newNode.params[key] = config.default
-                    }
+                // 页面状态节点：自动生成内部页面标识（表单隐藏，标题即页面名）
+                if (nodeType === 'page_state' && !newNode.params.page_id) {
+                    newNode.params.page_id = `page_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
                 }
                 this.store.nodes.push(newNode)
                 const taskData = this.store.currentTaskData

@@ -17,6 +17,9 @@ from .smart_jump import SmartJumpNodeExecutor
 from .variable_op import VariableOpNodeExecutor
 from .wait import WaitNodeExecutor
 
+# P3 新增：控件操作节点执行器（Win32 控件树）
+from .control import ControlNodeExecutor
+
 __all__ = [
     'ClickNodeExecutor',
     'WaitNodeExecutor',
@@ -29,5 +32,6 @@ __all__ = [
     'VariableOpNodeExecutor',
     'PageStateNodeExecutor',
     'SmartJumpNodeExecutor',
+    'ControlNodeExecutor',
     'BaseNodeExecutor',
 ]

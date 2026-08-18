@@ -168,6 +168,7 @@ def create_app():
     from api.routers.build_router import create_build_router
     from api.routers.execution_router import create_execution_router
     from api.routers.system_router import create_system_router
+    from api.routers.ui_control_router import create_ui_control_router
     from api.routers.vision_router import create_vision_router
     from api.routers.workspace_router import create_workspace_router
 
@@ -176,6 +177,7 @@ def create_app():
     app.include_router(create_execution_router(ExecutionService, DebugService))
     app.include_router(create_workspace_router(WorkspaceService))
     app.include_router(create_vision_router(VisionService))
+    app.include_router(create_ui_control_router())
     app.include_router(create_build_router(ExportService, CompilerService, PlayerService))
 
     # ====== 静态托管 ======

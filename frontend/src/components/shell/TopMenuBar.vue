@@ -25,6 +25,7 @@
                         <el-dropdown-item command="undo">撤销</el-dropdown-item>
                         <el-dropdown-item command="redo">重做</el-dropdown-item>
                         <el-dropdown-item command="batch" divided>批量操作</el-dropdown-item>
+                        <el-dropdown-item command="hotkey-settings" divided>快捷键设置…</el-dropdown-item>
                     </el-dropdown-menu>
                 </template>
             </el-dropdown>
@@ -45,6 +46,22 @@
                     <el-dropdown-menu>
                         <el-dropdown-item command="run_task">▶ 运行当前任务</el-dropdown-item>
                         <el-dropdown-item command="screenshot"><Camera :size="14" style="vertical-align: middle;" /> 截图工具</el-dropdown-item>
+                        <el-dropdown-item command="control-capture"><ScanSearch :size="14" style="vertical-align: middle;" /> 控件捕获模式</el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
+
+            <!-- ⚡ 打包 (P)：客户表单配置与脚本包导出（原在变量面板，移至此统一收口） -->
+            <el-dropdown trigger="click" @command="handleMenuCommand">
+                <span class="menu-label">打包 (P)</span>
+                <template #dropdown>
+                    <el-dropdown-menu>
+                        <el-dropdown-item command="open-schema-editor">
+                            <Settings :size="14" style="vertical-align: middle;" /> 配置客户表单
+                        </el-dropdown-item>
+                        <el-dropdown-item command="export-package">
+                            <Package :size="14" style="vertical-align: middle;" /> 导出脚本包
+                        </el-dropdown-item>
                     </el-dropdown-menu>
                 </template>
             </el-dropdown>
@@ -82,7 +99,7 @@ v-for="opt in canvasModeOptions"
                 <ChevronDown :size="10" class="dropdown-arrow" />
             </div>
 
-            <el-button type="success" size="small" class="run-quick-btn" @click="$emit('run')">
+            <el-button type="success" size="small" class="run-quick-btn" :disabled="runDisabled" @click="$emit('run')">
                 <Play :size="12" style="vertical-align: middle;" /> 运行
             </el-button>
         </div>
@@ -93,10 +110,14 @@ v-for="opt in canvasModeOptions"
     import { computed } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage } from 'element-plus'
-    import { Workflow, Share2, Zap, Camera, Monitor, ChevronDown, Play } from 'lucide-vue-next'
+    import { Workflow, Share2, Zap, Camera, Monitor, ChevronDown, Play, Settings, Package, ScanSearch } from 'lucide-vue-next'
 
     const store = useMainStore()
-    defineEmits(['run', 'openSettings'])
+    defineProps({
+        // 执行会话活跃（运行中/已暂停）时禁用「运行」，避免与继续执行冲突
+        runDisabled: { type: Boolean, default: false }
+    })
+    const emit = defineEmits(['run', 'openSettings', 'openSchemaEditor', 'openControlCapture', 'openHotkeySettings', 'openScreenshot'])
 
     // ⚡ 画布模式选项配置
     const canvasModeOptions = [
@@ -124,6 +145,21 @@ v-for="opt in canvasModeOptions"
         if (command === 'toggle_minimap') store.toggleMinimap()
         if (command === 'toggle_log') store.toggleLogPanel()
         if (command === 'about') ElMessage.info('Easycode Automation Studio v2.2')
+        // ⚡ 运行菜单：运行当前任务 / 截图工具
+        if (command === 'run_task') emit('run')
+        if (command === 'screenshot') emit('openScreenshot')
+        // ⚡ 打包菜单：配置客户表单 / 导出脚本包 → 打开表单配置与打包弹窗
+        if (command === 'open-schema-editor' || command === 'export-package') {
+            emit('openSchemaEditor')
+        }
+        // ⚡ 控件捕获工具
+        if (command === 'control-capture') {
+            emit('openControlCapture')
+        }
+        // ⚡ 快捷键设置（编辑菜单）
+        if (command === 'hotkey-settings') {
+            emit('openHotkeySettings')
+        }
     }
 </script>
 

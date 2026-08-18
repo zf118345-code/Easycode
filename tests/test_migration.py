@@ -136,9 +136,14 @@ class TestMigrationFull:
         assert topo_1['node_id'] == 'topo_1'
         assert topo_1['node_type'] == 'page_state'
         assert topo_1['params']['page_id'] == 'login_page'
-        assert topo_1['params']['features'] == LEGACY_BLUEPRINT['topology']['nodes'][0]['features']
+        # 特征已展平为新条件结构（condition_type + 平铺字段）
+        assert topo_1['params']['features'] == [
+            {'condition_type': 'image_exists', 'image_source': 'login_btn'}
+        ]
         assert topo_1['params']['feature_mode'] == 'and'
-        assert topo_1['params']['exits'] == LEGACY_BLUEPRINT['topology']['nodes'][0]['exits']
+        # 出口参数已退役（出口 = 画布连线），旧 exits 中不可解析的目标页被丢弃
+        assert 'exits' not in topo_1['params']
+        assert 'page_name' not in topo_1['params']
         assert topo_1['position'] == {'x': 100, 'y': 200}
         assert topo_1['label'] == ''
         assert topo_1['condition'] is None
@@ -148,14 +153,8 @@ class TestMigrationFull:
         assert topo_2['node_type'] == 'click'
         assert topo_2['params']['page_id'] == ''
 
-        assert len(topology['edges']) == 1
-        edge = topology['edges'][0]
-        assert edge['edge_id'] == 'te1'
-        assert edge['source_node'] == 'topo_1'
-        assert edge['target_node'] == 'topo_2'
-        assert edge['canvas'] == 'topology'
-        assert edge['action'] == ''
-        assert 'source' not in edge and 'target' not in edge
+        # 旧 success 边（page_state 源）在新模式下清理：出口由 exit_N 边表达
+        assert topology['edges'] == []
 
     def test_migrate_backs_up_legacy_project_json(self, tmp_path):
         """旧格式 project.json（含 tasks）在迁移时先备份再覆盖"""
@@ -351,5 +350,198 @@ class TestMigrationLoadProject:
         login_node = project.topology.get_node_by_page('login_page')
         assert login_node is not None
         assert login_node.node_id == 'topo_1'
-        assert login_node.params['features'][0]['feature_type'] == 'image_exists'
-        assert project.topology.edges[0]['source_node'] == 'topo_1'
+        assert login_node.params['features'][0]['condition_type'] == 'image_exists'
+        # 旧 success 边已清理（新模式：出口 = exit_N 边）
+        assert project.topology.edges == []
+
+
+class TestTopologyModernMigration:
+    """新版拓扑语义迁移：exits→边、旧 success/failure 边清理、features 展平、page_name→node_name"""
+
+    LEGACY_TOPO = {
+        'project_name': 'modern_topo',
+        'tasks': [],
+        'topology': {
+            'tasks': [
+                {
+                    'task_id': 'task_topology',
+                    'task_name': '拓扑地图',
+                    'nodes': [
+                        {
+                            'node_id': 'topo_a',
+                            'node_name': '页面状态_1',
+                            'node_type': 'page_state',
+                            'params': {
+                                'page_id': 'shop',
+                                'page_name': '商城页',
+                                'features': [
+                                    {'feature_type': 'image_exists', 'params': {'template': 'shop_btn', 'threshold': 0.8}},
+                                    {'feature_type': 'text_contains', 'params': {'text': '今日特惠'}, 'negate': True},
+                                ],
+                                'feature_mode': 'and',
+                                'exits': [
+                                    {'exit_action': '点击商城按钮', 'target_page_id': 'main'},
+                                    {'exit_action': '点击背包按钮', 'target_page_id': 'unknown_page'},
+                                ],
+                            },
+                        },
+                        {
+                            'node_id': 'topo_b',
+                            'node_name': '主城页',
+                            'node_type': 'page_state',
+                            'params': {'page_id': 'main', 'features': [], 'feature_mode': 'and'},
+                        },
+                    ],
+                    'edges': [
+                        {'edge_id': 'te_old_succ', 'source_node': 'topo_a', 'target_node': 'topo_b',
+                         'source_port': 'success', 'canvas': 'topology'},
+                        {'edge_id': 'te_old_fail', 'source_node': 'topo_a', 'target_node': 'topo_b',
+                         'source_port': 'failure', 'canvas': 'topology'},
+                    ],
+                }
+            ]
+        },
+    }
+
+    def _write_three_files(self, pdir):
+        (pdir / 'project.json').write_text(
+            json.dumps({'project_name': 'modern_topo', 'variables': {}, 'ui_state': {}}, ensure_ascii=False),
+            encoding='utf-8')
+        (pdir / 'workflow.json').write_text(
+            json.dumps({'tasks': [], 'edges': []}, ensure_ascii=False), encoding='utf-8')
+        (pdir / 'topology.json').write_text(
+            json.dumps(self.LEGACY_TOPO['topology'], ensure_ascii=False), encoding='utf-8')
+
+    def test_modern_topology_migration(self, tmp_path):
+        pdir = tmp_path / 'proj_modern'
+        pdir.mkdir()
+        self._write_three_files(pdir)
+
+        # 无旧蓝图文件 → ensure_migrated 返回 False，但现代化迁移仍执行
+        ensure_migrated(str(pdir))
+
+        topo = json.loads((pdir / 'topology.json').read_text(encoding='utf-8'))
+        task = topo['tasks'][0]
+        page_a = next(n for n in task['nodes'] if n['node_id'] == 'topo_a')
+
+        # 1) page_name → node_name（默认名才覆盖）
+        assert page_a['node_name'] == '商城页'
+        assert 'page_name' not in page_a['params']
+
+        # 2) features 展平为新条件结构
+        features = page_a['params']['features']
+        assert features == [
+            {'condition_type': 'image_exists', 'image_source': 'shop_btn', 'threshold': 0.8},
+            {'condition_type': 'text_contains', 'target_text': '今日特惠', 'negate': True},
+        ]
+
+        # 3) exits → 边：可解析目标建 exit_N 边（动作挂 label），不可解析目标丢弃
+        assert 'exits' not in page_a['params']
+        edges = {e['source_port']: e for e in topo['edges']}
+        assert 'exit_0' in edges
+        assert edges['exit_0']['target_node'] == 'topo_b'
+        assert edges['exit_0']['label'] == '点击商城按钮'
+        assert edges['exit_0']['canvas'] == 'topology'
+        assert 'exit_1' not in edges  # unknown_page 不可解析 → 丢弃
+
+        # 4) 旧 success/failure 边（page_state 源）清理
+        assert 'success' not in edges
+        assert 'failure' not in edges
+
+    def test_modern_migration_idempotent(self, tmp_path):
+        pdir = tmp_path / 'proj_modern2'
+        pdir.mkdir()
+        self._write_three_files(pdir)
+
+        ensure_migrated(str(pdir))
+        before = (pdir / 'topology.json').read_text(encoding='utf-8')
+        # 再次迁移无变化、不写盘
+        assert ensure_migrated(str(pdir)) is False
+        assert (pdir / 'topology.json').read_text(encoding='utf-8') == before
+
+    def test_branch_success_edges_cleaned(self, tmp_path):
+        """workflow 中 branch 节点的旧 success/failure 边被清理"""
+        pdir = tmp_path / 'proj_modern3'
+        pdir.mkdir()
+        self._write_three_files(pdir)
+        (pdir / 'workflow.json').write_text(
+            json.dumps({
+                'tasks': [
+                    {
+                        'task_id': 'task_main',
+                        'task_name': '主任务',
+                        'nodes': [
+                            {'node_id': 'n_branch', 'node_name': '分支', 'node_type': 'branch',
+                             'params': {'candidates': [{'condition': {}}, {'condition': {}}]}},
+                            {'node_id': 'n_click', 'node_name': '点击', 'node_type': 'click', 'params': {}},
+                        ],
+                    }
+                ],
+                'edges': [
+                    {'edge_id': 'b_succ', 'source_node': 'n_branch', 'target_node': 'n_click',
+                     'source_port': 'success', 'canvas': 'workflow'},
+                    {'edge_id': 'b_branch0', 'source_node': 'n_branch', 'target_node': 'n_click',
+                     'source_port': 'branch_0', 'canvas': 'workflow'},
+                    {'edge_id': 'c_succ', 'source_node': 'n_click', 'target_node': 'n_branch',
+                     'source_port': 'success', 'canvas': 'workflow'},
+                ],
+            }, ensure_ascii=False),
+            encoding='utf-8')
+
+        ensure_migrated(str(pdir))
+
+        workflow = json.loads((pdir / 'workflow.json').read_text(encoding='utf-8'))
+        ports = {e['source_port']: e for e in workflow['edges']}
+        # branch 的 success 边清理；branch_0 与 click 的 success 边保留
+        assert 'success' in ports
+        assert ports['success']['source_node'] == 'n_click'
+        assert ports['branch_0']['source_node'] == 'n_branch'
+        assert all(e['source_port'] != 'success' or e['source_node'] != 'n_branch' for e in workflow['edges'])
+
+    def test_feature_combine_mode_normalized(self, tmp_path):
+        """特征组合方式归一化：旧默认 'and' 清空（跟随全局），显式 'or' 保留"""
+        pdir = tmp_path / 'proj_combine'
+        pdir.mkdir()
+        (pdir / 'project.json').write_text(
+            json.dumps({'project_name': 'combine', 'variables': {}, 'ui_state': {}}, ensure_ascii=False),
+            encoding='utf-8')
+        (pdir / 'workflow.json').write_text(
+            json.dumps({'tasks': [], 'edges': []}, ensure_ascii=False), encoding='utf-8')
+        (pdir / 'topology.json').write_text(
+            json.dumps({
+                'tasks': [
+                    {
+                        'task_id': 'task_topology',
+                        'nodes': [
+                            {
+                                'node_id': 'topo_a',
+                                'node_name': '页面A',
+                                'node_type': 'page_state',
+                                'params': {
+                                    'page_id': 'page_a',
+                                    'feature_mode': 'or',
+                                    'features': [
+                                        {'condition_type': 'image_exists', 'image_source': 'img1', 'combine_mode': 'and'},
+                                        {'condition_type': 'image_exists', 'image_source': 'img2', 'combine_mode': 'or'},
+                                    ],
+                                },
+                            }
+                        ],
+                    }
+                ],
+                'edges': [],
+            }, ensure_ascii=False),
+            encoding='utf-8')
+
+        ensure_migrated(str(pdir))
+
+        topo = json.loads((pdir / 'topology.json').read_text(encoding='utf-8'))
+        features = topo['tasks'][0]['nodes'][0]['params']['features']
+        # 旧默认 'and' 被清空 → 跟随全局 or；显式 'or' 保留
+        assert 'combine_mode' not in features[0]
+        assert features[1]['combine_mode'] == 'or'
+
+        # 幂等：再次迁移无变化
+        before = (pdir / 'topology.json').read_text(encoding='utf-8')
+        assert ensure_migrated(str(pdir)) is False
+        assert (pdir / 'topology.json').read_text(encoding='utf-8') == before

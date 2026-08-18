@@ -301,11 +301,233 @@ def _migrate_workflow_edges_locked(project_path: str) -> bool:
     return False
 
 
+def _migrate_topology_modern_locked(project_path: str) -> bool:
+    """
+    新版拓扑语义迁移（幂等，按内容判定；无变化时不写盘）：
+      1. page_state：page_name → node_name（标题即页面名）
+      2. features 展平：{feature_type, params{...}} → {condition_type, ...平铺字段}（条件列表编辑器结构）
+      3. exits 参数 → 拓扑边（有可解析目标页才建边；动作/条件挂到边上）
+      4. 移除 page_state 的 page_name/exits 参数
+      5. 清理 branch / page_state 的旧 success/failure 边（新模式以候选口/出口口表达）
+    """
+    topo_path = os.path.join(project_path, TOPOLOGY_FILE)
+    wf_path = os.path.join(project_path, WORKFLOW_FILE)
+    if not os.path.isfile(topo_path):
+        return False
+
+    try:
+        with open(topo_path, encoding='utf-8-sig') as f:
+            raw_topo = json.load(f)
+    except Exception as e:
+        logger.error(f'拓扑现代化迁移：读取失败，跳过 [{topo_path}]: {e}')
+        return False
+    if not isinstance(raw_topo, dict):
+        return False
+
+    topo = convert_topology_dict(raw_topo)
+    tasks = topo.get('tasks', [])
+    edges = topo.get('edges', [])
+    if not isinstance(edges, list):
+        edges = []
+    changed = False
+
+    # 页面键映射：page_id / node_id → node_id（exits 的 target_page_id 解析用）
+    page_map: dict[str, str] = {}
+    for task in tasks:
+        for node in task.get('nodes', []):
+            if not isinstance(node, dict):
+                continue
+            pid = (node.get('params') or {}).get('page_id')
+            nid = node.get('node_id', '')
+            if pid:
+                page_map[pid] = nid
+            if nid:
+                page_map.setdefault(nid, nid)
+
+    existing_ports = {
+        (e.get('source_node'), e.get('source_port')) for e in edges if isinstance(e, dict)
+    }
+
+    for task in tasks:
+        nodes = task.get('nodes', [])
+        if not isinstance(nodes, list):
+            continue
+        for node in nodes:
+            if not isinstance(node, dict) or node.get('node_type') != 'page_state':
+                continue
+            params = node.get('params')
+            if not isinstance(params, dict):
+                continue
+
+            # 1) page_name → node_name
+            page_name = params.pop('page_name', None)
+            if page_name:
+                node_name = node.get('node_name') or ''
+                if not node_name or node_name.startswith('页面状态') or node_name == '未命名':
+                    node['node_name'] = page_name
+                    changed = True
+
+            # 2) features 展平
+            features = params.get('features')
+            if isinstance(features, list) and any(
+                isinstance(f, dict) and (f.get('feature_type') or f.get('type')) for f in features
+            ):
+                flat = [_flatten_feature(f) for f in features]
+                flat = [f for f in flat if f is not None]
+                params['features'] = flat
+                changed = True
+
+            # 2.1) 组合方式归一化：'and' 是旧 schema 的默认自动值（非用户显式选择），
+            #      清空后跟随全局 feature_mode —— 修复「全局 or 被逐条 and 覆盖」问题；
+            #      显式 'or'（覆盖全局）保留不动。
+            for f in params.get('features', []):
+                if isinstance(f, dict) and f.get('combine_mode') == 'and':
+                    f.pop('combine_mode', None)
+                    changed = True
+
+            # 3) exits → 拓扑边
+            exits = params.pop('exits', None)
+            if isinstance(exits, list) and exits:
+                for i, ex in enumerate(exits):
+                    if not isinstance(ex, dict):
+                        continue
+                    target_key = ex.get('target_page_id') or ex.get('target_node') or ''
+                    target_node = page_map.get(target_key)
+                    if not target_node or target_node == node.get('node_id'):
+                        continue
+                    port = f'exit_{i}'
+                    if (node.get('node_id'), port) in existing_ports:
+                        continue
+                    existing_ports.add((node.get('node_id'), port))
+                    edge = {
+                        'edge_id': f'e_{node.get("node_id")}_{port}_{target_node}',
+                        'source_node': node.get('node_id'),
+                        'target_node': target_node,
+                        'source_port': port,
+                        'canvas': 'topology',
+                    }
+                    action = ex.get('exit_action')
+                    if action:
+                        edge['label'] = action
+                    conds = ex.get('transition_conditions')
+                    if conds:
+                        edge['conditions'] = conds
+                    edges.append(edge)
+                    changed = True
+
+    # 4) 清理 branch / page_state 旧 success/failure 边（拓扑 + workflow 两文件）
+    for file_path, file_edges in ((topo_path, edges), (wf_path, None)):
+        data = None
+        if file_edges is None:
+            if not os.path.isfile(file_path):
+                continue
+            try:
+                with open(file_path, encoding='utf-8-sig') as f:
+                    data = json.load(f)
+            except Exception as e:
+                logger.error(f'边清理迁移：读取失败，跳过 [{file_path}]: {e}')
+                continue
+            if not isinstance(data, dict):
+                continue
+            file_edges = data.get('edges', [])
+            if not isinstance(file_edges, list):
+                continue
+            node_types = {}
+            for task in data.get('tasks', []):
+                for n in task.get('nodes', []):
+                    if isinstance(n, dict):
+                        node_types[n.get('node_id', '')] = n.get('node_type', '')
+        else:
+            node_types = {}
+            for task in tasks:
+                for n in task.get('nodes', []):
+                    if isinstance(n, dict):
+                        node_types[n.get('node_id', '')] = n.get('node_type', '')
+
+        keep = []
+        for e in file_edges:
+            if not isinstance(e, dict):
+                keep.append(e)
+                continue
+            src_type = node_types.get(e.get('source_node', ''), '')
+            port = e.get('source_port', '')
+            if src_type in ('branch', 'page_state') and port in ('success', 'failure'):
+                changed = True
+                continue
+            keep.append(e)
+        if len(keep) != len(file_edges):
+            if data is not None:
+                data['edges'] = keep
+                _write_json_graceful(file_path, data)
+            else:
+                edges = keep
+
+    if changed:
+        topo['edges'] = edges
+        _write_json_graceful(topo_path, topo)
+        logger.info(f'拓扑现代化迁移完成: {project_path}')
+        return True
+    return False
+
+
+def _flatten_feature(feature: dict) -> dict | None:
+    """旧特征结构 → 新条件结构（condition_type + 平铺字段），无法识别的特征返回 None"""
+    if not isinstance(feature, dict):
+        return None
+    ftype = feature.get('feature_type') or feature.get('type') or feature.get('condition_type') or ''
+    params = feature.get('params')
+    if not isinstance(params, dict):
+        params = {}
+    out: dict[str, Any] = {'condition_type': ftype}
+
+    image_source = params.get('image_source') or params.get('template') or feature.get('template')
+    if image_source:
+        out['image_source'] = image_source
+    target_text = params.get('target_text') or params.get('text') or feature.get('text')
+    if target_text:
+        out['target_text'] = target_text
+    threshold = params.get('threshold')
+    if threshold is None:
+        threshold = feature.get('threshold')
+    if threshold is not None:
+        out['threshold'] = threshold
+    region = params.get('region_value') or params.get('region') or feature.get('region')
+    if region:
+        rtype, rval = _parse_feature_region(region)
+        out['region_type'] = rtype
+        out['region_value'] = rval
+    for key in ('combine_mode', 'negate'):
+        if key in feature:
+            out[key] = feature[key]
+
+    if not out.get('image_source') and not out.get('target_text'):
+        return None
+    return out
+
+
+def _parse_feature_region(region: Any) -> tuple[str, list[int]]:
+    """旧特征 region（数组 / "x,y,w,h" 字符串）→ (region_type, region_value)；空值回退全屏"""
+    if isinstance(region, (list, tuple)) and len(region) >= 4:
+        try:
+            return 'custom', [int(x) for x in region[:4]]
+        except (ValueError, TypeError):
+            pass
+    if isinstance(region, str):
+        parts = [p.strip() for p in region.replace('，', ',').split(',')]
+        if len(parts) >= 4:
+            try:
+                return 'custom', [int(float(p)) for p in parts[:4]]
+            except ValueError:
+                pass
+    return 'fullwindow', [0, 0, 0, 0]
+
+
 def ensure_migrated(project_path: str) -> bool:
-    """按需迁移：旧蓝图拆分三文件 + workflow 边实体化；幂等，并发安全"""
+    """按需迁移：旧蓝图拆分三文件 + workflow 边实体化 + 拓扑现代化；幂等，并发安全"""
     if not project_path or not os.path.isdir(project_path):
         return False
     with _migration_lock:
         migrated = _migrate_locked(project_path)
         _migrate_workflow_edges_locked(project_path)
+        _migrate_topology_modern_locked(project_path)
         return migrated

@@ -13,7 +13,7 @@
                 </div>
             </div>
             <el-button type="primary" size="small" class="add-btn" @click="$emit('open-cond-dialog', { idx: -1, data: null, isBranch: false })">
-                <Plus :size="14" style="vertical-align: middle;" /> 添加判断条件
+                <Plus :size="14" style="vertical-align: middle;" /> {{ config.addLabel || '添加判断条件' }}
             </el-button>
         </template>
 
@@ -36,7 +36,7 @@
 </template>
 
 <script setup>
-    import { Plus, Shuffle, Image, Type, Hash, AppWindow, FolderOpen } from 'lucide-vue-next'
+    import { Plus, Shuffle, Image, Type, Hash, AppWindow, FolderOpen , ScanSearch } from 'lucide-vue-next'
 
     const props = defineProps({
         config: { type: Object, required: true },
@@ -59,7 +59,8 @@
             text_contains: Type,
             variable_check: Hash,
             window_state: AppWindow,
-            file_exists: FolderOpen
+            file_exists: FolderOpen,
+            control_exists: ScanSearch
         }
         return iconMap[condType] || Hash
     }
@@ -70,33 +71,35 @@
         const condType = item.condition_type || item.type || 'variable_check'
         const params = item.params || item
 
+        let base = ''
         if (condType === 'image_exists') {
             const opText = params.exist_mode === 'not_exists' ? '屏幕不存在' : '屏幕存在'
-            return `${opText} 图片: [${params.image_source || '未选图片'}]`
-        }
-
-        if (condType === 'text_contains') {
+            base = `${opText} 图片: [${params.image_source || '未选图片'}]`
+        } else if (condType === 'text_contains') {
             const modeMap = { contains: '包含', not_contains: '不包含', equals: '等于' }
             const modeText = modeMap[params.exist_mode] || '包含'
-            return `屏幕文本 (${modeText}): [${params.target_text || '未设文本'}]`
-        }
-
-        if (condType === 'variable_check') {
+            base = `屏幕文本 (${modeText}): [${params.target_text || '未设文本'}]`
+        } else if (condType === 'variable_check') {
             const varName = params.variable_name || params.var_name || '未选变量'
             const op = params.operator || 'eq'
             const val = params.compare_value ?? params.target_value ?? ''
-            return `变量判定: ${varName} (${op}) ${val}`
+            base = `变量判定: ${varName} (${op}) ${val}`
+        } else if (condType === 'window_state') {
+            base = `窗口状态: [${params.window_title || '默认窗口'}] (${params.state_check || '存在'})`
+        } else if (condType === 'file_exists') {
+            base = `文件检查: [${params.file_path || '未设路径'}]`
+        } else if (condType === 'control_exists') {
+            const modeText = (params.exist_mode || params.operator) === 'not_exists' ? '不存在控件' : '存在控件'
+            base = `${modeText}: [${params.target || '未捕获控件'}]`
+        } else {
+            base = `判定类型: ${condType}`
         }
 
-        if (condType === 'window_state') {
-            return `窗口状态: [${params.window_title || '默认窗口'}] (${params.state_check || '存在'})`
-        }
-
-        if (condType === 'file_exists') {
-            return `文件检查: [${params.file_path || '未设路径'}]`
-        }
-
-        return `判定类型: ${condType}`
+        // 页面特征专属：结果取反 / 组合方式附加提示
+        const extra = []
+        if (item.negate) extra.push('取反')
+        if (item.combine_mode) extra.push(item.combine_mode.toUpperCase())
+        return extra.length ? `${base} (${extra.join(' · ')})` : base
     }
 </script>
 

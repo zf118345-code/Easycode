@@ -1,47 +1,71 @@
 # core/params/base/variable_op.py
-from typing import Any
+# 变量操作节点参数定义：精简为「目标变量 + 最新赋值（自由表达式）」
+# var_type 只在左侧变量面板创建变量时使用，此处不再出现。
 
-from core.variables import VariableTypeRegistry
+EXPRESSION_HELP = [
+    '变量引用（严格前缀，可从左侧变量面板复制）：',
+    '  $var{变量名}    用户全局变量',
+    '  $ctx{字段名}    运行上下文变量',
+    '  $env{字段名}    系统环境变量',
+    '',
+    '算术：  +  -  *  /  //  %  **   （自由嵌套括号）',
+    '比较：  >  >=  <  <=  ==  !=   （结果 true/false）',
+    '逻辑：  and  /  or  /  not',
+    '三元：  $var{a} > 10 ? "大" : "小"',
+    '        或  "大" if $var{a} > 10 else "小"',
+    '',
+    "字符串：  'text' 或 \"text\"，+ 可直接拼接（$var{a}+'ing'）",
+    "下标：  $var{list}[0] / $var{list}[-1] / $var{dict}['key']",
+    '列表：  [1, 2, 3] / [\'a\', \'b\']',
+    '',
+    '常用函数：',
+    '  str()  int()  float()  bool()  len()  abs()',
+    '  min()  max()  round()  sum()',
+    '  upper()  lower()  strip()  replace()  split()  join()',
+    '  contains()  startswith()  endswith()',
+    '',
+    '示例：',
+    '  $var{b}+$var{c}-$var{d}*$var{e}/$var{f}',
+    "  $var{count}+'ing'",
+    "  upper($var{name}) + ' - 完成'",
+    '  sum($var{score_list}) / len($var{score_list})',
+]
 
 
-def build_variable_op_params() -> dict[str, Any]:
-    """根据注册的数据类型，动态生成变量操作节点的参数定义"""
-    all_types = VariableTypeRegistry.get_all_types()
-
-    type_options = []
-    dynamic_sub_params: dict[str, Any] = {}
-
-    for type_id, type_cls in all_types.items():
-        type_options.append({'value': type_id, 'label': type_cls.label})
-        schema = type_cls.get_schema()
-        dynamic_sub_params.update(schema)
-
-    params_def: dict[str, Any] = {
+def build_variable_op_params() -> dict:
+    return {
         'target_var': {
-            'type': 'variable',  # ⚡ 强变量选择：必须选择已有或侧边栏创建的变量名
+            'type': 'str',
             'label': '目标变量',
             'default': '',
-        },
-        'var_type': {'type': 'select', 'label': '变量类型', 'options': type_options, 'default': 'number'},
-        'op_action': {
-            'type': 'select',
-            'label': '操作方式',
-            'options': [
-                {'value': 'set', 'label': '赋值 (=)'},
-                {'value': 'add', 'label': '加 (+)'},
-                {'value': 'sub', 'label': '减 (-)'},
-                {'value': 'mul', 'label': '乘 (*)'},
-                {'value': 'div', 'label': '除 (/)'},
-                {'value': 'append', 'label': '文本/列表追加 (Append)'},
-                {'value': 'clear', 'label': '重置/清空 (Clear)'},  # ⚡ 扩展 Clear 重置清空能力
+            'placeholder': '目标变量名，如 $var{run_count}（可从左侧变量面板复制）',
+            'help': [
+                '目标变量 = 运算结果的写入目标。',
+                '格式（严格前缀）：',
+                '  $var{变量名}    用户全局变量',
+                '  $ctx{字段名}    运行上下文变量',
+                '  $env{字段名}    系统环境变量',
+                '示例：$var{run_count}',
             ],
-            'default': 'set',
+        },
+        'new_value': {
+            'type': 'textarea',
+            'label': '最新赋值（自由表达式）',
+            'default': '',
+            'rows': 4,
+            'placeholder': (
+                '支持任意运算，如：$var{总量} = $var{a}+$var{b}-$var{c}*$var{d}/$var{e}；'
+                "拼接：$var{name}+'ed'；函数：upper($var{name})"
+            ),
+            'help': EXPRESSION_HELP,
         },
     }
 
-    params_def.update(dynamic_sub_params)
 
-    return params_def
-
-
-PARAM_DEFINITIONS: dict[str, Any] = {'variable_op': {'label': '变量操作', 'modes': ['workflow'], 'params': build_variable_op_params()}}
+PARAM_DEFINITIONS: dict = {
+    'variable_op': {
+        'label': '变量操作',
+        'modes': ['workflow'],
+        'params': build_variable_op_params(),
+    }
+}

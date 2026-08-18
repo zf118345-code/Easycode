@@ -50,7 +50,7 @@
             <div v-else class="app-panel-empty">
                 <Activity size="28" />
                 <span v-if="store.isPaused">暂无变量</span>
-                <span v-else>暂停后显示变量快照（当前值 vs 上一节点值）</span>
+                <span v-else>未启动时展示项目全局变量；运行/暂停时展示实时变量快照</span>
             </div>
         </div>
     </div>
@@ -77,13 +77,16 @@
     }
 
     // 合并当前/上一快照为对比列表（以当前值为准，上一值缺省显示 —）
+    // 未运行时兜底展示项目全局变量（blueprint.variables），运行/暂停时展示实时变量快照
     const variableList = computed(() => {
+        const globalVars = store.blueprint?.variables || {}
         const current = store.executionCurrentVariables || {}
         const prev = store.executionPrevVariables || {}
-        const names = new Set([...Object.keys(current), ...Object.keys(prev)])
+        const names = new Set([...Object.keys(globalVars), ...Object.keys(current), ...Object.keys(prev)])
         const list = []
         for (const name of names) {
-            const cur = formatValue(current[name])
+            const hasRuntime = name in current
+            const cur = hasRuntime ? formatValue(current[name]) : formatValue(globalVars[name])
             const pre = name in prev ? formatValue(prev[name]) : '—'
             list.push({
                 name,

@@ -13,28 +13,18 @@
                 </div>
 
                 <div v-show="expandedSection === 'user'" class="accordion-content">
-                    <!-- 工具栏：新建变量、配置客户表单、导出脚本包与一键清理 -->
+                    <!-- 工具栏：新建变量 + 清理未引用（配置客户表单/导出脚本包已移至顶栏「打包」菜单） -->
                     <div class="vars-toolbar">
-                        <el-button size="small" type="primary" class="pure-btn" @click="openCreateDialog">
+                        <el-button size="small" type="primary" class="pure-btn btn-create" @click="openCreateDialog">
                             <Plus class="btn-icon" />
                             <span>新建变量</span>
-                        </el-button>
-
-                        <el-button size="small" type="success" plain class="pure-btn" @click="schemaDialogVisible = true">
-                            <Settings class="btn-icon" />
-                            <span>配置客户表单</span>
-                        </el-button>
-
-                        <el-button size="small" type="warning" plain class="pure-btn" @click="schemaDialogVisible = true">
-                            <Package class="btn-icon" />
-                            <span>导出脚本包</span>
                         </el-button>
 
                         <el-button
 size="small"
                                    type="danger"
                                    plain
-                                   class="pure-btn"
+                                   class="pure-btn btn-clear-unused"
                                    :disabled="unusedVarCount === 0"
                                    @click="handleClearUnused">
                             <Trash2 class="btn-icon" />
@@ -67,7 +57,7 @@ v-for="item in userVarList"
                                     </span>
 
                                     <div class="hover-action-group">
-                                        <button type="button" class="icon-action-btn" title="复制表达式 {$var.xxx}" @click.stop="copyVarExpr(item.key)">
+                                        <button type="button" class="icon-action-btn" title="复制表达式 $var{xxx}" @click.stop="copyVarExpr(item.key)">
                                             <Copy class="lucide-svg" />
                                         </button>
                                         <button type="button" class="icon-action-btn" title="编辑变量" @click.stop="openEditDialog(item)">
@@ -99,17 +89,23 @@ v-for="item in userVarList"
 
                 <div v-show="expandedSection === 'ctx'" class="accordion-content">
                     <div class="vars-list-scroll">
-                        <div class="ctx-form-box">
-                            <template v-for="(config, field) in setWindowSchema" :key="field">
-                                <div v-if="!['on_success', 'on_failure'].includes(field)" class="ctx-param-item">
-                                    <ParamRenderer
-:config="config"
-                                                   :value="getCtxFieldValue(field)"
-                                                   :label="config.label || field"
-                                                   :context="ctxContextObject"
-                                                   @update="val => handleCtxFieldUpdate(field, val)" />
-                                </div>
-                            </template>
+                        <!-- 运行上下文只读展示（左键右值 + 复制），工作面板设置统一走顶部「工作面板」入口 -->
+                        <div class="ctx-readonly-hint">由顶部「工作面板」设置，此处只读展示，可复制表达式</div>
+                        <div
+v-for="item in ctxVarList"
+                             :key="item.field"
+                             class="var-card-row readonly-row">
+                            <div class="var-name-col" :title="item.label">
+                                <span class="var-name-text env-key">{{ item.token }}</span>
+                            </div>
+                            <div class="var-val-col">
+                                <span class="static-val-text" :title="item.value">{{ item.value }}</span>
+                            </div>
+                            <div class="var-action-col">
+                                <button type="button" class="icon-action-btn static-copy" title="复制表达式 $ctx{xxx}" @click.stop="copyCtxExpr(item.field)">
+                                    <Copy class="lucide-svg" />
+                                </button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -137,7 +133,7 @@ v-for="env in systemEnvList"
                                 <span>{{ env.desc }}</span>
                             </div>
                             <div class="var-action-col">
-                                <button type="button" class="icon-action-btn static-copy" title="复制变量名" @click.stop="copyVarName(env.key)">
+                                <button type="button" class="icon-action-btn static-copy" title="复制表达式 $env{xxx}" @click.stop="copyVarName(env.key)">
                                     <Copy class="lucide-svg" />
                                 </button>
                             </div>
@@ -181,9 +177,6 @@ v-model="varDialogVisible"
                 </div>
             </template>
         </el-dialog>
-
-        <!-- ⚡ 客户动态表单配置器弹窗组件 -->
-        <FormSchemaEditor v-model="schemaDialogVisible" />
     </div>
 </template>
 
@@ -191,13 +184,11 @@ v-model="varDialogVisible"
     import { ref, computed, reactive } from 'vue'
     import { useMainStore } from '@/stores'
     import { ElMessage, ElMessageBox } from 'element-plus'
-    import { Plus, Trash2, Copy, ChevronDown, Pencil, Check, X, Settings, Package } from 'lucide-vue-next'
+    import { Plus, Trash2, Copy, ChevronDown, Pencil, Check, X } from 'lucide-vue-next'
     import ParamRenderer from '@/components/ParamRenderer.vue'
-    import FormSchemaEditor from '@/components/schema/FormSchemaEditor.vue'
 
     const store = useMainStore()
     const expandedSection = ref('user')
-    const schemaDialogVisible = ref(false)
 
     const toggleSection = (key) => {
         expandedSection.value = expandedSection.value === key ? null : key
@@ -331,18 +322,27 @@ v-model="varDialogVisible"
         varDialogVisible.value = false
     }
 
-    const setWindowSchema = computed(() => store.paramsDefinitions?.set_window?.params || {})
+    // ===== 运行上下文变量（$ctx）只读展示 =====
+    const ctxFieldList = [
+        { field: 'work_mode', label: '工作模式', token: '$ctx{work_mode}' },
+        { field: 'title', label: '窗口标题', token: '$ctx{title}' },
+        { field: 'is_emulator', label: '是否为模拟器', token: '$ctx{is_emulator}' },
+        { field: 'content_offset', label: '内容偏移', token: '$ctx{content_offset}' },
+        { field: 'target_content_size', label: '目标内容尺寸', token: '$ctx{target_content_size}' },
+    ]
 
-    const ctxContextObject = computed(() => {
-        const ctx = store.currentContext || {}
-        return {
-            work_mode: ctx.workMode || 'window',
-            title: ctx.windowTitle || '',
-            is_emulator: !!ctx.isEmulator,
-            content_offset: getCtxFieldValue('content_offset'),
-            target_content_size: getCtxFieldValue('target_content_size')
-        }
-    })
+    const formatCtxValue = (val) => {
+        if (val === undefined || val === null || val === '') return '—'
+        if (Array.isArray(val) || typeof val === 'object') return JSON.stringify(val)
+        if (typeof val === 'boolean') return val ? 'True' : 'False'
+        return String(val)
+    }
+
+    // 工作面板设置统一走顶部「工作面板」入口，此处仅展示当前上下文值并支持复制
+    const ctxVarList = computed(() => ctxFieldList.map(m => ({
+        ...m,
+        value: formatCtxValue(getCtxFieldValue(m.field))
+    })))
 
     const getCtxFieldValue = (field) => {
         const ctx = store.currentContext || {}
@@ -360,32 +360,6 @@ v-model="varDialogVisible"
         }
     }
 
-    const handleCtxFieldUpdate = (field, val) => {
-        if (!store.currentContext) store.currentContext = {}
-        switch (field) {
-            case 'work_mode': store.currentContext.workMode = val; break
-            case 'title': store.currentContext.windowTitle = val; break
-            case 'is_emulator': store.currentContext.isEmulator = val; break
-            case 'content_offset':
-                store.currentContext.contentOffset = val
-                if (Array.isArray(val) && val.length >= 4) {
-                    store.currentContext.offsetTop = val[0] || 0
-                    store.currentContext.offsetBottom = val[1] || 0
-                    store.currentContext.offsetLeft = val[2] || 0
-                    store.currentContext.offsetRight = val[3] || 0
-                }
-                break
-            case 'target_content_size':
-                store.currentContext.targetSize = val
-                if (Array.isArray(val) && val.length >= 2) {
-                    store.currentContext.targetWidth = val[0] || 0
-                    store.currentContext.targetHeight = val[1] || 0
-                }
-                break
-        }
-        store.saveBlueprintImmediately()
-    }
-
     const systemEnvList = [
         { key: '$env.current_time', desc: '系统当前时间戳 (ms)' },
         { key: '$env.project_path', desc: '当前自动化项目根目录路径' },
@@ -400,8 +374,9 @@ v-model="varDialogVisible"
         const scanObj = (obj) => {
             if (!obj) return
             if (typeof obj === 'string') {
+                // 新格式 $var{name} 与旧格式 {$var.name} / 裸 {name} 都计数
                 for (const varName of Object.keys(store.blueprint?.variables || {})) {
-                    if (obj === varName || obj.includes(`{${varName}}`) || obj.includes(`{$var.${varName}}`)) {
+                    if (obj === varName || obj.includes(`$var{${varName}}`) || obj.includes(`{${varName}}`) || obj.includes(`{$var.${varName}}`)) {
                         counts[varName] = (counts[varName] || 0) + 1
                     }
                 }
@@ -459,17 +434,30 @@ v-model="varDialogVisible"
         return userVarList.value.filter(v => v.refCount === 0).length
     })
 
-    const copyVarName = async (text) => {
+    const copyVarName = async (raw) => {
+        // 输入形如 $env.current_time / $sys.xxx → 复制为新格式 $env{current_time}
+        const m = String(raw || '').match(/^\$(env|sys)\.(.+)$/)
+        const text = m ? `$${m[1]}{${m[2]}}` : String(raw || '')
         try {
             await navigator.clipboard.writeText(text)
-            ElMessage.success(`已复制变量名: ${text}`)
+            ElMessage.success(`已复制变量表达式: ${text}`)
         } catch {
             ElMessage.error('复制失败')
         }
     }
 
     const copyVarExpr = async (varName) => {
-        const expr = `{$var.${varName}}`
+        const expr = `$var{${varName}}`
+        try {
+            await navigator.clipboard.writeText(expr)
+            ElMessage.success(`已复制变量表达式: ${expr}`)
+        } catch {
+            ElMessage.error('复制失败')
+        }
+    }
+
+    const copyCtxExpr = async (field) => {
+        const expr = `$ctx{${field}}`
         try {
             await navigator.clipboard.writeText(expr)
             ElMessage.success(`已复制变量表达式: ${expr}`)
@@ -602,6 +590,7 @@ v-model="varDialogVisible"
         flex-wrap: wrap;
     }
 
+    /* 通用按钮（对话框 footer 等）基础样式 */
     .pure-btn {
         display: flex;
         align-items: center;
@@ -609,6 +598,56 @@ v-model="varDialogVisible"
     }
 
     .btn-icon {
+        width: 13px;
+        height: 13px;
+    }
+
+    /* ⚡ 变量工具栏按钮统一风格：等高中距、图标对齐，主按钮实底突出、清理次按钮 */
+    .vars-toolbar .pure-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        min-height: 28px;
+        padding: 4px 12px;
+        border-radius: 6px;
+        font-weight: 500;
+        transition: all .15s;
+        margin: 0;
+    }
+
+    .vars-toolbar .btn-create {
+        background: var(--el-color-primary);
+        border-color: var(--el-color-primary);
+        color: #fff;
+        box-shadow: 0 2px 6px rgba(78, 209, 156, 0.25);
+    }
+
+        .vars-toolbar .btn-create:hover:not(:disabled) {
+            background: var(--el-color-primary-light-3);
+            border-color: var(--el-color-primary-light-3);
+            box-shadow: 0 3px 10px rgba(78, 209, 156, 0.35);
+        }
+
+    .vars-toolbar .btn-clear-unused {
+        background: rgba(245, 108, 108, 0.08);
+        border-color: rgba(245, 108, 108, 0.35);
+        color: #f56c6c;
+    }
+
+        .vars-toolbar .btn-clear-unused:hover:not(:disabled) {
+            background: #f56c6c;
+            border-color: #f56c6c;
+            color: #fff;
+        }
+
+    .vars-toolbar .pure-btn:disabled {
+        opacity: .4;
+        cursor: not-allowed;
+        box-shadow: none;
+    }
+
+    .vars-toolbar .btn-icon {
         width: 13px;
         height: 13px;
     }
@@ -799,15 +838,11 @@ v-model="varDialogVisible"
         line-height: 1.6;
     }
 
-    .ctx-form-box {
-        padding: 4px 0;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-    }
-
-    .ctx-param-item {
-        width: 100%;
+    .ctx-readonly-hint {
+        font-size: 11px;
+        color: var(--el-text-color-placeholder);
+        padding: 2px 4px 4px;
+        line-height: 1.5;
     }
 
     .dialog-form-body {

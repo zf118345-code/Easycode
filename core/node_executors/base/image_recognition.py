@@ -6,6 +6,7 @@ import time
 import cv2
 import numpy as np
 import pyautogui
+from core.services import screenshot_service
 
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
@@ -77,7 +78,7 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
         # 4. 循环匹配逻辑
         while time.time() - start_time < timeout:
             try:
-                screenshot = pyautogui.screenshot(region=region_rect)
+                screenshot = screenshot_service.capture(region=region_rect)
                 max_val, center_offset = match_template_cv(screenshot, template, gray_scale=gray_scale)
 
                 if max_val >= threshold and center_offset:
@@ -142,10 +143,25 @@ class ImageRecognitionNodeExecutor(BaseNodeExecutor):
                     context.log(f'❌ ADB 点击异常: {e}', 'error')
             else:
                 context.log('⚠️ 未获取到 Android 分辨率，回退为 PC 物理点击', 'warning')
-                pyautogui.click(abs_pos[0], abs_pos[1], clicks=1)
+                self._pc_click(abs_pos[0], abs_pos[1], context)
         else:
-            context.log(f'🖱️ 图像识别 [PC物理点击]: 屏幕绝对坐标({abs_pos[0]}, {abs_pos[1]})')
-            pyautogui.click(abs_pos[0], abs_pos[1], clicks=1)
+            self._pc_click(abs_pos[0], abs_pos[1], context)
+
+    @staticmethod
+    def _pc_click(screen_x, screen_y, context):
+        """PC 点击：绑定窗口时后台投递（多开友好），否则物理鼠标"""
+        hwnd = getattr(context, 'window_hwnd', None)
+        if hwnd:
+            from core.services.background_input import background_click
+
+            result = background_click(hwnd, screen_x, screen_y)
+            context.log(
+                f'🖱️ 图像识别 [后台点击窗口(#{hwnd})]: 屏幕坐标({screen_x}, {screen_y})'
+                + ('' if result.get('ok') else f' ❌ {result.get("message", "")}')
+            )
+        else:
+            context.log(f'🖱️ 图像识别 [PC物理点击]: 屏幕绝对坐标({screen_x}, {screen_y})')
+            pyautogui.click(screen_x, screen_y, clicks=1)
 
     def _save_debug_screenshot(self, screen, template_name, context):
         timestamp = int(time.time() * 1000)

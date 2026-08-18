@@ -17,9 +17,18 @@ describe('nodeRegistry 统一注册表', () => {
 
         const topologyTypes = getNodeTypesForMode('topology')
         expect(topologyTypes.page_state).toBeTruthy()
-        expect(topologyTypes.smart_jump).toBeTruthy()
+        // smart_jump 是主流程专属节点，拓扑画布不再出现
+        expect(topologyTypes.smart_jump).toBeUndefined()
         expect(topologyTypes.click).toBeTruthy()
         expect(topologyTypes.branch).toBeUndefined()
+    })
+
+    it('控件节点：workflow 画布可用、拓扑不可用，外观/内容规则完整', () => {
+        expect(getNodeTypesForMode('workflow').control).toBe('控件操作')
+        expect(getNodeTypesForMode('topology').control).toBeUndefined()
+        expect(getNodeConfig('control').icon).toBe('ScanSearch')
+        expect(getNodeConfig('control').color).toBe('#00bcd4')
+        expect(getNodeContentSpec('control')).toBeNull()
     })
 
     it('getNodeConfig 返回外观配置，未知类型回退默认', () => {
@@ -79,15 +88,15 @@ describe('nodeRegistry 统一注册表', () => {
         expect(estimateNodeContentHeight(empty)).toBe(spec.rowHeight + spec.rowPadding)
     })
 
-    it('estimateNodeContentHeight：page-info 有内容才计行，无内容为 0（数据内嵌 params）', () => {
+    it('estimateNodeContentHeight：page-info 只按出口行计高（dynamicCount 由画布边推导）', () => {
         const spec = NODE_REGISTRY.page_state.content
-        const full = { node_type: 'page_state', params: { page_id: 'p1', features: [{}], exits: [{}] } }
-        expect(estimateNodeContentHeight(full)).toBe(3 * spec.lineHeight + spec.rowPadding)
+        // 2 个出口行（含占位）：12 + 2*24 + 1*4 = 64
+        const withExits = { node_type: 'page_state', params: {} }
+        expect(estimateNodeContentHeight(withExits, 2)).toBe(
+            spec.rowPadding + 2 * spec.exitRowHeight + spec.exitRowGap)
 
-        const onlyPage = { node_type: 'page_state', params: { page_id: 'p1', features: [], exits: [] } }
-        expect(estimateNodeContentHeight(onlyPage)).toBe(1 * spec.lineHeight + spec.rowPadding)
-
-        const bare = { node_type: 'page_state', params: { features: [], exits: [] } }
+        // 无出口 → 0（特征详情在属性面板，不占卡片高度）
+        const bare = { node_type: 'page_state', params: { features: [{}] } }
         expect(estimateNodeContentHeight(bare)).toBe(0)
     })
 
@@ -100,6 +109,13 @@ describe('nodeRegistry 统一注册表', () => {
             if (cfg.content) {
                 expect(['image', 'ocr', 'branch-candidates', 'page-info']).toContain(cfg.content.kind)
             }
+        }
+    })
+
+    it('B2：每个节点的 icon 名都映射到 lucide 组件（节点列表/画布统一取图，新增类型不漏映射）', async () => {
+        const { NODE_ICON_MAP } = await import('@/utils/nodeIcons')
+        for (const [type, cfg] of Object.entries(NODE_REGISTRY)) {
+            expect(NODE_ICON_MAP[cfg.icon], `icon 未映射: ${type} -> ${cfg.icon}`).toBeTruthy()
         }
     })
 })

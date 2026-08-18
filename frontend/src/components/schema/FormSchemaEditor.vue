@@ -6,8 +6,10 @@ v-model="dialogVisible"
                append-to-body
                destroy-on-close
                :close-on-click-modal="false">
-        <template #title>
-            <Wrench :size="16" style="vertical-align: middle;" /> 配置暴露给客户的动态表单面板 (Schema Editor)
+        <template #header>
+            <span class="el-dialog__title">
+                <Wrench :size="16" style="vertical-align: middle;" /> 配置暴露给客户的动态表单面板 (Schema Editor)
+            </span>
         </template>
         <div class="schema-editor-body">
             <!-- 顶栏标题与配置操作 -->

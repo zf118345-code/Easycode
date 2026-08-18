@@ -22,8 +22,9 @@ export const NODE_REGISTRY = {
     variable_op:       { label: '变量操作',       icon: 'Variable',          color: '#17a2b8', modes: ['workflow'],            content: null },
     script_call:       { label: '调用脚本',       icon: 'Code',              color: '#6f42c1', modes: ['workflow'],            content: null },
     set_window:        { label: '窗口设置',       icon: 'AppWindow',         color: '#20c997', modes: ['workflow'],            content: null },
-    page_state:        { label: '页面状态',       icon: 'MapPin',            color: '#4ed19c', modes: ['topology'],            content: { kind: 'page-info', lineHeight: 20, rowPadding: 12 } },
-    smart_jump:        { label: '智能跳转',       icon: 'Navigation',        color: '#ff6b6b', modes: ['workflow', 'topology'], content: null }
+    control:           { label: '控件操作',       icon: 'ScanSearch',        color: '#00bcd4', modes: ['workflow'],            content: null },
+    page_state:        { label: '页面状态',       icon: 'MapPin',            color: '#4ed19c', modes: ['topology'],            content: { kind: 'page-info', lineHeight: 20, rowPadding: 12, exitRowHeight: 24, exitRowGap: 4 } },
+    smart_jump:        { label: '智能跳转',       icon: 'Navigation',        color: '#ff6b6b', modes: ['workflow'],            content: null }
 }
 
 export const DEFAULT_NODE_CONFIG = {
@@ -76,8 +77,9 @@ export function getNodeContentSpec(nodeType) {
     return cfg.content
 }
 
-/** 内容区实际占用的信息行数/行数（与 CanvasNodeCard 渲染规则一一对应） */
-export function estimateNodeContentHeight(node) {
+/** 内容区实际占用的信息行数/行数（与 CanvasNodeCard 渲染规则一一对应）
+ *  @param {number} [dynamicCount] 动态端口数量（page_state 出口行数 = bound + pending，由画布边推导） */
+export function estimateNodeContentHeight(node, dynamicCount = 0) {
     const nodeType = node?.type || node?.node_type
     const spec = getNodeContentSpec(nodeType)
     if (!spec) return 0
@@ -91,12 +93,12 @@ export function estimateNodeContentHeight(node) {
         return rows * spec.rowHeight + Math.max(0, rows - 1) * spec.rowGap + spec.rowPadding
     }
     if (spec.kind === 'page-info') {
-        const params = node?.params || {}
-        let lines = 0
-        if (params.page_id) lines += 1
-        if (params.features?.length) lines += 1
-        if (params.exits?.length) lines += 1
-        return lines > 0 ? lines * spec.lineHeight + spec.rowPadding : 0
+        // 页面节点卡片只展示出口行（含虚线占位）；特征详情在属性面板查看
+        const rows = Math.max(dynamicCount || 0, 0)
+        if (rows > 0) {
+            return spec.rowPadding + rows * spec.exitRowHeight + Math.max(0, rows - 1) * spec.exitRowGap
+        }
+        return 0
     }
     return 0
 }

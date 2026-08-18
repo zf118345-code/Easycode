@@ -16,6 +16,10 @@ opencv-python = ">=4.8.0"
 numpy = ">=1.24.0"
 Pillow = ">=10.0.0"
 pywin32 = { version = ">=306", markers = "sys_platform == 'win32'" }
+uiautomation = ">=2.0.20"
+dxcam = ">=0.0.5"
+rapidocr-onnxruntime = ">=1.3.0"
+ddddocr = ">=1.4.7"
 cryptography = ">=41.0.0"
 
 [tool.poetry.group.dev.dependencies]

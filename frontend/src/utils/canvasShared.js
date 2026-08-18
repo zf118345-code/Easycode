@@ -21,10 +21,17 @@ export const EDGE_FLOW_DURATION = '0.8s'
 
 export const PORT_GRID_TOP = 1        // entry / success 距顶格数
 export const PORT_GRID_BOTTOM = 1     // failure 距底格数
-export const PORT_GRID_STEP = 2       // 动态出口间距格数
+export const PORT_GRID_STEP = 2       // 动态出口间距格数（旧网格布局保留，行对齐后仅作回退）
 export const PORT_DIAMETER = 14       // 端口直径 (px)
 export const NODE_HEADER_H = 32       // 头部高度 (px)
 export const NODE_FOOTER_H = 24       // Footer 高度 (px)
+
+// ========== 行对齐端口几何（与 nodeRegistry content 规则 / CanvasNodeCard CSS 保持联动） ==========
+export const BODY_PAD_TOP = 6         // 内容区顶部内边距 (px)
+export const COND_ROW_H = 24          // 候选行 / 出口行行高 (px)
+export const COND_ROW_GAP = 4         // 行间距 (px)
+export const COND_ROW_PITCH = COND_ROW_H + COND_ROW_GAP  // 行距 (28px)
+export const INFO_LINE_H = 20         // 页面特征摘要信息行高 (px)
 
 // ========== 节点类型配置（统一注册表，两模式共用，见 config/nodeRegistry.js） ==========
 
@@ -51,12 +58,22 @@ export function getNodeDynamicPorts(node) {
 }
 
 /**
+ * 行对齐端口：端口中心 = 对应行的垂直中心（头部 + 内容区起始 + 行距）
+ *   - branch_N   : 第 N 个候选行中心
+ *   - exit_N     : 第 N 个出口行中心（page_state 有特征摘要行时整体下移一行）
+ */
+export function getRowAlignedPortTop(node, index) {
+    // 出口行从内容区起始处排布（页面节点卡片仅展示出口行，无特征摘要行）
+    const base = NODE_HEADER_H + BODY_PAD_TOP
+    return base + index * COND_ROW_PITCH + COND_ROW_H / 2
+}
+
+/**
  * 端口中心距节点顶部的像素偏移（网格坐标）
  *   - entry   : 距顶 1 格
  *   - success : 距顶 1 格
  *   - failure : 距底 1 格（随节点最新高度 h 联动）
- *   - branch_N / exit_N：success 下方每隔 2 格一个（第 k 个 = (1 + 2(k+1)) 格），
- *     向上不超过 failure（越界时向底部 clamp，保证端口留在卡片边缘）
+ *   - branch_N / exit_N：行对齐（与候选行/出口行垂直中心重合），越界时 clamp 到 failure 之上
  */
 export function getNodePortTop(node, portType) {
     const h = node?.h || node?.size?.h || NODE_MIN_HEIGHT
@@ -64,14 +81,14 @@ export function getNodePortTop(node, portType) {
     if (portType === 'entry') return PORT_GRID_TOP * GRID_SIZE
     if (portType === 'success' || portType === 'succ') return PORT_GRID_TOP * GRID_SIZE
     if (portType === 'failure' || portType === 'fail') return h - PORT_GRID_BOTTOM * GRID_SIZE
-    if (portType === 'exit' || portType === 'exit_0') {
-        return (PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE
-    }
+
     const m = typeof portType === 'string' ? portType.match(/^(?:branch|exit)_(\d+)$/) : null
     if (m) {
         const idx = parseInt(m[1], 10) || 0
-        const rawTop = (PORT_GRID_TOP + PORT_GRID_STEP * (idx + 1)) * GRID_SIZE
-        return Math.min(rawTop, h - PORT_GRID_BOTTOM * GRID_SIZE)
+        return Math.min(getRowAlignedPortTop(node, idx), h - PORT_GRID_BOTTOM * GRID_SIZE - 4)
+    }
+    if (portType === 'exit' || portType === 'exit_0') {
+        return getRowAlignedPortTop(node, 0)
     }
     // 未知端口类型：右侧中部兜底
     return h / 2
@@ -187,6 +204,64 @@ export function resolveCollisionsAndPushOthers(nodes, draggedNode, maxIterations
     return nodes.filter(n => pushed.has(n.node_id))
 }
 
+// ========== 组包围盒 / 创建避让（新建节点与新建组自动推开，不再重叠） ==========
+
+export const GROUP_PADDING_GRIDS = 3      // 组内边距（格）
+export const GROUP_TITLE_H = 24           // 组标题高度 (px)
+export const GROUP_MIN_W = 220
+export const GROUP_MIN_H = 140
+
+/** 组包围盒（与 CanvasView.dynamicGroups 的推导规则一致：成员包围盒 + 内边距 + 标题） */
+export function computeGroupBox(nodes, paddingGrids = GROUP_PADDING_GRIDS) {
+    const list = Array.isArray(nodes) ? nodes : []
+    const padding = paddingGrids * GRID_SIZE
+    if (!list.length) return { x: 60, y: 60, w: GROUP_MIN_W, h: GROUP_MIN_H }
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+    for (const n of list) {
+        const x = n.position?.x ?? 0
+        const y = n.position?.y ?? 0
+        const w = n.size?.w ?? NODE_WIDTH
+        const h = n.size?.h ?? NODE_MIN_HEIGHT
+        if (x < minX) minX = x
+        if (y < minY) minY = y
+        if (x + w > maxX) maxX = x + w
+        if (y + h > maxY) maxY = y + h
+    }
+    const w = Math.max(maxX - minX + padding * 2, GROUP_MIN_W)
+    const h = Math.max(maxY - minY + padding * 2 + GROUP_TITLE_H, GROUP_MIN_H)
+    return { x: minX - padding, y: minY - padding, w, h }
+}
+
+/**
+ * 新建节点避让：从给定位置开始，若与现有矩形集合碰撞则沿右下方向逐格外移，
+ * 返回第一个无碰撞的网格对齐坐标（不移动任何现有对象——新节点被挤开，旧布局不动）。
+ * @param {Array<{position:{x,y}, size?:{w,h}}>} others 现有节点（矩形）
+ * @param {{x:number,y:number}} pos 期望位置
+ * @param {{w:number,h:number}} size 新节点尺寸
+ */
+export function findFreePosition(others, pos, size = { w: NODE_WIDTH, h: NODE_MIN_HEIGHT }) {
+    const MIN_GAP = GRID_SIZE * 2
+    let x = pos?.x ?? 0
+    let y = pos?.y ?? 0
+    const step = GRID_SIZE
+    let attempt = 0
+    while (attempt < 200) {
+        const candidate = { position: { x, y }, size }
+        const collides = (others || []).some(o => isColliding(candidate, o))
+        if (!collides) {
+            return { x: snapToGrid(x), y: snapToGrid(y) }
+        }
+        // 沿右下方向逐格外移（简单稳定，不惊动旧布局）
+        x += step
+        if (x > pos.x + size.w + step * 4) {
+            x = pos.x
+            y += step
+        }
+        attempt += 1
+    }
+    return { x: snapToGrid(x), y: snapToGrid(y) }
+}
+
 // ========== 共享边 CSS ==========
 
 export const SHARED_EDGE_CSS = `
@@ -226,6 +301,15 @@ export const SHARED_EDGE_CSS = `
     stroke-width: 3.5;
     stroke: #ffffff !important;
     filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+}
+
+/* 悬停联动：候选行/出口行悬停时，对应端口的所有出边高亮 */
+.edge-path.is-port-hovered {
+    stroke-width: 3.5;
+    filter: drop-shadow(0 0 8px rgba(78, 209, 156, 0.7));
+}
+.edge-path.is-port-hovered.is-failure {
+    filter: drop-shadow(0 0 8px rgba(245, 108, 108, 0.7));
 }
 
 /* Edge hit area for easier clicking */
@@ -282,20 +366,6 @@ export const SHARED_EDGE_CSS = `
 }
 .preview-drawing.is-failure .edge-path.preview-path {
     stroke: #f56c6c;
-}
-
-/* Edge label */
-.edge-label {
-    fill: #c4c9d4;
-    font-size: 11px;
-    pointer-events: none;
-    paint-order: stroke;
-    stroke: rgba(20, 22, 34, 0.92);
-    stroke-width: 3px;
-    stroke-linejoin: round;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    font-weight: 500;
-    user-select: none;
 }
 
 /* Context / spawn menu */
@@ -498,17 +568,6 @@ export const SHARED_NODE_CSS = `
     position: relative;
     flex-shrink: 0;
 }
-/* 左侧 3px 类型颜色条 */
-.node-header::before {
-    content: '';
-    position: absolute;
-    left: 0;
-    top: 7px;
-    bottom: 7px;
-    width: 3px;
-    border-radius: 2px;
-    background: var(--node-accent);
-}
 .node-header-left {
     display: flex;
     align-items: center;
@@ -649,6 +708,62 @@ export const SHARED_NODE_CSS = `
     --port-color: var(--port-success, #4ed19c);
     --port-glow: rgba(78, 209, 156, 0.8);
     border-color: var(--port-success-border, #2a8565);
+}
+
+/* Pending 虚线占位口（page_state 尾部“新出口”槽位）：虚线空心 + 呼吸脉冲邀请连线 */
+.node-handle.is-pending {
+    background: transparent;
+    border-style: dashed;
+    border-color: var(--port-success-border, #2a8565);
+    opacity: 0.8;
+    animation: pending-pulse 1.6s ease-in-out infinite;
+}
+.node-handle.is-pending:hover {
+    opacity: 1;
+}
+@keyframes pending-pulse {
+    0%, 100% { box-shadow: 0 0 0 rgba(78, 209, 156, 0); transform: translateY(-50%) scale(1); }
+    50%      { box-shadow: 0 0 12px rgba(78, 209, 156, 0.7); transform: translateY(-50%) scale(1.12); }
+}
+
+/* 行 ↔ 端口悬停联动：悬停任一侧，另一侧同步高亮 */
+.branch-candidate-item.is-port-hovered,
+.page-exit-item.is-port-hovered {
+    background: rgba(78, 209, 156, 0.16) !important;
+    border-color: rgba(78, 209, 156, 0.55) !important;
+}
+.page-exit-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    padding: 0 10px;
+    font-size: 11px;
+    height: 24px;
+    box-sizing: border-box;
+    flex-shrink: 0;
+    overflow: hidden;
+    transition: background 0.12s, border-color 0.12s;
+}
+.page-exit-item:hover {
+    background: rgba(78, 209, 156, 0.08);
+    border-color: rgba(78, 209, 156, 0.3);
+}
+.page-exit-item.is-pending-row {
+    border-style: dashed;
+    opacity: 0.55;
+    font-style: italic;
+}
+.page-exit-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: #c4c9d4;
+    flex: 1;
+    min-width: 0;
 }
 
 /* ---------- Breakpoint / Debug ---------- */
@@ -841,13 +956,15 @@ export const SHARED_NODE_CSS = `
 }
 
 /* ---------- Page State Node ---------- */
-/* 信息行：行高 20px、内边距 12px（与 nodeRegistry lineHeight/rowPadding 一致） */
+/* 信息行：行高 20px、内边距 12px（与 nodeRegistry lineHeight/rowPadding 一致）；
+   出口行间距 4px 与 branch 候选行一致（端口行对齐公式按同一几何） */
 .page-info-list {
     width: 100%;
     padding: 6px 12px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
+    gap: 4px;
     overflow: hidden;
 }
 .page-info-list .node-info {

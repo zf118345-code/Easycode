@@ -46,29 +46,40 @@ describe('canvasShared 网格化端口布局', () => {
         expect(pos.y).toBe(40 + 140 - PORT_GRID_BOTTOM * GRID_SIZE)
     })
 
-    it('动态端口从 success 下方每隔 2 格排列', () => {
+    it('动态端口行对齐：branch_N / exit_N 位于对应行垂直中心', () => {
         const node = makeNode({ h: 200, dynamicCount: 3 })
+        // 行中心 = 头部32 + 内容区起始6 + N×行距28 + 半行12
         for (let k = 0; k < 3; k++) {
-            const expectedTop = (PORT_GRID_TOP + PORT_GRID_STEP * (k + 1)) * GRID_SIZE
+            const expectedTop = 32 + 6 + k * 28 + 12
             expect(getNodePortTop(node, `branch_${k}`)).toBe(expectedTop)
             expect(getNodePortTop(node, `exit_${k}`)).toBe(expectedTop)
         }
         const pos = getPortPosition(node, 'exit_1')
         expect(pos.x).toBe(80 + 160)
-        expect(pos.y).toBe(40 + (PORT_GRID_TOP + PORT_GRID_STEP * 2) * GRID_SIZE)
+        expect(pos.y).toBe(40 + 32 + 6 + 28 + 12)
+    })
+
+    it('页面节点卡片仅展示出口行（无特征摘要行偏移）', () => {
+        const node = {
+            ...makeNode({ h: 200 }),
+            node_type: 'page_state',
+            params: { features: [{ condition_type: 'image_exists' }], feature_mode: 'or' }
+        }
+        expect(getNodePortTop(node, 'exit_0')).toBe(50)
+        expect(getNodePortTop(node, 'exit_1')).toBe(50 + 28)
     })
 
     it('动态端口越界时向底部 clamp（不超过 failure 之上）', () => {
         const node = makeNode({ h: 100, dynamicCount: 5 })
         const top = getNodePortTop(node, 'branch_4')
         expect(top).toBeLessThanOrEqual(100 - PORT_GRID_BOTTOM * GRID_SIZE)
-        expect(top).toBe(100 - PORT_GRID_BOTTOM * GRID_SIZE)
+        expect(top).toBe(100 - PORT_GRID_BOTTOM * GRID_SIZE - 4)
     })
 
-    it('exit / exit_0 视为第一个动态端口（距顶 3 格）', () => {
+    it('exit / exit_0 视为第一个动态端口（行对齐起点）', () => {
         const node = makeNode({ h: 100 })
-        expect(getNodePortTop(node, 'exit')).toBe((PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE)
-        expect(getNodePortTop(node, 'exit_0')).toBe((PORT_GRID_TOP + PORT_GRID_STEP) * GRID_SIZE)
+        expect(getNodePortTop(node, 'exit')).toBe(50)
+        expect(getNodePortTop(node, 'exit_0')).toBe(50)
     })
 
     it('computeCanvasNodeHeight 无内容时最小 3 格（头部32+footer24 向上取整 = 60px）', () => {

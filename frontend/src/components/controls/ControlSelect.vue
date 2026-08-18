@@ -3,6 +3,7 @@
     <el-select
 :model-value="modelValue"
                :placeholder="config.label ? `请选择${config.label}` : '请选择...'"
+               :disabled="config.readonly"
                style="width: 100%;"
                @update:model-value="val => $emit('update:modelValue', val)">
         <el-option

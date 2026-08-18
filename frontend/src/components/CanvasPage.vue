@@ -22,7 +22,6 @@
         @remove-edge="handleRemoveEdge"
         @create-node="handleCreateNode"
         @delete-node="handleDeleteNode"
-        @create-group="handleCreateGroup"
         @delete-group="handleDeleteGroup" />
 </template>
 
@@ -38,6 +37,12 @@
         disconnectPort,
         removeNode
     } from '@/utils/workflowEdgeModel'
+    import { buildNodeDefaultParams, NODE_DEFAULTS } from '@/utils/nodeDefaults'
+    import { buildControlParamsFromInfo, buildControlNodeName } from '@/utils/captureNode'
+    import {
+        NODE_WIDTH, NODE_MIN_HEIGHT, computeCanvasNodeHeight,
+        computeGroupBox, findFreePosition, isColliding
+    } from '@/utils/canvasShared'
     import CanvasView from '@/components/canvas/CanvasView.vue'
 
     const store = useMainStore()
@@ -107,6 +112,7 @@
         const tasks = canvasData.value.tasks
         let targetTask = null
         let sourceNodeObj = null
+        let isNewGroup = false   // ⚡ 本次是否新建组（组级避让只作用于新组，不惊动已有组）
 
         if (payload.sourceNodeId) {
             for (const t of tasks) {
@@ -126,6 +132,7 @@
                 loop_interval: 0,
                 nodes: []
             }
+            isNewGroup = true
             tasks.push(targetTask)
         }
 
@@ -135,12 +142,66 @@
         const sameTypeCount = targetTask.nodes.filter(n => n.node_type === payload.type).length + 1
         const newNode = {
             node_id: payload.nodeId,
-            node_name: `${chineseLabel}_${sameTypeCount}`,
+            node_name: payload.nodeName || `${chineseLabel}_${sameTypeCount}`,
             node_type: payload.type,
-            params: {},
-            delay_before: 200,
-            loop_count: 1,
+            // 复制粘贴：沿用源节点参数；新建：从后端 schema default 填充（集中默认值，见 utils/nodeDefaults.js）
+            params: payload.params
+                ? JSON.parse(JSON.stringify(payload.params))
+                : buildNodeDefaultParams(payload.type, store.paramsDefinitions),
+            delay_before: payload.delayBefore ?? NODE_DEFAULTS.delayBefore,
+            loop_count: payload.loopCount ?? NODE_DEFAULTS.loopCount,
             position: payload.position || { x: 0, y: 0 }
+        }
+
+        // 页面状态节点：自动生成内部页面标识（表单隐藏，标题即页面名）
+        if (payload.type === 'page_state' && !newNode.params.page_id) {
+            newNode.params.page_id = `page_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+        }
+
+        // ⚡ 新建避让：新节点被身边节点/组挤开，不再重叠（所有创建入口统一经过此处）
+        const newNodeSize = {
+            w: NODE_WIDTH,
+            h: computeCanvasNodeHeight(newNode.params ? Object.keys(newNode.params).length : 0, 0)
+        }
+        // 1) 节点级避让：避开同组已有节点（把新节点推到无碰撞位置，旧布局不动）
+        const sameGroupNodes = (targetTask.nodes || []).map(n => ({
+            position: n.position, size: { w: NODE_WIDTH, h: NODE_MIN_HEIGHT }
+        }))
+        const freePos = findFreePosition(sameGroupNodes, newNode.position, newNodeSize)
+        newNode.position = { x: freePos.x, y: freePos.y }
+        // 2) 组级避让：新建组若与已有组重叠，整体平移新组（组内所有成员同偏移）——只作用于新组
+        if (isNewGroup) {
+            const groupBoxes = new Map()  // task_id -> box（只算一次）
+            const boxOf = (task) => {
+                if (!groupBoxes.has(task.task_id)) {
+                    groupBoxes.set(task.task_id, computeGroupBox(task.nodes || []))
+                }
+                return groupBoxes.get(task.task_id)
+            }
+            const newGroupBox = computeGroupBox([...targetTask.nodes, newNode])
+            let shiftX = 0, shiftY = 0
+            let guard = 0
+            while (guard < 100) {
+                const cand = {
+                    position: { x: newGroupBox.x + shiftX, y: newGroupBox.y + shiftY },
+                    size: { w: newGroupBox.w, h: newGroupBox.h }
+                }
+                const overlaps = tasks.some(t => {
+                    if (t.task_id === targetTask.task_id) return false
+                    const b = boxOf(t)
+                    return isColliding(cand, { position: { x: b.x, y: b.y }, size: { w: b.w, h: b.h } })
+                })
+                if (!overlaps) break
+                shiftX += 40
+                shiftY += 40
+                guard += 1
+            }
+            if (shiftX || shiftY) {
+                for (const n of targetTask.nodes) {
+                    n.position = { x: (n.position.x || 0) + shiftX, y: (n.position.y || 0) + shiftY }
+                }
+                newNode.position = { x: (newNode.position.x || 0) + shiftX, y: (newNode.position.y || 0) + shiftY }
+            }
         }
 
         if (sourceNodeObj) {
@@ -168,22 +229,6 @@
         }
         uiStore.clearSelection()
         await saveCanvas()
-    }
-
-    // ===== 任务组（两 Tab 统一支持：直接操作当前数据源的 tasks，不走后端任务 CRUD） =====
-
-    async function handleCreateGroup(payload) {
-        activeUndoRedo.value.commit()
-        const tasks = canvasData.value.tasks
-        tasks.push({
-            task_id: `task_${Date.now()}`,
-            task_name: payload.name || '新建组',
-            loop_count: 1,
-            loop_interval: 0,
-            nodes: []
-        })
-        await saveCanvas()
-        ElMessage.success(`任务组 [${payload.name}] 创建成功`)
     }
 
     async function handleDeleteGroup(payload) {
@@ -245,4 +290,66 @@
             await store.loadProjectData()
         }
     })
+
+    // ===== 控件捕获模式：一键生成控件节点（由 IdeLayout 经 ref 调用） =====
+    async function createControlNodeFromCapture(info) {
+        if (!info || typeof info !== 'object') return
+        // 查找参数自动填充（纯函数，逻辑与测试见 utils/captureNode.js）
+        const { by, target } = buildControlParamsFromInfo(info)
+        if (!target) {
+            ElMessage.warning('未捕获到有效控件信息')
+            return
+        }
+
+        const nodeId = `node_${Date.now()}${Math.random().toString(36).slice(2, 5)}`
+        const params = {
+            ...buildNodeDefaultParams('control', store.paramsDefinitions),
+            by,
+            target,
+            // ⚡ 捕获的完整定位信息一并存入节点隐藏字段（表单只展示控件名称）：
+            // 窗口标题用于查找作用域，control_info 供主选择器未命中时兜底重查
+            window_title: String(info?.window_title || ''),
+            index: info?.index ?? 0,
+            control_info: info || null
+        }
+        const nodeName = buildControlNodeName(info)
+        let position = null
+        let sourceNodeId = null
+
+        // 选中单个节点 → 在其 success 线后新建（与粘贴逻辑一致）
+        const selectedIds = uiStore.selectedNodeIds?.length ? uiStore.selectedNodeIds
+            : (uiStore.selectedNodeId ? [uiStore.selectedNodeId] : [])
+        if (selectedIds.length === 1) {
+            const tasks = canvasData.value.tasks
+            for (const t of tasks) {
+                const found = (t.nodes || []).find(n => n.node_id === selectedIds[0])
+                if (found) {
+                    sourceNodeId = found.node_id
+                    const w = found.w || 180
+                    position = {
+                        x: Math.round((found.position.x + w + 40) / 20) * 20,
+                        y: found.position.y
+                    }
+                    break
+                }
+            }
+        }
+        if (!position) {
+            position = { x: 0, y: 0 }
+        }
+
+        await handleCreateNode({
+            nodeId,
+            type: 'control',
+            nodeName,
+            params,
+            position,
+            sourceNodeId,
+            portType: 'succ',
+        })
+        uiStore.selectNodes([nodeId])
+        ElMessage.success(`已生成控件节点 [${nodeName}]（${by} = ${target}）`)
+    }
+
+    defineExpose({ createControlNodeFromCapture })
 </script>

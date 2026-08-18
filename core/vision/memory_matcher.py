@@ -57,8 +57,8 @@ class MemoryTemplateMatcher:
             if (x2 - x1) >= tpl_w and (y2 - y1) >= tpl_h:
                 target_roi = screen_bgr[y1:y2, x1:x2]
 
-        # 调取 OpenCV 匹配引擎
-        max_val, max_loc = match_template_cv(target_roi, template_bgr)
+        # 调取 OpenCV 匹配引擎（screen_bgr 是 BGR 内存矩阵，跳过通道转换）
+        max_val, max_loc = match_template_cv(target_roi, template_bgr, screen_is_bgr=True)
         score = max(0.0, float(max_val)) if max_val is not None and max_val > -1.0 else 0.0
 
         return score, max_loc

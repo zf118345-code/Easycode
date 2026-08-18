@@ -2,7 +2,14 @@
 <template>
     <div class="ide-shell-layout">
         <!-- 1. 顶部主菜单栏 -->
-        <TopMenuBar @run="handleRun" @open-settings="settingsVisible = true" />
+        <TopMenuBar
+            :run-disabled="store.isRunning || store.isPaused"
+            @run="handleRun"
+            @open-settings="settingsVisible = true"
+            @open-schema-editor="schemaDialogVisible = true"
+            @open-control-capture="controlCaptureVisible = true"
+            @open-hotkey-settings="hotkeySettingsVisible = true"
+            @open-screenshot="openGlobalScreenshot" />
 
         <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
         <div class="debug-toolbar-bar">
@@ -60,7 +67,7 @@ v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
                     <!-- 中央画布区域：唯一画布页面（workflow/topology 共用一套画布组件，仅数据源不同） -->
                     <div class="ide-center-viewport ide-card-panel">
                         <div class="pane-content-inner">
-                            <CanvasPage :key="store.canvasMode" />
+                            <CanvasPage ref="canvasPageRef" :key="store.canvasMode" />
                         </div>
                     </div>
 
@@ -130,12 +137,30 @@ position="right"
 
         <!-- 面板设置弹窗 -->
         <PanelSettingsDialog v-model:visible="settingsVisible" @apply="handleApplyContext" />
+
+        <!-- 客户表单配置与脚本包导出弹窗（顶栏「打包 (P)」菜单入口） -->
+        <FormSchemaEditor v-model="schemaDialogVisible" />
+
+        <!-- 控件捕获工具（顶栏「运行 (R)」菜单入口；捕获结果 → 一键生成控件节点） -->
+        <ControlCaptureTool
+            v-model="controlCaptureVisible"
+            :capture-event="captureEvent"
+            :backend-connected="captureConnected"
+            @node-requested="handleCaptureNodeRequested" />
+
+        <!-- 全局快捷键设置（顶部「编辑 (E) → 快捷键设置」） -->
+        <HotkeySettingsDialog v-model="hotkeySettingsVisible" />
+
+        <!-- 截图工具（顶栏「运行 (R) → 截图工具」）：框选后自动保存到项目 templates/ -->
+        <ScreenshotTool
+            ref="screenshotToolRef"
+            @template-crop-selected="onGlobalTemplateCrop" />
     </div>
 </template>
 
 <script setup>
-    import { ref, computed } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+    import { useMainStore, useUiStore } from '@/stores'
     import { ElMessage } from 'element-plus'
 
     import TopMenuBar from '@/components/shell/TopMenuBar.vue'
@@ -143,12 +168,110 @@ position="right"
     import ToolWindow from '@/components/shell/ToolWindow.vue'
     import CanvasPage from '@/components/CanvasPage.vue'
     import PanelSettingsDialog from '@/components/PanelSettingsDialog.vue'
+    import FormSchemaEditor from '@/components/schema/FormSchemaEditor.vue'
+    import ControlCaptureTool from '@/components/ControlCaptureTool.vue'
+    import HotkeySettingsDialog from '@/components/HotkeySettingsDialog.vue'
+    import ScreenshotTool from '@/components/ScreenshotTool.vue'
     import DebugToolbar from '@/components/DebugToolbar.vue'
+    import { uiControlApi } from '@/api/uiControlApi'
+    import { workspaceApi } from '@/api/workspaceApi'
 
     import { leftPanelsConfig, rightPanelsConfig, bottomPanelsConfig } from '@/config/panelsConfig'
 
     const store = useMainStore()
     const settingsVisible = ref(false)
+    const schemaDialogVisible = ref(false)
+    const controlCaptureVisible = ref(false)
+    const hotkeySettingsVisible = ref(false)
+    const canvasPageRef = ref(null)
+    const screenshotToolRef = ref(null)
+
+    // ⚡ 顶栏「运行 (R) → 截图工具」：打开全局模板截图（框选 → 自动保存到项目 templates/）
+    const openGlobalScreenshot = () => {
+        if (!store.currentProjectPath) {
+            ElMessage.warning('请先打开一个项目，再使用截图工具')
+            return
+        }
+        screenshotToolRef.value?.open('template')
+    }
+    const onGlobalTemplateCrop = async (cropRect) => {
+        try {
+            const ts = new Date()
+            const pad = n => String(n).padStart(2, '0')
+            const name = `截图_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
+            await workspaceApi.cropScreenshot(store.currentProjectPath, name, cropRect)
+            ElMessage.success(`模板图片 [${name}] 已保存到 templates/`)
+        } catch (err) {
+            ElMessage.error('截图保存失败: ' + (err?.message || err))
+        }
+    }
+
+    // ⚡ 捕获结果处理：若节点表单/条件对话框注册了填充回调（captureFillHandler）→ 回填当前编辑目标
+    // 并退出捕获模式（一次性填充语义：捕获一次赋给当前节点后即退出；再次点击捕获则覆盖重填）；
+    // 否则维持原行为：生成新控件节点（全局「控件捕获模式」：不退出，可连续捕获）
+    const handleCaptureNodeRequested = async (info) => {
+        const uiStore = useUiStore()
+        const fillHandler = uiStore.captureFillHandler
+        if (fillHandler) {
+            try {
+                fillHandler(info)
+            } catch (err) {
+                ElMessage.error('控件捕获填充失败: ' + (err?.message || ''))
+            } finally {
+                uiStore.clearCaptureFillHandler()
+                uiStore.bumpInspectorSync()  // 检查器立即同步外部填充
+                uiControlApi.modeControl('stop').catch(() => {})  // ⚡ 填充完成即退出捕获模式
+                controlCaptureVisible.value = false  // ⚡ 一次性填充完成：面板一并收起（再次捕获需重新点按钮）
+            }
+            return
+        }
+        if (!store.currentProjectPath) {
+            ElMessage.warning('请先打开一个项目，再生成控件节点')
+            return
+        }
+        if (!canvasPageRef.value) {
+            ElMessage.warning('画布尚未就绪，请稍后再试')
+            return
+        }
+        try {
+            await canvasPageRef.value.createControlNodeFromCapture(info)
+        } catch (err) {
+            ElMessage.error('生成控件节点失败: ' + (err?.message || ''))
+        }
+    }
+
+    // ⚡ 捕获事件 SSE 长连接（零轮询）：热键进入（mode active）自动召唤面板；
+    // 选中/层级/取消/复制事件转发给面板消费；后端断开时明示连接中断
+    const captureEvent = ref(null)
+    const captureConnected = ref(true)
+    let captureEventSource = null
+
+    function connectCaptureEvents() {
+        if (captureEventSource) return
+        captureEventSource = new EventSource('/api/ui-control/events')
+        captureEventSource.onopen = () => { captureConnected.value = true }
+        captureEventSource.onerror = () => {
+            // EventSource 自动重连；断开期间面板显示「后端连接中断」（模态已失效，防假激活穿透）
+            captureConnected.value = false
+        }
+        captureEventSource.onmessage = (e) => {
+            try {
+                const data = JSON.parse(e.data)
+                captureConnected.value = true
+                captureEvent.value = data
+                if (data.event === 'mode' && data.active) {
+                    controlCaptureVisible.value = true  // ⚡ 热键进入 → 自动弹出面板（与点菜单一致）
+                }
+            } catch { /* 忽略非法帧 */ }
+        }
+    }
+    onMounted(connectCaptureEvents)
+    onUnmounted(() => {
+        if (captureEventSource) {
+            captureEventSource.close()
+            captureEventSource = null
+        }
+    })
 
     // ⚡ 右侧面板：统一属性检查器（InspectorPanel 按 canvasMode 自动切换数据源，标题恒定）
     const rightActive = ref('inspector')
@@ -267,8 +390,15 @@ position="right"
 
     const handleRun = async () => {
         if (!store.currentTaskId) return ElMessage.warning('请先选择任务')
-        await store.runTask(store.currentTaskId, null)
-        ElMessage.success('任务已启动')
+        if (store.isRunning || store.isPaused) {
+            return ElMessage.warning('已有任务正在执行/暂停，请先停止再运行')
+        }
+        const res = await store.runTask(store.currentTaskId, null)
+        if (res?.status === 'started') {
+            ElMessage.success('任务已启动')
+        } else {
+            ElMessage.warning((res?.error) || '任务启动失败')
+        }
     }
 
     const handleApplyContext = async (ctx) => {

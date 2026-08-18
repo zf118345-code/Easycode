@@ -80,7 +80,7 @@
 
         <!-- Edges group: each edge has 3 layers (hit / visible / flow) plus label -->
         <g v-for="edge in edges" :key="edge.id" class="edge-group">
-            <!-- Wide transparent hit target for easier click -->
+            <!-- Wide transparent hit target for easier clicking -->
             <path
                 v-if="edge.path"
                 :d="edge.path"
@@ -91,7 +91,11 @@
             <path
                 v-if="edge.path"
                 :d="edge.path"
-                :class="['edge-path', { 'is-selected': edge.selected, 'is-failure': edge.isFail }]"
+                :class="['edge-path', {
+                    'is-selected': edge.selected,
+                    'is-failure': edge.isFail,
+                    'is-port-hovered': hoveredPort && edge.legacyPort === hoveredPort
+                }]"
                 :marker-end="edge.markerUrl"
                 @click.stop="$emit('edge-click', edge)" />
 
@@ -100,14 +104,6 @@
                 v-if="edge.path && !edge.selected"
                 :d="edge.path"
                 :class="['edge-flow-path', { 'is-failure': edge.isFail }]" />
-
-            <!-- Edge label -->
-            <text
-                v-if="edge.label"
-                :x="edge.labelX"
-                :y="edge.labelY"
-                class="edge-label"
-                text-anchor="middle">{{ edge.label }}</text>
         </g>
 
         <!-- Live drag preview：无箭头，终点用连线颜色的发光球（松手后正常边恢复箭头） -->
@@ -134,7 +130,8 @@
         edges:           { type: Array,  default: () => [] },
         drawingConnection:{ type: Object, default: null },
         viewport:        { type: Object, default: () => ({ x: 0, y: 0, zoom: 1 }) },
-        containerSize:   { type: Object, default: () => ({ width: 1200, height: 800 }) }
+        containerSize:   { type: Object, default: () => ({ width: 1200, height: 800 }) },
+        hoveredPort:     { type: String, default: '' }
     })
 
     defineEmits(['edge-click'])

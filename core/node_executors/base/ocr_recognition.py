@@ -6,30 +6,99 @@ import time
 import cv2
 import numpy as np
 import pyautogui
+from core.services import screenshot_service
 
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
 
-_DDDD_OCR_ENGINE = None
+_OCR_ENGINE = None
 _ENGINE_TYPE = None
 
+# ⚡ #2 OCR 引擎升级：RapidOCR（PP-OCRv4，界面/游戏文本准确率高）优先，
+# ddddocr（轻量验证码向）兜底；可用环境变量 EASYCODE_OCR_ENGINE 强制指定
+# （rapidocr / ddddocr / none），部署不再静默失效（失败会打 error 日志）
 
-def get_ocr_engine():
-    global _DDDD_OCR_ENGINE, _ENGINE_TYPE
-    if _ENGINE_TYPE is not None:
-        return _ENGINE_TYPE, _DDDD_OCR_ENGINE
 
+def _init_rapidocr():
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+
+        engine = RapidOCR()
+        # 预热一次（首次推理加载模型较慢，避免节点执行时卡顿）
+        import numpy as np
+
+        engine(np.zeros((32, 128, 3), dtype=np.uint8))
+        return engine
+    except Exception as e:
+        print(f'⚠️ [OCR 引擎] RapidOCR 初始化失败（将回退 ddddocr）: {e}')
+        return None
+
+
+def _init_ddddocr():
     try:
         import ddddocr
 
-        _DDDD_OCR_ENGINE = ddddocr.DdddOcr(show_ad=False)
-        _ENGINE_TYPE = 'ddddocr'
-        print('✅ [OCR 引擎初始化] ddddocr 启动成功！')
+        return ddddocr.DdddOcr(show_ad=False)
     except Exception as e:
         print(f'❌ [OCR 引擎初始化失败] ddddocr 导入异常: {e}')
-        _ENGINE_TYPE = 'none'
+        return None
 
-    return _ENGINE_TYPE, _DDDD_OCR_ENGINE
+
+def get_ocr_engine():
+    """返回 (engine_type, engine)。engine_type: 'rapidocr' | 'ddddocr' | 'none'"""
+    global _OCR_ENGINE, _ENGINE_TYPE
+    if _ENGINE_TYPE is not None:
+        return _ENGINE_TYPE, _OCR_ENGINE
+
+    forced = (os.environ.get('EASYCODE_OCR_ENGINE') or '').strip().lower()
+    if forced in ('rapidocr', 'ddddocr', 'none'):
+        _ENGINE_TYPE = forced
+        if forced == 'rapidocr':
+            _OCR_ENGINE = _init_rapidocr()
+            if _OCR_ENGINE is None:
+                _ENGINE_TYPE = 'none'
+        elif forced == 'ddddocr':
+            _OCR_ENGINE = _init_ddddocr()
+            if _OCR_ENGINE is None:
+                _ENGINE_TYPE = 'none'
+        if _ENGINE_TYPE != 'none':
+            print(f'✅ [OCR 引擎初始化] {_ENGINE_TYPE} 启动成功（强制指定）')
+        return _ENGINE_TYPE, _OCR_ENGINE
+
+    # 默认链：RapidOCR → ddddocr
+    _OCR_ENGINE = _init_rapidocr()
+    if _OCR_ENGINE is not None:
+        _ENGINE_TYPE = 'rapidocr'
+        print('✅ [OCR 引擎初始化] RapidOCR (PP-OCRv4) 启动成功')
+    else:
+        _OCR_ENGINE = _init_ddddocr()
+        _ENGINE_TYPE = 'ddddocr' if _OCR_ENGINE is not None else 'none'
+        if _ENGINE_TYPE == 'ddddocr':
+            print('✅ [OCR 引擎初始化] ddddocr 启动成功（RapidOCR 不可用回退）')
+        else:
+            print('❌ [OCR 引擎] 无可用 OCR 引擎（rapidocr/ddddocr 均未安装），OCR 节点将超时失败')
+    return _ENGINE_TYPE, _OCR_ENGINE
+
+
+def ocr_engine_recognize(image_bgr) -> str:
+    """统一识别入口：按引擎类型调用，返回识别文本"""
+    engine_type, engine = get_ocr_engine()
+    if engine is None:
+        return ''
+    try:
+        if engine_type == 'rapidocr':
+            # RapidOCR 输入：BGR ndarray（onnxruntime）
+            result, _ = engine(image_bgr)
+            if not result:
+                return ''
+            return ''.join(item[1] for item in result)
+        if engine_type == 'ddddocr':
+            _, img_bytes = cv2.imencode('.png', image_bgr)
+            return str(engine.classification(img_bytes.tobytes()) or '')
+    except Exception as e:
+        print(f'⚠️ [OCR 引擎] 识别调用失败: {e}')
+        return ''
+    return ''
 
 
 def image_to_base64(img_np):
@@ -52,7 +121,7 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
         gray_threshold = params.get('gray_threshold', 127)
         save_to_var = params.get('save_to_var', '').strip()
 
-        engine_type, ocr_engine = get_ocr_engine()
+        engine_type, _ = get_ocr_engine()  # ⚡ 引擎初始化（统一识别入口内部调用）
 
         # ---------------- 🔍 1. 计算识别区域坐标 ----------------
         if (
@@ -86,7 +155,7 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
         while time.time() - start_time < timeout:
             attempt_count += 1
             try:
-                screenshot = pyautogui.screenshot(region=region_rect)
+                screenshot = screenshot_service.capture(region=region_rect)
                 frame_rgb = np.array(screenshot)
                 frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
 
@@ -97,14 +166,12 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
                 else:
                     processed_img = frame_bgr
 
-                if engine_type == 'ddddocr' and ocr_engine:
-                    _, img_bytes = cv2.imencode('.png', processed_img)
-                    raw_res = ocr_engine.classification(img_bytes.tobytes())
-                    detected_text = str(raw_res).strip() if raw_res else ''
-                else:
-                    detected_text = ''
+                # ⚡ #2 统一识别入口（RapidOCR / ddddocr 引擎链）
+                detected_text = ocr_engine_recognize(processed_img).strip()
 
-                debug_b64 = image_to_base64(processed_img)
+                # ⚡ #13 终局才编码调试图（循环内不再重复 PNG 编码 + base64）
+                if debug_b64 is None:
+                    debug_b64 = image_to_base64(processed_img)
 
                 if detected_text:
                     found = True
@@ -131,8 +198,18 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
             if params.get('on_success_action') == 'click_center':
                 cx = region_rect[0] + region_rect[2] // 2
                 cy = region_rect[1] + region_rect[3] // 2
-                context.log(f'🖱️ [成功后点击] 坐标: ({cx}, {cy})')
-                pyautogui.click(cx, cy)
+                # ⚡ 多开友好：绑定窗口时后台投递点击，不占用物理鼠标
+                hwnd = getattr(context, 'window_hwnd', None)
+                if hwnd:
+                    from core.services.background_input import background_click
+
+                    result = background_click(hwnd, cx, cy)
+                    context.log(f'🖱️ [成功后点击] 后台点击窗口(#{hwnd}) 坐标: ({cx}, {cy})')
+                    if not result.get('ok'):
+                        context.log(f'❌ [成功后点击] {result.get("message", "后台点击失败")}', 'warning')
+                else:
+                    context.log(f'🖱️ [成功后点击] 物理点击 坐标: ({cx}, {cy})')
+                    pyautogui.click(cx, cy)
 
             return self.build_jump_result(True, params.get('on_success', {}), extra=extra_data)
         else:

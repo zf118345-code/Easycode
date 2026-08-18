@@ -14,6 +14,7 @@ from typing import Any
 from core.graph.builder import AdjacencyGraph, GraphBuilder
 from core.graph.pathfinder import PathFinder, PathResult
 from core.models import Jump
+from core.node_executors.base.smart_jump import SmartJumpNodeExecutor
 from core.registry import NodeExecutorRegistry
 from core.utils import resolve_template_string
 
@@ -59,9 +60,10 @@ class GraphExecutor:
         self.text_log_enabled = text_log_enabled
         self.image_log_enabled = image_log_enabled
 
-        # P0 修复：线程安全日志列表
+        # P0 修复：线程安全日志列表（#7：条数上限，防 base64 图片日志撑爆内存）
         self._logs_lock = threading.Lock()
         self.logs: list[dict] = []
+        self.max_logs = 500
 
         # 运行时状态
         self.is_emulator = False
@@ -125,9 +127,11 @@ class GraphExecutor:
 
         log_item = {'time': now_str, 'message': resolved_msg, 'level': level, 'image': image}
 
-        # P0 修复：线程安全写入
+        # P0 修复：线程安全写入；⚡ 条数上限（保留最近 max_logs 条，防止长任务无限增长）
         with self._logs_lock:
             self.logs.append(log_item)
+            if len(self.logs) > self.max_logs:
+                del self.logs[: len(self.logs) - self.max_logs]
 
         prefix = f'[{level.upper()}]'
         print(f'{now_str} - {prefix} - {resolved_msg}')
@@ -241,6 +245,14 @@ class GraphExecutor:
 
             # 执行节点
             result = self._execute_node_safely(node)
+
+            # smart_jump 路径执行：节点成功后若写入了跳转路径，沿路径执行
+            # （逐节点执行操作 / 页面确认，每步监测位置，偏离时从当前位置重新寻路）
+            if result.get('success', True) and self.variables.get(SmartJumpNodeExecutor.PATH_VAR_KEY):
+                path_ok = self._execute_smart_jump_path()
+                if not path_ok:
+                    # 跳转失败：视同节点失败，走失败路由（failure 连线或 on_failure）
+                    result = {'success': False, 'error': '智能跳转执行失败'}
 
             # 路由决策：执行器显式 jump > branch 分支索引（图出边 branch_N）>
             # 成功/失败图出边（success/failure）> 旧数据 params 回退（迁移前 JSON 仍可运行）
@@ -427,6 +439,202 @@ class GraphExecutor:
     def get_topology_graph(self) -> AdjacencyGraph | None:
         """获取拓扑地图邻接表"""
         return self._topology_graph
+
+    # ========== P3 新增：smart_jump 路径执行（当前页判定 + 沿途执行 + 每步位置监测） ==========
+
+    def _build_topology_index(self) -> tuple[dict[str, Any], list[Any]]:
+        """
+        拓扑索引（懒构建）：拓扑键（页面键 = page_id、操作键 = node_id）→ Node 映射
+        + page_state 节点列表（现场评估当前页用）
+        """
+        if getattr(self, '_topology_index', None) is not None:
+            return self._topology_index
+        node_map: dict[str, Any] = {}
+        pages: list[Any] = []
+        topo = getattr(self.project, 'topology', None)
+        if topo is not None:
+            for node in topo.iter_nodes():
+                key = topo.node_page_id(node) or node.node_id
+                node_map[key] = node
+                if node.node_type == 'page_state':
+                    pages.append(node)
+        self._topology_index = (node_map, pages)
+        return self._topology_index
+
+    def evaluate_current_page(self) -> str:
+        """
+        现场评估当前所在页面：依次执行拓扑中所有 page_state 节点的特征匹配，
+        首个命中（success）即当前页；全部未命中返回空串。
+        匹配成功时 page_state 执行器会顺带写入 current_page_id。
+        """
+        _, pages = self._build_topology_index()
+        if not pages:
+            return ''
+        from core.node_executors.base.page_state import PageStateNodeExecutor
+
+        evaluator = PageStateNodeExecutor()
+        for page_node in pages:
+            try:
+                result = evaluator.execute(page_node, self)
+            except Exception as e:
+                self.log(f'[smart_jump] 页面评估异常 [{page_node.node_name}]: {e}', 'warning')
+                result = {'success': False}
+            if result.get('success'):
+                return (page_node.params or {}).get('page_id', '')
+        return ''
+
+    def _resolve_current_page(self) -> str:
+        """读取 / 评估当前位置：变量优先，缺失时现场评估并写回变量"""
+        current = self.variables.get('current_page_id', '')
+        if not current:
+            current = self.evaluate_current_page()
+            if current:
+                self.variables['current_page_id'] = current
+        return current
+
+    def _execute_smart_jump_path(self) -> bool:
+        """
+        执行 smart_jump 记录的路径（由 smart_jump 执行器写入 __smart_jump_path__）。
+        流程（每轮尝试）：
+          确定当前位置 → BFS 寻路 → 逐节点执行（操作真实执行、页面识别确认）→
+          每步后重新评估位置：已到达目标页 = 成功；
+          位置偏离路径（用户手操 / 识别漂移）= 从新位置重新寻路；
+          无路可达 / 超时 / 重试用尽 = 失败（调用方走失败路由）。
+        """
+        path_info = self.variables.get(SmartJumpNodeExecutor.PATH_VAR_KEY)
+        if not path_info:
+            return True
+        target = path_info.get('target_page_id', '')
+        timeout = max(100, int(path_info.get('timeout', 3000) or 3000))
+        deadline = time.time() + timeout / 1000.0
+        node_map, _ = self._build_topology_index()
+        max_attempts = 3
+
+        self.log(f'[smart_jump] 开始执行跳转 | 目标页面={target} 超时={timeout}ms')
+
+        for attempt in range(1, max_attempts + 1):
+            if self.is_stopped:
+                self.log('[smart_jump] 收到停止信号，终止跳转', 'warning')
+                break
+            if time.time() >= deadline:
+                self.log('[smart_jump] 跳转超时（超过超时时间上限）', 'error')
+                break
+
+            # 时刻监测位置：现场识别当前页（识别失败时回退变量缓存）
+            current = self.evaluate_current_page()
+            if not current:
+                current = self.variables.get('current_page_id', '')
+            elif current:
+                self.variables['current_page_id'] = current
+            if current == target:
+                self.log(f'[smart_jump] 已在目标页面 [{target}]')
+                self.variables.pop(SmartJumpNodeExecutor.PATH_VAR_KEY, None)
+                return True
+            if not current:
+                self.log('[smart_jump] 无法确定当前位置，跳转失败', 'warning')
+                break
+
+            path_result = self.find_path_to_page(target)
+            if not path_result.success or len(path_result.path) < 2:
+                self.log(
+                    f'[smart_jump] 第 {attempt} 次尝试：从 [{current}] 无路可达目标 [{target}]'
+                    f'（{path_result.reason or "路径为空"}）',
+                    'warning',
+                )
+                if attempt < max_attempts:
+                    time.sleep(0.5)
+                continue
+
+            self.log(f'[smart_jump] 第 {attempt} 次尝试路径: {" → ".join(path_result.path)}')
+            outcome = self._execute_topology_steps(path_result.path[1:], node_map, target, deadline)
+            if outcome is True:
+                self.variables.pop(SmartJumpNodeExecutor.PATH_VAR_KEY, None)
+                self.log(f'[smart_jump] 跳转成功，已到达 [{target}]')
+                return True
+            if outcome == 'reroute':
+                # 位置偏离路径预期（用户手操 / 识别漂移）→ 下一轮从新位置重新寻路
+                self.log('[smart_jump] 位置偏离路径预期，从当前位置重新寻路', 'warning')
+                continue
+            # 路径执行失败（节点失败 / 路径耗尽未到达）→ 重试
+            self.log('[smart_jump] 路径执行未到达目标，准备重试', 'warning')
+            if attempt < max_attempts:
+                time.sleep(0.5)
+
+        self.variables.pop(SmartJumpNodeExecutor.PATH_VAR_KEY, None)
+        self.log('[smart_jump] 跳转失败（超时 / 无路可达 / 重试用尽）', 'error')
+        return False
+
+    def _execute_topology_steps(self, steps, node_map, target, deadline) -> bool | str:
+        """
+        逐节点执行路径（不含起点，steps 为拓扑键序列）。
+        - 操作节点（click/image_recognition/wait 等）：真实执行并播报日志
+        - page_state 节点：执行页面确认（更新 current_page_id）
+        - 每步后重新评估位置：
+            到达目标页 → True；
+            位置推进到路径中更靠后的页面（操作生效 / 手操）→ 从该页继续；
+            当前位置不在路径中（手操到别处 / 识别漂移）→ 'reroute'（外层重新寻路）
+        - 节点执行失败 / 路径耗尽未到达 → False
+        """
+        remaining = list(steps)
+        # 路径中所有页面键（用于位置推进判断）
+        page_keys = [k for k in steps if k in node_map and node_map[k].node_type == 'page_state']
+
+        while remaining:
+            if self.is_stopped:
+                return False
+            if time.time() >= deadline:
+                self.log('[smart_jump] 路径执行超时', 'warning')
+                return False
+
+            key = remaining.pop(0)
+            node = node_map.get(key)
+            if node is None:
+                self.log(f'[smart_jump] 路径节点 [{key}] 无法解析', 'warning')
+                return False
+
+            result = self._execute_node_safely(node)
+            ok = result.get('success', True)
+            self.log(f'[smart_jump] 路径节点 [{node.node_name}] ({node.node_type}) 执行{"成功" if ok else "失败"}')
+            if not ok:
+                self.log(f'[smart_jump] 路径节点执行失败: {result.get("error", "")}', 'error')
+                return False
+
+            # 每步后现场识别当前位置（时刻监测位置：用户手操 / 识别漂移立即感知；
+            # 识别失败时回退变量缓存，避免误判偏离）
+            current = self.evaluate_current_page()
+            if not current:
+                current = self.variables.get('current_page_id', '')
+            elif current:
+                self.variables['current_page_id'] = current
+            if current == target:
+                self.log(f'[smart_jump] 位置确认：已到达目标页面 [{target}]')
+                return True
+            if current:
+                if current in page_keys:
+                    pos = page_keys.index(current)
+                    if pos > 0:
+                        # 位置已推进到更靠后的页面：跳过该页之前的中间步骤
+                        try:
+                            skip = remaining.index(current)
+                        except ValueError:
+                            skip = 0
+                        if skip > 0:
+                            self.log(f'[smart_jump] 位置推进至 [{current}]，跳过 {skip} 个中间步骤')
+                            remaining = remaining[skip:]
+                        page_keys = page_keys[pos:]
+                    continue
+                # 当前位置不在路径中（用户手操到别处 / 识别漂移）→ 重新寻路
+                self.log(f'[smart_jump] 当前位置 [{current}] 不在路径中，需重新寻路')
+                return 'reroute'
+
+        # 路径执行完毕：最后现场确认一次位置（识别失败时回退变量）
+        current = self.evaluate_current_page()
+        if not current:
+            current = self.variables.get('current_page_id', '')
+        if current == target:
+            return True
+        self.log(f'[smart_jump] 路径执行完毕但未确认到达目标页（当前 {current or "未知"}）', 'warning')
+        return False
 
     # ========== 窗口与上下文管理（保持原有逻辑） ==========
 

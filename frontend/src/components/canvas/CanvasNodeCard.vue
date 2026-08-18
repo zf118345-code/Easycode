@@ -82,12 +82,15 @@
                 </div>
             </div>
 
-            <!-- 分支：候选条件列表（每候选一行，动态计算高度） -->
+            <!-- 分支：候选条件列表（每候选一行，动态计算高度；行 ↔ 端口悬停联动） -->
             <div v-else-if="contentKind === 'branch-candidates'" class="branch-candidates-list">
                 <div
                     v-for="(cand, cIdx) in (node.params?.candidates || [])"
                     :key="cIdx"
-                    class="branch-candidate-item">
+                    class="branch-candidate-item"
+                    :class="{ 'is-port-hovered': hoveredPort === `branch_${cIdx}` }"
+                    @mouseenter="$emit('row-hover', `branch_${cIdx}`)"
+                    @mouseleave="$emit('row-hover', null)">
                     <span class="branch-cand-text" :title="formatCondDesc(cand.condition || cand)">
                         {{ formatCondDesc(cand.condition || cand) }}
                     </span>
@@ -97,16 +100,19 @@
                 </div>
             </div>
 
-            <!-- 页面状态：页面特征 / 出口预览（有才显示，数据内嵌 params） -->
+            <!-- 页面状态：出口行列表（出口由拓扑出边推导，行与端口对齐；特征详情在属性面板查看） -->
             <div v-else-if="contentKind === 'page-info'" class="page-info-list">
-                <div v-if="node.params?.page_id" class="node-info">
-                    <span class="info-label">页面:</span>{{ node.params.page_id }}
+                <div
+                    v-for="port in boundExitPorts"
+                    :key="port.name"
+                    class="page-exit-item"
+                    :class="{ 'is-port-hovered': hoveredPort === port.name }"
+                    @mouseenter="$emit('row-hover', port.name)"
+                    @mouseleave="$emit('row-hover', null)">
+                    <span class="page-exit-name" :title="port.label">{{ port.label }}</span>
                 </div>
-                <div v-if="node.params?.features && node.params.features.length" class="node-info">
-                    <span class="info-label">特征:</span>{{ node.params.features.length }} 个 ({{ node.params.feature_mode || 'and' }})
-                </div>
-                <div v-if="node.params?.exits && node.params.exits.length" class="node-info">
-                    <span class="info-label">出口:</span>{{ node.params.exits.length }} 个
+                <div v-if="pendingExitPort" class="page-exit-item is-pending-row">
+                    <span class="page-exit-name">{{ pendingExitPort.label }}</span>
                 </div>
             </div>
         </div>
@@ -117,12 +123,13 @@
             <span class="footer-tag">循环: {{ node.loop_count ?? 1 }}次</span>
         </div>
 
-        <!-- 4. Ports / handles（网格布局：左缘入口、右缘成功/失败/动态出口，间距 2 格） -->
+        <!-- 4. Ports / handles（网格布局：左缘入口、右缘成功/失败/动态出口） -->
         <!-- Entry target on the left, 1 grid from top (always visible) -->
         <div
             class="node-handle entry-handle"
             :style="{ top: portTop('entry') }"
-            title="入口 (entry)" />
+            title="入口 (entry)"
+            @mouseenter="$emit('row-hover', null)" />
 
         <!-- Success exit — right, 1 grid from top -->
         <div
@@ -131,7 +138,8 @@
             :class="{ 'is-unconnected': !node.ports?.success?.connected }"
             :style="{ top: portTop('success') }"
             :title="'成功出口 (success)'"
-            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')" />
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')"
+            @mouseenter="$emit('row-hover', null)" />
 
         <!-- Failure exit — right, 1 grid from bottom (conditional) -->
         <div
@@ -140,17 +148,23 @@
             :class="{ 'is-unconnected': !node.ports?.failure?.connected }"
             :style="{ top: portTop('failure') }"
             :title="node.node_type === 'branch' ? 'Else 兜底出口' : '失败出口 (failure)'"
-            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')" />
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')"
+            @mouseenter="$emit('row-hover', null)" />
 
-        <!-- Dynamic exits — right, 2 grids apart, 与节点高度联动 -->
+        <!-- Dynamic exits — 行对齐（branch=候选行 / page_state=出口行），pending 为虚线占位口 -->
         <div
             v-for="port in (node.ports?.dynamic || [])"
             :key="port.name"
             class="node-handle source-handle dyn-handle"
-            :class="{ 'is-unconnected': !port.connected }"
+            :class="{
+                'is-unconnected': !port.connected,
+                'is-pending': port.status === 'pending'
+            }"
             :style="{ top: portTop(port.name) }"
             :title="port.label"
-            @mousedown.stop="$emit('start-connection', $event, node.node_id, port.name)" />
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, port.name)"
+            @mouseenter="$emit('row-hover', port.name)"
+            @mouseleave="$emit('row-hover', null)" />
     </div>
 </template>
 
@@ -176,9 +190,11 @@
         ListOrdered,
         FileCode,
         Target,
-        Clock
+        Clock,
+        ScanSearch
     } from 'lucide-vue-next'
     import { getNodeConfig, getNodePortTop } from '@/utils/canvasShared'
+    import { NODE_ICON_MAP } from '@/utils/nodeIcons'
     import { getNodeContentSpec } from '@/config/nodeRegistry'
     import { useMainStore } from '@/stores'
 
@@ -189,7 +205,8 @@
         hasBreakpoint:     { type: Boolean, default: false },
         currentProjectPath:{ type: String,  default: '' },
         blueprintVersion:  { type: [Number, String], default: 0 },
-        mode:              { type: String,  default: 'workflow' }
+        mode:              { type: String,  default: 'workflow' },
+        hoveredPort:       { type: String,  default: '' }
     })
 
     const emit = defineEmits([
@@ -199,10 +216,17 @@
         'node-contextmenu',
         'toggle-breakpoint',
         'start-connection',
+        'row-hover',
         'image-loaded'
     ])
 
     const store = useMainStore()
+
+    // 页面状态出口行：bound（已连线出口）+ pending（虚线占位）
+    const boundExitPorts = computed(() =>
+        (props.node?.ports?.dynamic || []).filter(p => p.status !== 'pending'))
+    const pendingExitPort = computed(() =>
+        (props.node?.ports?.dynamic || []).find(p => p.status === 'pending') || null)
 
     const headerStyle = computed(() => {
         const config = getNodeConfig(props.node.node_type, store.paramsDefinitions)
@@ -223,11 +247,7 @@
     // 端口距卡片顶部的像素偏移（网格坐标，与 getPortPosition 共用同一公式，随 node.h 联动）
     const portTop = (portType) => `${getNodePortTop(props.node, portType)}px`
 
-    const _iconRegistry = {
-        MousePointerClick, Timer, ScrollText, Image: ImageIcon, Type, GitBranch,
-        Filter, Variable, Code, AppWindow, MapPin, Navigation, Square,
-        Clock, SearchCheck, Binary, ListOrdered, FileCode, Target
-    }
+    const _iconRegistry = NODE_ICON_MAP
 
     const nodeIcon = computed(() => {
         const config = getNodeConfig(props.node.node_type, store.paramsDefinitions)

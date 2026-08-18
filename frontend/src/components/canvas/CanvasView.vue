@@ -18,6 +18,7 @@
                 :drawing-connection="drawingConnection"
                 :viewport="viewport"
                 :container-size="containerSize"
+                :hovered-port="hoveredPort"
                 @edge-click="onEdgeClick" />
 
             <!-- 任务组包围框（仅 workflow） -->
@@ -67,17 +68,19 @@
                 :key="node.node_id"
                 :node="node"
                 :selected="node.selected"
-                :is-active-debug="hasBreakpoints && store.currentActiveNodeId === node.node_id"
+                :is-active-debug="store.currentActiveNodeId === node.node_id && uiStore.hasBreakpoint(node.node_id)"
                 :has-breakpoint="hasBreakpoints ? uiStore.hasBreakpoint(node.node_id) : false"
                 :current-project-path="store.currentProjectPath"
                 :blueprint-version="store.blueprint?.version || 0"
                 :mode="mode"
+                :hovered-port="hoveredPort"
                 @node-mousedown="onNodeMouseDown"
                 @node-mouseup="onNodeMouseUpCard"
                 @node-dblclick="onNodeDoubleClick"
                 @node-contextmenu="openNodeContextMenu"
                 @toggle-breakpoint="handleToggleBreakpoint"
                 @start-connection="startConnection"
+                @row-hover="onRowHover"
                 @image-loaded="(data) => onImageLoaded(data)" />
         </div>
 
@@ -111,6 +114,7 @@
             :available-node-types="availableNodeTypes"
             :has-breakpoint="hasBreakpoints && customContextMenu.targetId ? uiStore.hasBreakpoint(customContextMenu.targetId) : false"
             :is-paused="store.isPaused"
+            :session-active="store.isRunning || store.isPaused"
             :show-debug-items="hasBreakpoints"
             :has-groups="hasGroups"
             @create-and-connect="createAndConnectNode"
@@ -119,18 +123,19 @@
             @add-breakpoint-and-run="handleAddBreakpointAndRun"
             @resume-execution="store.resumeExecution"
             @step-over="store.stepOverExecution"
-            @step-into="store.stepIntoExecution"
+            @stop-execution="store.stopExecution"
             @delete-node="handleDeleteNode"
             @delete-group="handleDeleteGroup"
             @canvas-new-node="handleCanvasNewNode"
-            @canvas-new-group="handleCanvasNewGroup" />
+            @copy-node="handleCopyNode"
+            @paste-node="handlePasteNode" />
     </div>
 </template>
 
 <script setup>
     import { ref, computed, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
     import { useMainStore, useUiStore } from '@/stores'
-    import { ElMessage, ElMessageBox } from 'element-plus'
+    import { ElMessage } from 'element-plus'
     import { Plus, Minus, Maximize } from 'lucide-vue-next'
     import { computeEdgePath, getSimpleOrthoPath } from '@/utils/canvasRouter'
     import {
@@ -141,6 +146,7 @@
     import { getNodeContentSpec, estimateNodeContentHeight } from '@/config/nodeRegistry'
     import { getNextZIndex } from '@/utils/zIndexManager'
     import { deriveEdges, normalizePort } from '@/utils/workflowEdgeModel'
+    import { buildNodePorts } from '@/utils/portModel'
 
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { useViewport } from '@/composables/useViewport'
@@ -174,9 +180,8 @@
         'update-tasks',            // (tasks) 节点/组拖拽结算后的完整任务组数组（两 Tab 同构）
         'add-edge',                // ({source, target, source_port})
         'remove-edge',             // ({sourceNodeId, legacyPort, candIndex, edge_id, targetNodeId})
-        'create-node',             // ({nodeId, type, position, groupId, sourceNodeId, portType})
+        'create-node',             // ({nodeId, type, position, groupId, sourceNodeId, portType, params?, nodeName?})
         'delete-node',             // ({nodeId, taskId})
-        'create-group',            // ({name})
         'delete-group'             // ({taskId})
     ])
 
@@ -225,6 +230,7 @@
     const dynamicImageHeights = reactive({})
     const tallImageFlags = reactive({})
     const selectedEdgeId = ref(null)
+    const hoveredPort = ref('')   // 行 ↔ 端口 ↔ 连线 悬停联动（存端口名，如 branch_1 / exit_0）
     const localSelectedNodeIds = ref([])
     // 边路径缓存：key = 两端点(id/坐标/高度)+端口+选项+障碍签名（排除被拖节点）
     const routeCache = new Map()
@@ -313,92 +319,34 @@
     // 扁平边：统一结构 { sourceNodeId, targetNodeId, legacyPort, isFailFlag, edgeId?, extra }
     const flatEdges = computed(() => deriveEdges(props.edges))
 
-    // 已连线端口集合（从统一扁平边派生，避免与 renderNodes 循环依赖）
-    const connectedPorts = computed(() => {
-        const map = {}
-        for (const edge of flatEdges.value) {
-            const ports = map[edge.sourceNodeId] || (map[edge.sourceNodeId] = new Set())
-            ports.add(edge.legacyPort)
-        }
-        return map
-    })
-
     const FAILURE_PORT_TYPES = ['image_recognition', 'ocr_recognition', 'branch', 'logic_check']
 
-    // 动态端口定义（按节点类型统一：branch→候选条件、page_state→出口列表）
-    function getDefinedDynamicPorts(node, nodeType) {
-        if (nodeType === 'branch') {
-            return (node.params?.candidates || []).map((c, i) => ({
-                name: `branch_${i}`,
-                label: `分支 ${i + 1}`
-            }))
-        }
-        if (nodeType === 'page_state') {
-            // 页面状态出口列表内嵌 params（文件形态，与 workflow 节点同构）
-            return (node.params?.exits || []).map((ex, i) => ({
-                name: `exit_${i}`,
-                label: ex?.label || ex?.exit_action || `出口 ${i + 1}`
-            }))
-        }
-        return []
+    // 行/端口悬停联动：候选行、出口行、端口悬停时高亮对应端口与其出边（EdgeLayer 消费 hoveredPort）
+    const onRowHover = (portName) => {
+        hoveredPort.value = portName || ''
     }
 
-    // 为节点构建端口模型（定义存在 ∪ 已连线；含 success/failure/dynamic 可见性与 connected 状态）
-    function buildNodePorts(node) {
-        const connectedSet = connectedPorts.value[node.node_id]
-        const has = (p) => (connectedSet ? connectedSet.has(p) : false)
-        const nodeType = node.type || node.node_type
-
-        const definedDynamic = getDefinedDynamicPorts(node, nodeType)
-
-        const definedNames = definedDynamic.map(d => d.name)
-        const connectedDynamic = []
-        for (const p of connectedSet || []) {
-            const name = p === 'exit' ? 'exit_0' : p
-            const isDynamic = p === 'exit' || p.startsWith('branch_') || p.startsWith('exit_')
-            if (isDynamic && !definedNames.includes(name)) {
-                connectedDynamic.push({ name, label: name === 'exit_0' ? '出口 1' : name })
-            }
-        }
-        const dynamic = [...definedDynamic, ...connectedDynamic].sort((a, b) => {
-            const ai = parseInt(a.name.split('_')[1], 10) || 0
-            const bi = parseInt(b.name.split('_')[1], 10) || 0
-            return ai - bi
-        })
-
-        return {
-            success: { visible: true, connected: has('succ') || has('success') },
-            failure: {
-                visible: FAILURE_PORT_TYPES.includes(nodeType) || has('fail') || has('failure'),
-                connected: has('fail') || has('failure')
-            },
-            dynamic: dynamic.map(d => ({
-                ...d,
-                connected: has(d.name) || (d.name === 'exit_0' && has('exit'))
-            }))
-        }
-    }
-
-    // 内容区高度（注册表驱动，两模式同一套估算；图片节点用加载后的实际宽高比二次修正）
-    const resolveContentHeight = (node) => {
+    // 内容区高度（注册表驱动，两模式同一套估算；图片节点用加载后的实际宽高比二次修正；
+    // page_state 出口行数由动态端口推导（bound + pending 虚线占位））
+    const resolveContentHeight = (node, dynamicCount) => {
         const nodeType = node.type || node.node_type
         const spec = getNodeContentSpec(nodeType)
         if (!spec) return 0
         if (spec.kind === 'image') {
             return Math.max(spec.minHeight, dynamicImageHeights[node.node_id] || 0)
         }
-        return estimateNodeContentHeight(node)
+        return estimateNodeContentHeight(node, dynamicCount)
     }
 
     // 渲染节点（两模式单一实现：统一遍历扁平节点流，尺寸/端口/选中逻辑完全共用）
     const renderNodes = computed(() => {
         const raw = flatNodes.value.map(n => {
-            const ports = buildNodePorts(n)
+            const ports = buildNodePorts(n, props.edges, FAILURE_PORT_TYPES)
             const rawPos = localDraftPositions[n.node_id] || n.position || n._fallbackPos || { x: 0, y: 0 }
             const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
             const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
             const w = NODE_WIDTH
-            const h = computeCanvasNodeHeight(resolveContentHeight(n), ports.dynamic.length)
+            const h = computeCanvasNodeHeight(resolveContentHeight(n, ports.dynamic.length), ports.dynamic.length)
             return {
                 ...n,
                 node_type: n.node_type || n.type,
@@ -529,7 +477,7 @@
 
     const onContextMenu = (e) => {
         e.preventDefault()
-        menuZIndex.value = getNextZIndex(e)
+        menuZIndex.value = getNextZIndex()  // ⚡ 不传事件对象（此前被当作 offset 拼接成字符串）
         customContextMenu.visible = false
 
         const nodeCard = e.target.closest('.canvas-node-card')
@@ -717,30 +665,83 @@
         }
     }
 
-    const handleCanvasNewGroup = async () => {
-        if (!props.hasGroups) {
-            // 无任务组模式：退化为新建节点
-            handleCanvasNewNode()
+    // ===== 节点复制 / 粘贴（Ctrl+C / Ctrl+V 与右键菜单） =====
+    const clipboardNode = ref(null)   // 剪贴板：节点快照 {node_type, node_name, params, delay_before, loop_count}
+    const lastMousePos = ref({ x: 0, y: 0 })   // 最近鼠标位置（世界坐标），Ctrl+V 落点兜底
+
+    const handleCopyNode = () => {
+        const targetId = customContextMenu.targetId || localSelectedNodeIds.value[0]
+        const node = renderNodes.value.find(n => n.node_id === targetId)
+        if (!node) {
+            ElMessage.warning('请先选中要复制的节点')
             return
         }
+        clipboardNode.value = {
+            node_type: node.node_type,
+            node_name: node.node_name,
+            params: JSON.parse(JSON.stringify(node.params || {})),
+            delay_before: node.delay_before,
+            loop_count: node.loop_count
+        }
         customContextMenu.visible = false
-        try {
-            const { value: groupName } = await ElMessageBox.prompt('请输入新任务组名称', '新建任务组', {
-                confirmButtonText: '确定',
-                cancelButtonText: '取消',
-                inputPattern: /\S+/,
-                inputErrorMessage: '任务组名称不能为空'
-            })
+        ElMessage.success(`已复制节点 [${node.node_name}]，Ctrl+V 或右键粘贴`)
+    }
 
-            if (groupName) {
-                emit('create-group', { name: groupName.trim() })
-                ElMessage.success(`任务组 [${groupName}] 创建成功`)
-            }
-        } catch (err) {
-            if (err !== 'cancel') {
-                ElMessage.error(err.message || '创建任务组失败')
+    const handlePasteNode = () => {
+        customContextMenu.visible = false
+        if (!clipboardNode.value) {
+            ElMessage.warning('剪贴板为空，请先复制节点 (Ctrl+C)')
+            return
+        }
+        pasteClipboardNode()
+    }
+
+    const pasteClipboardNode = () => {
+        if (!clipboardNode.value) return
+        const snap = clipboardNode.value
+        const nodeId = `node_${Date.now()}${Math.random().toString(36).slice(2, 5)}`
+        let position
+        let sourceNodeId = null
+        let portType = 'succ'
+
+        if (localSelectedNodeIds.value.length === 1) {
+            // 选中一个节点：粘贴到其成功线后面（右侧 + 自动连线 success）
+            const sel = renderNodes.value.find(n => n.node_id === localSelectedNodeIds.value[0])
+            if (sel) {
+                sourceNodeId = sel.node_id
+                position = {
+                    x: Math.round((sel.position.x + sel.w + 40) / GRID_SIZE) * GRID_SIZE,
+                    y: sel.position.y
+                }
             }
         }
+        if (!position) {
+            // 无选中：粘贴到最近鼠标位置（世界坐标）
+            const rect = containerRef.value?.getBoundingClientRect()
+            const cx = rect ? lastMousePos.value.x : 0
+            const cy = rect ? lastMousePos.value.y : 0
+            position = {
+                x: Math.round(cx / GRID_SIZE) * GRID_SIZE,
+                y: Math.round(cy / GRID_SIZE) * GRID_SIZE
+            }
+        }
+
+        const groupId = customContextMenu.targetType === 'canvas_in_group' ? customContextMenu.targetId : null
+        emit('create-node', {
+            nodeId,
+            type: snap.node_type,
+            position,
+            groupId,
+            sourceNodeId,
+            portType,
+            params: snap.params,
+            nodeName: snap.node_name,
+            delayBefore: snap.delay_before,
+            loopCount: snap.loop_count
+        })
+        localSelectedNodeIds.value = [nodeId]
+        syncSelectionToStore()
+        ElMessage.success(`已粘贴节点 [${snap.node_name}]`)
     }
 
     // ===== 连线计算 =====
@@ -770,13 +771,8 @@
             let endPt = null
             let rawPixelPoints = []
 
-            // 拓扑平行边：把已算好的 parallel 参数真正传给路由（垂直偏移分离）
-            const routeOptions = extra?.parallel
-                ? { offsetIndex: extra.parallel.offsetIndex, totalParallel: extra.parallel.totalParallel }
-                : {}
-
             const computeRoute = () => {
-                const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort, routeOptions)
+                const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort)
                 path = result.pathD
                 arrowDir = result.arrowDir
                 rawPixelPoints = result.points || []
@@ -795,7 +791,7 @@
                     const key = [
                         sourceNode.node_id, sourceNode.position.x, sourceNode.position.y, sourceNode.h,
                         targetNode.node_id, targetNode.position.x, targetNode.position.y, targetNode.h,
-                        standardPort, JSON.stringify(routeOptions), obstacleSig
+                        standardPort, obstacleSig
                     ].join('|')
                     const cached = routeCache.get(key)
                     if (cached) {
@@ -837,42 +833,30 @@
                 isFail,
                 markerUrl: `url(#arrow-${markerPrefix}-${arrowDir})`,
                 selected: selectedEdgeId.value === edgeIdBase,
-                labelX: startPt && endPt ? (startPt.x + endPt.x) / 2 : 0,
-                labelY: startPt && endPt ? (startPt.y + endPt.y) / 2 - 10 : 0,
                 rawPixelPoints
             })
         }
 
-        // 统一扁平边流：同一走廊的多条边（同源同目标）按平行序列分离，两模式一致
-        const parallelCount = {}
-        const parallelIndex = {}
+        // 统一扁平边流：同走廊多边用边序号做 edgeIdBase 去重后缀（不再做平行偏移）
+        const corridorCount = {}
         const flatEdgeList = flatEdges.value
-        flatEdgeList.forEach(edge => {
-            const key = `${edge.sourceNodeId}-${edge.targetNodeId}`
-            parallelCount[key] = (parallelCount[key] || 0) + 1
-        })
         for (const derived of flatEdgeList) {
             const sourceNode = allNodes.find(n => n.node_id === derived.sourceNodeId)
             const targetNode = allNodes.find(n => n.node_id === derived.targetNodeId)
             if (!sourceNode || !targetNode) continue
 
             const key = `${derived.sourceNodeId}-${derived.targetNodeId}`
-            parallelIndex[key] = (parallelIndex[key] || 0) + 1
-            const offsetIndex = parallelIndex[key] - 1
-            const totalParallel = parallelCount[key]
+            corridorCount[key] = (corridorCount[key] || 0) + 1
 
             pushEdge({
                 sourceNode,
                 targetNode,
                 legacyPort: derived.legacyPort,
-                edgeIdBase: derived.edgeIdBase || `e_${derived.sourceNodeId}_${derived.targetNodeId}_${parallelIndex[key]}`,
+                edgeIdBase: derived.edgeIdBase || `e_${derived.sourceNodeId}_${derived.targetNodeId}_${corridorCount[key]}`,
                 isFailFlag: derived.isFailFlag,
                 edgeId: derived.edgeId,
                 candIndex: derived.candIndex,
-                extra: {
-                    ...derived.extra,
-                    parallel: { offsetIndex, totalParallel }
-                }
+                extra: derived.extra
             })
         }
 
@@ -889,12 +873,9 @@
                 edges.push({
                     id: 'temp_drawing',
                     path: pathStr,
-                    label: '',
                     isFail: portType === 'fail' || portType === 'failure',
                     markerUrl: '',
                     selected: false,
-                    labelX: 0,
-                    labelY: 0,
                     gridPoints: [],
                     rawPixelPoints: [startPt, mousePt]
                 })
@@ -1053,6 +1034,8 @@
         draggedSourceGroupSnapshot.value = null
         ghostPlaceholder.value = null
 
+        selectedEdgeId.value = null
+
         ghostPlaceholder.value = {
             node_id: `ghost_${node.node_id}`,
             position: { ...node.position },
@@ -1094,6 +1077,15 @@
 
     const onGlobalMouseMove = (e) => {
         isCtrlHeldRef.value = e.ctrlKey
+
+        // 记录最近鼠标位置（世界坐标），供 Ctrl+V 粘贴定位
+        if (containerRef.value) {
+            const rect = containerRef.value.getBoundingClientRect()
+            lastMousePos.value = {
+                x: (e.clientX - rect.left - viewport.value.x) / viewport.value.zoom,
+                y: (e.clientY - rect.top - viewport.value.y) / viewport.value.zoom
+            }
+        }
 
         if (isPanning.value) {
             viewport.value.x = e.clientX - panStart.value.x
@@ -1602,6 +1594,20 @@
     const globalKeydownHandler = (e) => {
         if (e.key === 'Control') {
             isCtrlHeldRef.value = true
+        }
+
+        // Ctrl+C 复制选中节点 / Ctrl+V 粘贴（输入框聚焦时不触发）
+        const ctrl = e.ctrlKey || e.metaKey
+        if (ctrl && (e.key === 'c' || e.key === 'v') && !checkInputFocus()) {
+            if (e.key === 'c') {
+                if (localSelectedNodeIds.value.length > 0) {
+                    customContextMenu.targetId = localSelectedNodeIds.value[0]
+                    handleCopyNode()
+                }
+            } else {
+                pasteClipboardNode()
+            }
+            return
         }
 
         if ((e.key === 'Delete' || e.key === 'Backspace') && !checkInputFocus()) {

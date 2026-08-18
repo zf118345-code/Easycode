@@ -1,15 +1,17 @@
 # core/params/base/image_recognition.py
 
+from .defaults import NODE_DEFAULTS
+
 PARAM_DEFINITIONS = {
     'image_recognition': {
         'label': '图像识别',
         'modes': ['workflow', 'topology'],
         'params': {
             'image_source': {'type': 'file', 'default': '', 'label': '模板图片'},
-            'gray_scale': {'type': 'bool', 'default': True, 'label': '去除背景干扰 (灰度处理)'},
+            'gray_scale': {'type': 'bool', 'default': NODE_DEFAULTS['gray_scale'], 'label': '去除背景干扰 (灰度处理)'},
             'gray_threshold': {
                 'type': 'int',
-                'default': 127,
+                'default': NODE_DEFAULTS['gray_threshold'],
                 'label': '二值化灰度阈值',
                 'min': 0,
                 'max': 255,
@@ -18,7 +20,7 @@ PARAM_DEFINITIONS = {
             },
             'threshold': {
                 'type': 'int',
-                'default': 85,
+                'default': NODE_DEFAULTS['threshold'],
                 'label': '匹配相似度',
                 'suffix': '%',  # ⚡ 增加单位后缀，驱动 ControlNumber 正确显示 0-99%
                 'min': 1,
@@ -26,7 +28,7 @@ PARAM_DEFINITIONS = {
             },
             'timeout': {
                 'type': 'int',
-                'default': 3000,
+                'default': NODE_DEFAULTS['timeout'],
                 'label': '匹配超时时长',
                 'suffix': 'ms',  # ⚡ 增加单位后缀
                 'min': 100,
@@ -39,7 +41,7 @@ PARAM_DEFINITIONS = {
                     {'value': 'recorded', 'label': '录制时的坐标区域'},
                     {'value': 'custom', 'label': '自定义区域'},
                 ],
-                'default': 'fullwindow',
+                'default': NODE_DEFAULTS['region_type'],
                 'label': '匹配区域',
             },
             'region_value': {
@@ -51,7 +53,7 @@ PARAM_DEFINITIONS = {
             'on_success_action': {
                 'type': 'select',
                 'options': [{'value': 'noop', 'label': '无操作'}, {'value': 'click_center', 'label': '点击目标中心'}],
-                'default': 'click_center',
+                'default': NODE_DEFAULTS['on_success_action'],
                 'label': '识别成功后操作',
             },
             },
