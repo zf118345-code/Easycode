@@ -583,7 +583,7 @@ class FrameRecordingService:
                             with self._lock:
                                 self._state['backpressure_count'] = int(self._state.get('backpressure_count') or 0) + 1
                             if self._writer_error:
-                                raise FrameRecordingError(f'录制写入线程失败: {self._writer_error}')
+                                raise FrameRecordingError(f'录制写入线程失败: {self._writer_error}') from self._writer_error
                     consecutive_errors = 0
                     if target_fps > 0:
                         remaining = (1.0 / target_fps) - (time.monotonic() - capture_started)

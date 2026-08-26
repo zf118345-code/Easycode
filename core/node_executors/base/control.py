@@ -51,7 +51,7 @@ class ControlNodeExecutor(BaseNodeExecutor):
             return self.build_result(True)
 
         context.log(
-            f'🎛️ [控件操作] 查找控件 | 方式: {by} | 标识: {target!r} | '
+            f'[控件操作] 查找控件 | 方式: {by} | 标识: {target!r} | '
             f'窗口: {window_title or "全部"} | 序号: {index} | 超时: {timeout_ms}ms'
         )
         if by.startswith('uia_'):

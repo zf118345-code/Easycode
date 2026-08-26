@@ -15,9 +15,6 @@ from PIL import Image, ImageDraw
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if os.fspath(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, os.fspath(PROJECT_ROOT))
-PROJECT_SITE_PACKAGES = PROJECT_ROOT / '.venv' / 'Lib' / 'site-packages'
-if PROJECT_SITE_PACKAGES.is_dir() and os.fspath(PROJECT_SITE_PACKAGES) not in sys.path:
-    sys.path.insert(1, os.fspath(PROJECT_SITE_PACKAGES))
 
 from core.project_schema import new_project_documents
 from core.security import atomic_write_json
@@ -137,11 +134,6 @@ def create(target: Path) -> dict:
                 edge('main_edge_start_call', 'main_log_start', 'main_call_increment'),
                 edge('main_edge_call_end', 'main_call_increment', 'main_log_end', 'outcome_0', success_outcome),
             ],
-            'blocks': [{
-                'block_id': 'block_main_acceptance', 'name': '主流程验收',
-                'description': '函数调用与自动保存基础链路', 'color': 'orange',
-                'x': 40, 'y': 40, 'width': 760, 'height': 220,
-            }],
         },
         'functions': [{
             'function_id': function_id, 'name': '计数加一',
@@ -178,10 +170,6 @@ def create(target: Path) -> dict:
                     edge('function_edge_entry_calculate', 'function_increment_entry', 'function_increment_calculate'),
                     edge('function_edge_calculate_return', 'function_increment_calculate', 'function_increment_return'),
                 ],
-                'blocks': [{
-                    'block_id': 'block_function_calculate', 'name': '计算与返回',
-                    'x': 40, 'y': 40, 'width': 760, 'height': 240,
-                }],
             },
         }],
         'function_folders': [],
@@ -197,10 +185,6 @@ def create(target: Path) -> dict:
             }],
         }, 100, 100)],
         'edges': [],
-        'blocks': [{
-            'block_id': 'block_page_sale', 'name': '售票页面',
-            'x': 40, 'y': 40, 'width': 360, 'height': 220,
-        }],
     }
     BlueprintService.save_topology(os.fspath(target), topology, create_snapshot=False)
     session_id = _write_recording(target, template)

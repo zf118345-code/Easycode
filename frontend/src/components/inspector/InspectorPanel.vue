@@ -1,10 +1,11 @@
 <template>
     <div class="workflow-inspector-embedded">
-        <NodeInspectorPanel v-if="targetType === 'node' && currentNode" :node="currentNode" @save="commitActiveDraft" />
+        <NodeInspectorPanel v-if="targetType === 'node' && currentNode" :node="currentNode" @save="scheduleActiveDraftCommit" />
         <BatchInspectorPanel v-else-if="targetType === 'batch' && selectedNodes.length > 1" :nodes="selectedNodes" @save="saveCurrentGraph" />
+        <FunctionInspectorPanel v-else-if="activeFunction" />
         <div v-else class="inspector-empty-tip">
             <MousePointerClick :size="16" />
-            <span>选择一个节点查看属性；区块名称和范围直接在画布中编辑。</span>
+            <span>选择一个节点查看属性；打开函数后可在这里编辑函数契约。</span>
         </div>
     </div>
 </template>
@@ -14,6 +15,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { MousePointerClick } from 'lucide-vue-next'
 import { useIdeStore, useUiStore } from '@/stores'
 import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
+import FunctionInspectorPanel from './panels/FunctionInspectorPanel.vue'
 import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
 
 const store = useIdeStore()
@@ -22,6 +24,8 @@ const currentNode = ref(null)
 const currentGraphMode = ref('workflow')
 const targetType = ref('none')
 let hydratingDraft = false
+let draftCommitQueued = false
+let draftCommitToken = 0
 const clone = value => JSON.parse(JSON.stringify(value))
 
 const workflowGraphs = computed(() => [
@@ -31,8 +35,13 @@ const workflowGraphs = computed(() => [
 const graphsForMode = mode => mode === 'topology' ? [store.blueprint?.page_map].filter(Boolean) : workflowGraphs.value
 const activeGraph = computed(() => {
     if (store.canvasMode === 'topology') return store.blueprint?.page_map || null
+    if (store.canvasMode === 'function' && store.functionWorkspaceEmpty) return null
     if (store.currentTaskId === 'main') return store.blueprint?.main_graph || null
     return (store.blueprint?.functions || []).find(item => item.function_id === store.currentTaskId)?.graph || store.blueprint?.main_graph || null
+})
+const activeFunction = computed(() => {
+    if (store.canvasMode !== 'function' || store.functionWorkspaceEmpty) return null
+    return (store.blueprint?.functions || []).find(item => item.function_id === store.currentTaskId) || null
 })
 const selectedNodes = computed(() => {
     const ids = new Set(uiStore.selectedNodeIds || [])
@@ -55,7 +64,21 @@ function commitNodeDraft(draft = currentNode.value) {
     }
     return false
 }
-const commitActiveDraft = () => targetType.value === 'node' && currentNode.value ? commitNodeDraft() : undefined
+const commitActiveDraft = () => {
+    draftCommitToken += 1
+    draftCommitQueued = false
+    return targetType.value === 'node' && currentNode.value ? commitNodeDraft() : undefined
+}
+const scheduleActiveDraftCommit = () => {
+    if (hydratingDraft || draftCommitQueued || targetType.value !== 'node' || !currentNode.value) return
+    draftCommitQueued = true
+    const token = ++draftCommitToken
+    queueMicrotask(() => {
+        if (token !== draftCommitToken) return
+        draftCommitQueued = false
+        commitNodeDraft()
+    })
+}
 
 watch(() => [store.canvasMode, store.currentTaskId, [...(uiStore.selectedNodeIds || [])], uiStore.inspectorSyncTick], () => {
     commitActiveDraft()
@@ -77,7 +100,7 @@ watch(() => [store.canvasMode, store.currentTaskId, [...(uiStore.selectedNodeIds
 }, { immediate: true, deep: false, flush: 'sync' })
 
 watch(currentNode, value => {
-    if (!hydratingDraft && targetType.value === 'node' && value) commitNodeDraft(value)
+    if (!hydratingDraft && targetType.value === 'node' && value) scheduleActiveDraftCommit()
 }, { deep: true, flush: 'sync' })
 
 onBeforeUnmount(commitActiveDraft)

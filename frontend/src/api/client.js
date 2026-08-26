@@ -13,6 +13,51 @@ const client = axios.create({
     },
 })
 
+export function normalizeApiError(error) {
+    const response = error?.response
+    const status = response?.status
+    const payload = response?.data
+    const structuredDetail = payload?.detail
+    const serverMessage = (
+        (typeof structuredDetail === 'string' && structuredDetail)
+        || structuredDetail?.message
+        || payload?.message
+        || payload?.data?.message
+    )
+    let message = '请求失败'
+
+    if (response) {
+        const fallbackByStatus = {
+            408: '请求超时，请稍后重试',
+            409: '当前状态已变化，请刷新后重试',
+            422: '提交的数据不符合要求，请检查后重试',
+            429: '操作过于频繁，请稍后重试',
+            503: '所需服务暂时不可用，请检查环境后重试',
+        }
+        message = serverMessage || fallbackByStatus[status] || `服务器错误 (${status})`
+    } else if (error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) {
+        message = '请求超时，后端可能正忙或无响应，请稍后重试'
+    } else if (error?.request) {
+        message = '网络异常，无法连接到服务器'
+    } else {
+        message = error?.message || '未知错误'
+    }
+
+    const normalized = new Error(typeof message === 'string' ? message : '请求失败')
+    normalized.name = 'ApiError'
+    normalized.kind = response
+        ? 'http'
+        : ((error?.code === 'ECONNABORTED' || /timeout/i.test(error?.message || '')) ? 'timeout' : 'network')
+    normalized.original = error
+    normalized.status = status
+    normalized.code = payload?.code ?? error?.code
+    normalized.detail = payload?.detail
+    normalized.details = payload?.data ?? structuredDetail
+    normalized.retryAfter = response?.headers?.['retry-after'] ?? null
+    normalized.retryable = !response || status === 408 || status === 429 || status >= 500
+    return normalized
+}
+
 client.interceptors.request.use(
     (config) => {
         // 保存队列可以显式携带旧工作区身份；没有显式值时使用当前身份。
@@ -32,28 +77,7 @@ client.interceptors.response.use(
     (response) => {
         return response.data
     },
-    (error) => {
-        let message = '请求失败'
-        if (error.response) {
-            const status = error.response.status
-            const detail = error.response.data?.detail || error.response.data?.message
-            message = detail || `服务器错误 (${status})`
-        } else if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
-            message = '请求超时，后端可能正忙或无响应，请稍后重试'
-        } else if (error.request) {
-            message = '网络异常，无法连接到服务器'
-        } else {
-            message = error.message || '未知错误'
-        }
-
-        // 保留原始错误，向调用方暴露统一的人类可读消息。
-        const wrappedError = new Error(message)
-        wrappedError.original = error
-        wrappedError.status = error.response?.status
-        wrappedError.detail = error.response?.data?.detail
-
-        return Promise.reject(wrappedError)
-    }
+    (error) => Promise.reject(normalizeApiError(error))
 )
 
 export default client

@@ -59,7 +59,7 @@ def test_canvas_project_asset_topology_and_execution_roundtrip(client, tmp_path)
     assert thumb.status_code == 200
     assert thumb.headers['content-type'].startswith('image/png')
 
-    # Main-flow canvas: block, positioned nodes, stable edge ports and an image node.
+    # Main-flow canvas: positioned nodes, stable edge ports and an image node.
     workflow = {
         'main_graph': {
             'graph_id': 'main',
@@ -100,10 +100,6 @@ def test_canvas_project_asset_topology_and_execution_roundtrip(client, tmp_path)
                     'source_port': 'success', 'source_port_id': 'success',
                 },
             ],
-            'blocks': [{
-                'block_id': 'block_prepare', 'name': '准备阶段',
-                'x': 40, 'y': 40, 'width': 720, 'height': 220,
-            }],
         },
         'functions': [],
         'function_folders': [],
@@ -128,7 +124,6 @@ def test_canvas_project_asset_topology_and_execution_roundtrip(client, tmp_path)
                 'loop_count': 1, 'enabled': True,
         }],
         'edges': [],
-        'blocks': [],
     }
     saved_topology = client.post('/api/topology/save', headers=headers, json={
         'project_path': str(project), 'topology_data': topology,

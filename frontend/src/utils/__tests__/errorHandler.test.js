@@ -29,6 +29,24 @@ describe('errorHandler', () => {
         expect(result.type).toBe(ERROR_TYPES.SERVER)
     })
 
+    it('识别归一化后的客户端超时，而不是误报为断网', () => {
+        const error = new Error('请求超时')
+        error.name = 'ApiError'
+        error.kind = 'timeout'
+        expect(handleError(error, { silent: true }).type).toBe(ERROR_TYPES.TIMEOUT)
+    })
+
+    it.each([
+        [409, ERROR_TYPES.CONFLICT],
+        [408, ERROR_TYPES.TIMEOUT],
+        [429, ERROR_TYPES.RATE_LIMIT],
+        [503, ERROR_TYPES.SERVICE_UNAVAILABLE],
+    ])('handleError 对状态码 %s 返回精确类型', (status, expected) => {
+        const error = new Error('request failed')
+        error.status = status
+        expect(handleError(error, { silent: true }).type).toBe(expected)
+    })
+
     it('withErrorHandling 成功时返回 success', async () => {
         const result = await withErrorHandling(async () => 42)
         expect(result.success).toBe(true)

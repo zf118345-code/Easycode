@@ -11,6 +11,7 @@ import { useProjectStore } from './projectStore'
 import { useUiStore } from './uiStore'
 import { useExecutionStore } from './executionStore'
 import { useContextStore } from './contextStore'
+import { MAIN_GRAPH_ID } from '@/utils/flowModel'
 
 export const useIdeStore = defineStore('ide', {
     state: () => ({}),
@@ -47,10 +48,9 @@ export const useIdeStore = defineStore('ide', {
         primaryNodeId() { return useUiStore().primaryNodeId },
         selectionAnchorId() { return useUiStore().selectionAnchorId },
         selectedEdgeIds() { return useUiStore().selectedEdgeIds },
-        selectedGroupId() { return useUiStore().selectedGroupId },
         selectedNode() { return useUiStore().selectedNode },
         canvasMode() { return useUiStore().canvasMode },
-        batchMode() { return useUiStore().batchMode },
+        functionWorkspaceEmpty() { return useUiStore().functionWorkspaceEmpty },
         breakpoints() { return useUiStore().breakpoints },
         hasBreakpoints() { return useUiStore().hasBreakpoints },
         focusTarget() { return useUiStore().focusTarget },
@@ -98,20 +98,66 @@ export const useIdeStore = defineStore('ide', {
         async deleteFunction(functionId) { return useProjectStore().deleteFunction(functionId) },
 
         // ===== uiStore 关键方法代理 =====
-        async setCanvasMode(mode) {
+        async _flushCurrentCanvasForNavigation() {
             // 切换前排空所有自动保存队列，保证属性面板最后一次输入和
             // 画布结构已经持久化后再改变数据源。
             const projectStore = useProjectStore()
             const uiStore = useUiStore()
-            await projectStore.flushPendingSaves()
+            let queuedSaveError = null
+            try {
+                await projectStore.flushPendingSaves()
+            } catch (error) {
+                // The queue already stopped and preserved the exact error.  A
+                // navigation gesture is also an explicit retry opportunity:
+                // run one authoritative write below instead of permanently
+                // trapping the user behind a stale transient failure.
+                queuedSaveError = error
+            }
             // 结构操作通常即时保存，但如果之前一次请求因图引用不完整而
             // 失败，队列中不会留下任务。切换前再对当前内存图做一次完整
             // 规范化与权威保存；失败时绝不改变 canvasMode。
             if (projectStore.currentProjectPath && !projectStore.readOnly) {
                 if (uiStore.canvasMode === 'topology') await projectStore.saveTopologyData()
                 else await projectStore.saveWorkflowImmediately()
+            } else if (queuedSaveError) {
+                throw queuedSaveError
             }
+        },
+        async setCanvasMode(mode) {
+            await this._flushCurrentCanvasForNavigation()
+            const uiStore = useUiStore()
             return uiStore.setCanvasMode(mode)
+        },
+        async navigateToGraph(mode, taskId = null) {
+            if (!['workflow', 'function', 'topology'].includes(mode)) {
+                throw new Error(`未知画布模式: ${mode || '(空)'}`)
+            }
+            // This is the only navigation transaction: persist the source
+            // graph first, then change the task and visible canvas together.
+            await this._flushCurrentCanvasForNavigation()
+            const projectStore = useProjectStore()
+            const uiStore = useUiStore()
+            uiStore.clearSelection()
+
+            if (mode === 'workflow') {
+                await projectStore.loadTaskData(MAIN_GRAPH_ID)
+                uiStore.setCanvasMode('workflow')
+                return projectStore.currentTaskData
+            }
+            if (mode === 'topology') {
+                uiStore.setCanvasMode('topology')
+                return projectStore.topologyData
+            }
+
+            if (!taskId) {
+                uiStore.setCanvasMode('function')
+                uiStore.enterFunctionLibrary()
+                return null
+            }
+            await projectStore.loadTaskData(taskId)
+            uiStore.setCanvasMode('function')
+            uiStore.showFunctionGraph()
+            return projectStore.currentTaskData
         },
         selectNode(nodeId) { return useUiStore().selectNode(nodeId) },
         selectNodes(nodeIds, options) { return useUiStore().selectNodes(nodeIds, options) },
@@ -119,10 +165,8 @@ export const useIdeStore = defineStore('ide', {
         selectEdge(edgeId, additive) { return useUiStore().selectEdge(edgeId, additive) },
         clearEdgeSelection() { return useUiStore().clearEdgeSelection() },
         clearSelection() { return useUiStore().clearSelection() },
-        setSelectedGroup(groupId) { return useUiStore().setSelectedGroup(groupId) },
-        toggleBatchMode() { return useUiStore().toggleBatchMode() },
-        enterBatchMode() { return useUiStore().enterBatchMode() },
-        exitBatchMode() { return useUiStore().exitBatchMode() },
+        enterFunctionLibrary() { return useUiStore().enterFunctionLibrary() },
+        showFunctionGraph() { return useUiStore().showFunctionGraph() },
         toggleNodeSelection(nodeId) { return useUiStore().toggleNodeSelection(nodeId) },
         selectAllNodes() { return useUiStore().selectAllNodes() },
         async batchDeleteNodes() { return useUiStore().batchDeleteNodes() },

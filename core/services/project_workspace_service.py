@@ -8,14 +8,12 @@ switching projects invalidates all delayed requests from the previous project.
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 import platform
 import shutil
 import socket
 import tempfile
 import threading
-import time
 import uuid
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
@@ -67,8 +65,15 @@ class ProjectWorkspaceManager:
     ) -> None:
         default_root = Path(__file__).resolve().parents[2]
         self.source_root = self.canonicalize(source_root or str(default_root))
+        configured_app_data = os.environ.get('EASYCODE_APP_DATA_DIR')
         local_app_data = os.environ.get('LOCALAPPDATA')
-        default_app_data = Path(local_app_data) / 'EasyCode' if local_app_data else Path.home() / '.easycode-app'
+        default_app_data = (
+            Path(configured_app_data)
+            if configured_app_data
+            else Path(local_app_data) / 'EasyCode'
+            if local_app_data
+            else Path.home() / '.easycode-app'
+        )
         self.app_data_dir = self.canonicalize(app_data_dir or str(default_app_data))
         self.process_id = int(process_id or os.getpid())
         self.machine = socket.gethostname() or platform.node() or 'unknown'
@@ -126,7 +131,7 @@ class ProjectWorkspaceManager:
         candidates: list[tuple[str, str]] = []
         for relative in (*PROJECT_DOCUMENTS, os.path.join('templates', 'assets.json')):
             candidates.append((relative.replace('\\', '/'), os.path.join(root, relative)))
-        for directory in ('templates', 'scripts'):
+        for directory in ('templates', 'scripts', 'capabilities'):
             base = os.path.join(root, directory)
             if not os.path.isdir(base):
                 continue
@@ -139,15 +144,30 @@ class ProjectWorkspaceManager:
                         continue
                     candidates.append((relative, full))
         result: dict[str, str] = {}
-        core_names = {name.replace('\\', '/') for name in (*PROJECT_DOCUMENTS, os.path.join('templates', 'assets.json'))}
         for relative, full in candidates:
             try:
                 stat = os.stat(full)
-                if relative in core_names:
-                    digest = hashlib.sha256(Path(full).read_bytes()).hexdigest()
-                    result[relative] = f'{stat.st_size}:{digest}'
-                else:
-                    result[relative] = f'{stat.st_size}:{stat.st_mtime_ns}'
+                # Project documents are written with atomic replacement, so a
+                # content change always produces a new mtime/size signature.
+                # Reading and hashing multi-megabyte workflow JSON on every
+                # focus/poll made external-change protection a UI hot path.
+                result[relative] = f'{stat.st_size}:{stat.st_mtime_ns}'
+            except FileNotFoundError:
+                result[relative] = 'missing'
+        return result
+
+    @classmethod
+    def _selected_fingerprint(cls, project_path: str, relative_paths: list[str] | tuple[str, ...]) -> dict[str, str]:
+        root = os.path.realpath(os.path.abspath(project_path))
+        result = {}
+        for raw_relative in relative_paths:
+            relative = str(raw_relative or '').replace('\\', '/').strip('/')
+            if not relative or relative.startswith('.') or '..' in relative.split('/'):
+                continue
+            full = os.path.join(root, *relative.split('/'))
+            try:
+                stat = os.stat(full)
+                result[relative] = f'{stat.st_size}:{stat.st_mtime_ns}'
             except FileNotFoundError:
                 result[relative] = 'missing'
         return result
@@ -571,7 +591,12 @@ class ProjectWorkspaceManager:
             pass
         return {'changed': bool(changed), 'paths': changed, 'identity_changed': identity_changed}
 
-    def acknowledge(self, workspace_id: str, generation: int) -> dict[str, Any]:
+    def acknowledge(
+        self,
+        workspace_id: str,
+        generation: int,
+        changed_paths: list[str] | tuple[str, ...] | None = None,
+    ) -> dict[str, Any]:
         path = self.require(workspace_id, generation)
         try:
             meta = load_document(path, PROJECT_FILE)
@@ -586,7 +611,10 @@ class ProjectWorkspaceManager:
                 project_name=str(meta['project_name']),
                 revision=int(meta['revision']),
             )
-            self._baseline_fingerprint = self._workspace_fingerprint(path)
+            if changed_paths is None:
+                self._baseline_fingerprint = self._workspace_fingerprint(path)
+            else:
+                self._baseline_fingerprint.update(self._selected_fingerprint(path, changed_paths))
             if name_changed:
                 self._save_recent(self._active)
         return {'acknowledged': True, 'revision': int(meta['revision'])}

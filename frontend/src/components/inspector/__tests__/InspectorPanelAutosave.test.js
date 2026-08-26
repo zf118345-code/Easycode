@@ -48,7 +48,7 @@ describe('InspectorPanel 自动保存', () => {
             variables: {},
             ui_state: {},
             settings: {},
-            main_graph: { graph_id: 'main', nodes: [], edges: [], blocks: [] },
+            main_graph: { graph_id: 'main', nodes: [], edges: [] },
             functions: [],
             function_folders: [],
             page_map: {
@@ -61,8 +61,7 @@ describe('InspectorPanel 自动保存', () => {
                         loop_count: 1,
                         params: {}
                     }],
-                edges: [],
-                blocks: []
+                edges: []
             }
         }
         const ui = useUiStore()

@@ -654,16 +654,24 @@ class CapabilityService:
             response_queue: queue.Queue = queue.Queue(maxsize=1)
             capability_context = CapabilityContext(executor, spec, cancellation)
 
-            def worker():
+            # Bind attempt-local objects. A timed-out capability can ignore
+            # cancellation and finish after the retry has already started;
+            # its late result must stay in the original response queue.
+            def worker(
+                entry=spec.entry,
+                context=capability_context,
+                response=response_queue,
+                bound_inputs=inputs,
+            ):
                 try:
-                    signature = inspect.signature(spec.entry)
+                    signature = inspect.signature(entry)
                     if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in signature.parameters.values()):
-                        raw = spec.entry(capability_context, **inputs)
+                        raw = entry(context, **bound_inputs)
                     else:
-                        raw = spec.entry(capability_context, inputs)
-                    response_queue.put(('ok', raw))
+                        raw = entry(context, bound_inputs)
+                    response.put(('ok', raw))
                 except BaseException as exc:  # daemon worker must always report a terminal result
-                    response_queue.put(('error', exc))
+                    response.put(('error', exc))
 
             thread = threading.Thread(target=worker, name=f'easycode-capability-{spec.capability_id}', daemon=True)
             thread.start()

@@ -7,6 +7,8 @@ import copy
 import json
 import os
 import tempfile
+import threading
+import uuid
 from typing import Any
 
 from core.player.schema import split_target
@@ -15,6 +17,7 @@ from core.player.schema import split_target
 class PlayerSecretService:
     PREFIX = 'dpapi:'
     FALLBACK_PREFIX = 'fernet:'
+    _fallback_key_lock = threading.Lock()
 
     @classmethod
     def _fallback_fernet(cls, storage_root: str | None = None):
@@ -24,15 +27,30 @@ class PlayerSecretService:
         root = os.path.abspath(storage_root) if storage_root else os.path.join(base, 'EasyCode', 'PlayerSecrets')
         os.makedirs(root, exist_ok=True)
         path = os.path.join(root, '.secret-key')
-        if not os.path.isfile(path):
-            temporary = path + '.tmp'
-            with open(temporary, 'wb') as stream:
-                stream.write(Fernet.generate_key())
-            try:
-                os.chmod(temporary, 0o600)
-            except OSError:
-                pass
-            os.replace(temporary, path)
+        with cls._fallback_key_lock:
+            if not os.path.isfile(path):
+                # Publish a completely written key with an atomic hard-link.
+                # Two Player processes may initialize simultaneously; only one
+                # link wins and every process subsequently reads that same key.
+                temporary = f'{path}.{uuid.uuid4().hex}.tmp'
+                try:
+                    with open(temporary, 'xb') as stream:
+                        stream.write(Fernet.generate_key())
+                        stream.flush()
+                        os.fsync(stream.fileno())
+                    try:
+                        os.chmod(temporary, 0o600)
+                    except OSError:
+                        pass
+                    try:
+                        os.link(temporary, path)
+                    except FileExistsError:
+                        pass
+                finally:
+                    try:
+                        os.remove(temporary)
+                    except FileNotFoundError:
+                        pass
         with open(path, 'rb') as stream:
             return Fernet(stream.read().strip())
 

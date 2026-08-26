@@ -5,12 +5,17 @@ from core.graph.builder import GraphBuilder
 from core.models import Node, Task, TopologyMap
 
 
-def _page(node_id, page_id, node_name, features=None):
-    return Node(
+def _page(node_id, page_id, node_name, features=None, *, is_popup=False):
+    node = Node(
         node_id=node_id, node_name=node_name, node_type='page_state',
-        params={'page_id': page_id, 'features': features or [{'condition_type': 'image_exists', 'image_source': 'x'}]},
+        params={
+            'page_id': page_id,
+            'features': features or [{'condition_type': 'image_exists', 'image_source': 'x'}],
+            'is_random_popup': is_popup,
+        },
         delay_before=0, loop_count=1,
     )
+    return node
 
 
 def _op(node_id, node_name, node_type='click'):
@@ -22,7 +27,7 @@ def make_topology():
     """主图：A→B；弹窗组「弹窗处理」：弹窗C→关闭C→（无出口）"""
     main = Task(task_id='t_main', task_name='主流程', nodes=[_page('pA', 'pageA', '主页A'), _page('pB', 'pageB', '主页B')])
     popup = Task(task_id='t_popup', task_name='弹窗处理', role='popup_handler', nodes=[
-        _page('pC', 'pageC', '弹窗C'), _op('closeC', '关闭弹窗C', 'click'),
+        _page('pC', 'pageC', '弹窗C', is_popup=True), _op('closeC', '关闭弹窗C', 'click'),
     ])
     edges = [
         {'edge_id': 'e1', 'source_node': 'pA', 'target_node': 'pB', 'canvas': 'topology', 'source_port': 'success'},
@@ -58,29 +63,12 @@ def test_popup_graphs_built_per_group():
     assert 'pageB' not in targets
 
 
-def test_is_popup_task_uses_explicit_role_or_tag():
+def test_is_popup_task_uses_only_explicit_page_flag():
     assert GraphBuilder.is_popup_task(Task(task_id='t1', task_name='弹窗处理', nodes=[])) is False
     assert GraphBuilder.is_popup_task(Task(task_id='t2', task_name='主流程', nodes=[])) is False
     assert GraphBuilder.is_popup_task(Task(task_id='t3', task_name='广告弹窗拦截', nodes=[])) is False
-    assert GraphBuilder.is_popup_task(Task(task_id='t4', task_name='系统旁路', role='popup_handler')) is True
-    assert GraphBuilder.is_popup_task(Task(task_id='t5', task_name='系统旁路', tags=['popup'])) is True
-
-
-def test_page_level_popup_flag_excludes_only_the_marked_page_from_navigation():
-    popup_page = _page('popup', 'popup_page', '随机弹窗')
-    popup_page.params['is_random_popup'] = True
-    regular_page = _page('regular', 'regular_page', '普通页面')
-    close = _op('close', '关闭')
-    task = Task(task_id='pages', task_name='页面地图', nodes=[popup_page, close, regular_page])
-    topology = TopologyMap(tasks=[task], edges=[
-        {'edge_id': 'popup_close', 'source_node': 'popup', 'target_node': 'close', 'source_port': 'success'},
-    ])
-
-    assert GraphBuilder.is_popup_task(task) is True
-    graph = GraphBuilder.build_topology_graph(topology)
-    assert 'popup_page' not in graph.node_index_map
-    assert 'regular_page' in graph.node_index_map
-    assert 'pages' in GraphBuilder.build_popup_graphs(topology)
+    assert GraphBuilder.is_popup_task(Task(task_id='t4', task_name='系统旁路', role='popup_handler')) is False
+    assert GraphBuilder.is_popup_task(Task(task_id='t6', task_name='页面地图', nodes=[_page('popup', 'popup', '弹窗', is_popup=True)])) is True
 
 
 def test_page_level_popup_flag_excludes_only_the_marked_page_from_navigation():
@@ -342,7 +330,7 @@ def test_popup_close_follows_exit_port_edges(monkeypatch):
     from core.models import Project
 
     popup = Task(task_id='t_popup', task_name='弹窗', role='popup_handler', nodes=[
-        _page('pC', 'pageC', '广告弹窗'), _op('closeC', '关闭弹窗', 'click'),
+        _page('pC', 'pageC', '广告弹窗', is_popup=True), _op('closeC', '关闭弹窗', 'click'),
     ])
     topo = TopologyMap(tasks=[popup], edges=[
         # ⚡ 端口为 exit_0（用户拓扑实际端口）
@@ -381,7 +369,7 @@ def test_popup_handling_restores_current_page(monkeypatch):
     from core.models import Project
 
     popup = Task(task_id='t_popup', task_name='弹窗', role='popup_handler', nodes=[
-        _page('pC', 'pageC', '广告弹窗'), _op('closeC', '关闭弹窗', 'click'),
+        _page('pC', 'pageC', '广告弹窗', is_popup=True), _op('closeC', '关闭弹窗', 'click'),
     ])
     topo = TopologyMap(tasks=[popup], edges=[
         {'edge_id': 'e1', 'source_node': 'pC', 'target_node': 'closeC', 'canvas': 'topology', 'source_port': 'exit_0'},
@@ -417,7 +405,7 @@ def test_popup_cooldown_prevents_repeat_handling(monkeypatch):
     from core.models import Project
 
     popup = Task(task_id='t_popup', task_name='弹窗', role='popup_handler', nodes=[
-        _page('pC', 'pageC', '广告弹窗'), _op('closeC', '关闭弹窗', 'click'),
+        _page('pC', 'pageC', '广告弹窗', is_popup=True), _op('closeC', '关闭弹窗', 'click'),
     ])
     topo = TopologyMap(tasks=[popup], edges=[
         {'edge_id': 'e1', 'source_node': 'pC', 'target_node': 'closeC', 'canvas': 'topology', 'source_port': 'exit_0'},
@@ -457,7 +445,7 @@ def test_popup_cooldown_expired_rehandles(monkeypatch):
     from core.models import Project
 
     popup = Task(task_id='t_popup', task_name='弹窗', role='popup_handler', nodes=[
-        _page('pC', 'pageC', '广告弹窗'), _op('closeC', '关闭弹窗', 'click'),
+        _page('pC', 'pageC', '广告弹窗', is_popup=True), _op('closeC', '关闭弹窗', 'click'),
     ])
     topo = TopologyMap(tasks=[popup], edges=[
         {'edge_id': 'e1', 'source_node': 'pC', 'target_node': 'closeC', 'canvas': 'topology', 'source_port': 'exit_0'},
@@ -492,8 +480,8 @@ def test_layered_popups_are_drained_before_main_flow(monkeypatch):
     from core.models import Project
 
     popup = Task(task_id='t_popup', task_name='弹窗', role='popup_handler', nodes=[
-        _page('p1', 'popup1', '第一层'), _op('c1', '关闭第一层'),
-        _page('p2', 'popup2', '第二层'), _op('c2', '关闭第二层'),
+        _page('p1', 'popup1', '第一层', is_popup=True), _op('c1', '关闭第一层'),
+        _page('p2', 'popup2', '第二层', is_popup=True), _op('c2', '关闭第二层'),
     ])
     topo = TopologyMap(tasks=[popup], edges=[
         {'source_node': 'p1', 'target_node': 'c1', 'source_port': 'success'},

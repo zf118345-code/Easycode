@@ -119,7 +119,7 @@ class ProjectExporter:
                 if str(item.get('folder_id')) in included_folder_ids
             ],
             'page_map': deepcopy(page_map) if needs_page_map else {
-                'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': [],
+                'schema_version': 3, 'nodes': [], 'edges': [],
             },
         })
         return result

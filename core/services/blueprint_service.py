@@ -2,7 +2,7 @@
 # 项目版本化文档存储服务
 #   - project.json  : project_name / variables / ui_state
 #   - workflow.json : { main_graph, functions, function_folders }
-#   - topology.json : { nodes, edges, blocks }（项目唯一页面地图）
+#   - topology.json : { nodes, edges }（项目唯一页面地图）
 # 当前格式只接受严格 v3 项目文档，不自动迁移、补建或猜测修复旧字段。
 
 import json
@@ -238,17 +238,16 @@ class BlueprintService:
             if not isinstance(data, dict):
                 raise HTTPException(status_code=400, detail='拓扑地图数据必须是字典类型')
             clean = cls._sanitize_for_json(data)
-            obsolete = {'tasks', 'collections', 'regions'} & set(clean)
+            obsolete = {'tasks', 'collections', 'regions', 'blocks'} & set(clean)
             if obsolete:
                 raise HTTPException(status_code=400, detail=f'topology.json 是唯一扁平页面地图，不支持: {", ".join(sorted(obsolete))}')
-            missing = {'nodes', 'edges', 'blocks'} - set(clean)
+            missing = {'nodes', 'edges'} - set(clean)
             if missing:
                 raise HTTPException(status_code=400, detail=f'topology.json 缺少字段: {", ".join(sorted(missing))}')
             topology_data = {
                 'schema_version': PROJECT_SCHEMA_VERSION,
                 'nodes': clean.get('nodes', []),
                 'edges': clean.get('edges', []),
-                'blocks': clean.get('blocks', []),
             }
             from core.services.template_library_service import TemplateLibraryService
             TemplateLibraryService.sanitize_tombstoned_graph(project_path, topology_data, 'topology')
@@ -328,7 +327,6 @@ class BlueprintService:
                     'schema_version': PROJECT_SCHEMA_VERSION,
                     'nodes': topology_clean.get('nodes', []),
                     'edges': topology_clean.get('edges', []),
-                    'blocks': topology_clean.get('blocks', []),
                 }
                 from core.services.template_library_service import TemplateLibraryService
                 TemplateLibraryService.sanitize_tombstoned_graph(project_path, topology, 'topology')

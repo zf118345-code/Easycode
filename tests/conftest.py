@@ -57,12 +57,11 @@ def sample_blueprint():
                     }
                 ],
                 'edges': [],
-                'blocks': [],
         },
         'functions': [],
         'function_folders': [],
         'variables': {'count': 0},
-        'page_map': {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []},
+        'page_map': {'schema_version': 3, 'nodes': [], 'edges': []},
         'ui_state': {},
         'settings': {},
     }

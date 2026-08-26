@@ -9,6 +9,22 @@ export const NODE_DEFAULTS = {
 }
 
 /**
+ * 参数定义来自后端 JSON，但进入 Pinia 后会被 Vue 包装为响应式 Proxy。
+ * structuredClone 不能克隆 Proxy，因此这里按项目文件的 JSON 持久化边界
+ * 逐层生成普通对象，同时确保每次创建节点都得到独立的数组/对象。
+ */
+function cloneJsonDefault(value) {
+    if (value === null || typeof value !== 'object') return value
+    if (Array.isArray(value)) return value.map(item => cloneJsonDefault(item))
+
+    const copy = {}
+    for (const [key, item] of Object.entries(value)) {
+        copy[key] = cloneJsonDefault(item)
+    }
+    return copy
+}
+
+/**
  * 按后端 schema 的 default 构建节点初始参数（隐藏字段跳过，由创建处特判生成）
  * @param {string} nodeType 节点类型
  * @param {Object} paramsDefinitions 后端 /api/params 定义（projectStore.paramsDefinitions）
@@ -20,16 +36,12 @@ export function buildNodeDefaultParams(nodeType, paramsDefinitions) {
     for (const [key, config] of Object.entries(defs)) {
         if (config.hidden) {
             if (config.default !== undefined && (key.endsWith('_reference_size') || key === 'coordinate_space')) {
-                params[key] = typeof structuredClone === 'function'
-                    ? structuredClone(config.default)
-                    : JSON.parse(JSON.stringify(config.default))
+                params[key] = cloneJsonDefault(config.default)
             }
             continue
         }
         if (config.default !== undefined) {
-            params[key] = typeof structuredClone === 'function'
-                ? structuredClone(config.default)
-                : JSON.parse(JSON.stringify(config.default))
+            params[key] = cloneJsonDefault(config.default)
         } else if (config.type === 'list_int2' || config.type === 'list_int4') {
             params[key] = [0, 0, 0, 0].slice(0, config.type === 'list_int2' ? 2 : 4)
         } else if (config.type === 'list_dict') {
@@ -38,7 +50,7 @@ export function buildNodeDefaultParams(nodeType, paramsDefinitions) {
             const subDefaults = {}
             for (const [subKey, subConfig] of Object.entries(config.sub || {})) {
                 if (subConfig.default !== undefined) {
-                    subDefaults[subKey] = Array.isArray(subConfig.default) ? [...subConfig.default] : subConfig.default
+                    subDefaults[subKey] = cloneJsonDefault(subConfig.default)
                 }
             }
             if (Object.keys(subDefaults).length) {

@@ -34,11 +34,11 @@ v-if="currentDisplayUrl && !hasError"
 
         <div class="hover-action-overlay">
             <button type="button" class="overlay-half left-half" @click.stop="$emit('openBrowser', 'select')">
-                <span class="action-tip">选择图片</span>
+                <span class="action-tip"><FolderOpen :size="15" />选择图片</span>
             </button>
             <div class="overlay-divider"></div>
             <button type="button" class="overlay-half right-half" @click.stop="$emit('openScreenshot', 'template')">
-                <span class="action-tip">录入图片</span>
+                <span class="action-tip"><Camera :size="15" />录入图片</span>
             </button>
         </div>
     </div>
@@ -46,7 +46,7 @@ v-if="currentDisplayUrl && !hasError"
 
 <script setup>
     import { ref, computed, onUnmounted, watch } from 'vue'
-    import { Image, TriangleAlert } from 'lucide-vue-next'
+    import { Camera, FolderOpen, Image, TriangleAlert } from 'lucide-vue-next'
     import { useIdeStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
     import { loadAssetPreview, releaseAssetPreview } from '@/utils/assetPreview'
@@ -96,9 +96,13 @@ v-if="currentDisplayUrl && !hasError"
         return true
     }
 
+    // 预览只响应「换图 / 外部确认图像参数」；滑块拖动过程不直接触发后端请求。
+    // NodeInspectorPanel 在灰度开关或阈值提交后更新 imageVersion，保证每次操作只刷新一次。
     watch(
-        () => [props.modelValue, isGrayScale.value, grayThreshold.value, store.currentProjectPath, props.imageVersion],
-        async ([imgName, grayOn, threshold, projPath]) => {
+        () => [props.modelValue, store.currentProjectPath, props.imageVersion],
+        async ([imgName, projPath]) => {
+            const grayOn = isGrayScale.value
+            const threshold = grayThreshold.value
             const requestId = ++previewRequestId
             if (timer) clearTimeout(timer)
             timer = null
@@ -159,17 +163,16 @@ v-if="currentDisplayUrl && !hasError"
     .file-hover-card {
         position: relative;
         width: 100%;
-        background: rgba(18, 19, 28, 0.95);
-        border: 1px solid var(--el-border-color-light);
+        background: var(--app-bg-input);
+        border: 1px solid var(--app-border-default);
         border-radius: var(--app-radius-md, 8px);
         overflow: hidden;
         user-select: none;
-        transition: border-color 0.3s, box-shadow 0.3s;
+        transition: border-color var(--app-transition-fast);
     }
 
         .file-hover-card.is-binary {
-            border-color: var(--el-color-success);
-            box-shadow: 0 0 8px rgba(103, 194, 58, 0.2);
+            border-color: var(--app-border-strong);
         }
 
     .aspect-ratio-box {
@@ -200,12 +203,13 @@ v-if="currentDisplayUrl && !hasError"
         position: absolute;
         top: 6px;
         right: 6px;
-        background: rgba(103, 194, 58, 0.85);
-        color: #fff;
+        background: var(--app-bg-raised);
+        border: 1px solid var(--app-border-default);
+        color: var(--app-text-secondary);
         font-size: 10px;
         padding: 2px 6px;
         border-radius: 4px;
-        font-weight: bold;
+        font-weight: 600;
         z-index: 3;
         pointer-events: none;
     }
@@ -215,8 +219,8 @@ v-if="currentDisplayUrl && !hasError"
         bottom: 0;
         left: 0;
         right: 0;
-        background: rgba(25, 26, 38, 0.85);
-        color: #fff;
+        background: rgba(15, 15, 14, 0.9);
+        color: var(--app-text-regular);
         font-size: 10px;
         padding: 2px 6px;
         text-align: center;
@@ -246,13 +250,12 @@ v-if="currentDisplayUrl && !hasError"
         left: 0;
         width: 100%;
         height: 100%;
-        background: rgba(25, 26, 38, 0.8);
-        backdrop-filter: blur(2px);
+        background: rgba(15, 15, 14, 0.88);
         display: flex;
         align-items: center;
         opacity: 0;
         pointer-events: none;
-        transition: opacity 0.2s ease;
+        transition: opacity var(--app-transition-fast);
         z-index: 4;
     }
 
@@ -272,9 +275,9 @@ v-if="currentDisplayUrl && !hasError"
         padding: 0;
         background: transparent;
         color: inherit;
-        border: 2px dashed transparent;
+        border: 1px solid transparent;
         font: inherit;
-        transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+        transition: background-color var(--app-transition-fast), border-color var(--app-transition-fast), color var(--app-transition-fast);
     }
 
     .overlay-half:focus-visible {
@@ -283,26 +286,20 @@ v-if="currentDisplayUrl && !hasError"
         box-shadow: inset var(--focus-ring);
     }
 
-    .left-half:hover {
-        border-color: var(--el-color-primary);
-    background: var(--app-color-primary-dim);
-    }
-
-    .right-half:hover {
-        border-color: #67C23A;
-        background: rgba(103, 194, 58, 0.15);
-    }
+    .overlay-half:hover { border-color: var(--app-color-primary); background: var(--app-color-primary-dim); }
 
     .overlay-divider {
         width: 1px;
         height: 60%;
-        background: rgba(255, 255, 255, 0.2);
+        background: var(--app-overlay-separator);
     }
 
     .action-tip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
         font-size: 12px;
         font-weight: 600;
-        color: #fff;
-        text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        color: var(--app-text-primary);
     }
 </style>

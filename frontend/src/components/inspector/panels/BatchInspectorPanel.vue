@@ -91,6 +91,7 @@
         props.nodes.forEach(node => {
             if (!node.params) node.params = {}
             node.params[paramName] = value
+            node.params = { ...node.params }
         })
         emit('save')
     }

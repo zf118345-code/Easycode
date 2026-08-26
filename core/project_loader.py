@@ -53,7 +53,6 @@ def _task_from_graph(
         outputs=list(outputs or []),
         outcomes=list(outcomes or []),
         entry_node_id=graph.get('entry_node_id'),
-        blocks=list(graph.get('blocks') or []),
     )
 
 
@@ -65,7 +64,7 @@ def project_from_documents(meta: dict[str, Any], workflow: dict[str, Any], topol
     project.ui_state = dict(meta.get('ui_state') or {})
     project.settings = merge_settings(meta.get('settings'))
 
-    main_graph = workflow.get('main_graph') or {'nodes': [], 'edges': [], 'blocks': []}
+    main_graph = workflow.get('main_graph') or {'nodes': [], 'edges': []}
     main_task = _task_from_graph(main_graph, graph_id=MAIN_GRAPH_ID, name='主流程', role='main')
     project.tasks[main_task.task_id] = main_task
     for edge_data in main_graph.get('edges') or []:
@@ -107,7 +106,7 @@ def project_from_dict(data: dict, fallback_name: str = 'runtime') -> Project:
         'functions': data.get('functions') or [],
         'function_folders': data.get('function_folders') or [],
     }
-    topology = data.get('page_map') or data.get('topology') or {'nodes': [], 'edges': [], 'blocks': []}
+    topology = data.get('page_map') or data.get('topology') or {'nodes': [], 'edges': []}
     return project_from_documents(data, workflow, topology, fallback_name)
 
 

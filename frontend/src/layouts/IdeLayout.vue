@@ -8,7 +8,7 @@
             :recording-active="recordingState.active"
             :recording-frames="recordingState.frame_count || 0"
             :recording-fps="recordingState.average_fps || 0"
-            :recording-disabled="store.isRunning || store.isPaused || recordingBusy"
+            :recording-disabled="projectStore.readOnly || store.isRunning || store.isPaused || recordingBusy"
             @run="handleRun"
             @open-project="handleOpenProject"
             @new-project="createDialogVisible = true"
@@ -106,7 +106,7 @@ v-if="store.uiState.rightPanelExpanded && currentRightPanel"
                     <ToolWindow
                         v-if="store.uiState.rightPanelExpanded && currentRightPanel"
                         :title="rightPanelTitle"
-                        :width="store.uiState.rightPanelWidth + 'px'"
+                        :width="effectiveRightPanelWidth + 'px'"
                         class="ide-card-panel"
                         @close="store.updateUiState('rightPanelExpanded', false)">
                         <component :is="currentRightPanel.component" />
@@ -145,11 +145,12 @@ position="right"
         <footer class="ide-status-footer">
             <div class="status-left">
                 <span class="status-dot" :class="`is-${store.executionState}`">●</span>
+                <LockKeyhole v-if="projectStore.readOnly" :size="12" class="readonly-icon" />
                 <span>{{ ideStatusLabel }}</span>
                 <template v-if="recordingState.active">
                     <span class="status-divider">·</span>
                     <span class="recording-footer-status">帧录制 {{ recordingState.frame_count || 0 }} 帧 · {{ Number(recordingState.average_fps || 0).toFixed(1) }} FPS</span>
-                    <button v-if="recordingState.recording_mode === 'diagnostic_events'" class="recording-mark-button" title="保留下一帧并写入诊断标记" @click="markRecordingFrame">
+                    <button v-if="recordingState.recording_mode === 'diagnostic_events'" type="button" class="recording-mark-button" title="保留下一帧并写入诊断标记" @click="markRecordingFrame">
                         <Bookmark :size="12" /> 标记
                     </button>
                 </template>
@@ -208,7 +209,7 @@ position="right"
     import VersionHistoryDialog from '@/components/VersionHistoryDialog.vue'
     import FrameReplayDialog from '@/components/FrameReplayDialog.vue'
     import FrameRecordingStartDialog from '@/components/FrameRecordingStartDialog.vue'
-    import { Bookmark } from 'lucide-vue-next'
+    import { Bookmark, LockKeyhole } from 'lucide-vue-next'
     import { uiControlApi } from '@/api/uiControlApi'
     import { frameRecordingApi } from '@/api/frameRecordingApi'
     import { captureApi } from '@/api/captureApi'
@@ -246,13 +247,21 @@ position="right"
 
     const ideStatusLabel = computed(() => {
         if (!store.currentProjectPath) return '未打开项目'
+        if (projectStore.readOnly) return '只读预览'
         if (store.isRunning) return '正在执行'
         if (store.isPaused) return '调试暂停'
         if (store.executionState === 'error') return '执行失败'
         return '就绪'
     })
     const currentProjectName = computed(() => (store.currentProjectPath || '').split(/[/\\]/).pop() || '未打开项目')
-    const canvasModeLabel = computed(() => ({ workflow: '主流程', function: '函数画布', topology: '页面地图' }[store.canvasMode] || '画布'))
+    const canvasModeLabel = computed(() => {
+        if (store.canvasMode === 'function') {
+            if (store.functionWorkspaceEmpty) return '函数库'
+            const current = (store.blueprint?.functions || []).find(item => item.function_id === store.currentTaskId)
+            return current ? `函数：${current.name}` : '函数库'
+        }
+        return ({ workflow: '主流程', topology: '页面地图' }[store.canvasMode] || '画布')
+    })
     const runtimeEntryTasks = computed(() => [{ task_id: 'main', task_name: '主流程', ...(store.blueprint?.main_graph || {}) }])
     const { chooseAndOpenProject } = useProjectEntryActions()
     const handleOpenProject = () => chooseAndOpenProject()
@@ -270,6 +279,7 @@ position="right"
 
     const handleSaveProject = async () => {
         if (!store.currentProjectPath) return ElMessage.warning('请先打开项目')
+        if (projectStore.readOnly) return ElMessage.warning('项目以只读方式打开，当前实例不能保存')
         try {
             await store.saveBlueprintImmediately()
             ElMessage.success('项目蓝图已保存')
@@ -402,6 +412,7 @@ position="right"
 
     // ⚡ 顶栏「运行 (R) → 截图工具」：打开全局模板截图（框选 → 自动保存到项目 templates/）
     const openControlCapture = () => {
+        if (projectStore.readOnly) return ElMessage.warning('项目以只读方式打开，不能录入捕获结果')
         if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务')
         if (recordingState.value.active) return ElMessage.warning('请先停止逐帧录制')
         controlCaptureVisible.value = true
@@ -412,6 +423,7 @@ position="right"
             ElMessage.warning('请先打开一个项目，再使用截图工具')
             return
         }
+        if (projectStore.readOnly) return ElMessage.warning('项目以只读方式打开，不能录入捕获结果')
         if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务')
         if (recordingState.value.active) return ElMessage.warning('请先停止逐帧录制')
         try {
@@ -661,7 +673,7 @@ position="right"
         captureHeartbeat = setInterval(() => registerCaptureSession(false).catch(() => {}), 30000)
         // 外部编辑检测是兜底保护，不应成为 IDE 的高频常驻负载。窗口重新
         // 获得焦点时立即检查，后台仅低频巡检一次。
-        externalChangeTimer = setInterval(checkExternalProjectChanges, 10000)
+        externalChangeTimer = setInterval(checkExternalProjectChanges, 30000)
     })
     onUnmounted(() => {
         unsubscribeResourceMutations?.()
@@ -698,7 +710,6 @@ position="right"
             store.canvasMode,
             store.selectedNodeId,
             (store.selectedNodeIds || []).join(','),
-            store.selectedGroupId,
             store.executionState,
             recordingState.value.active
         ],
@@ -710,8 +721,18 @@ position="right"
     const currentRightPanel = computed(() => {
         return rightPanelsConfig.find(p => p.id === rightActive.value)
     })
+    const effectiveRightPanelWidth = computed(() => (
+        store.canvasMode === 'function' && !store.functionWorkspaceEmpty
+            ? Math.max(Number(store.uiState.rightPanelWidth) || 0, 360)
+            : store.uiState.rightPanelWidth
+    ))
 
     const rightPanelTitle = computed(() => {
+        if (rightActive.value === 'inspector') {
+            if ((store.selectedNodeIds || []).length > 1) return '批量属性检查器'
+            if ((store.selectedNodeIds || []).length === 1) return '节点属性检查器'
+            if (store.canvasMode === 'function' && !store.functionWorkspaceEmpty) return '函数检查器'
+        }
         return currentRightPanel.value?.title || '属性面板'
     })
 
@@ -729,10 +750,11 @@ position="right"
         store.updateUiState('leftPanelExpanded', true)
         try {
             if (id === 'explorer') {
-                await store.loadTaskData('main')
-                await store.setCanvasMode('workflow')
+                await store.navigateToGraph('workflow', 'main')
+            } else if (id === 'functions') {
+                await store.navigateToGraph('function')
             } else if (id === 'page-map') {
-                await store.setCanvasMode('topology')
+                await store.navigateToGraph('topology')
             }
         } catch (error) {
             ElMessage.error(error.message || '切换工作区失败')
@@ -740,7 +762,8 @@ position="right"
     }
 
     const toggleLeftPanel = async id => {
-        if (leftActive.value === id && store.uiState.leftPanelExpanded) {
+        const navigatesWorkspace = ['explorer', 'functions', 'page-map'].includes(id)
+        if (!navigatesWorkspace && leftActive.value === id && store.uiState.leftPanelExpanded) {
             store.updateUiState('leftPanelExpanded', false)
             return
         }

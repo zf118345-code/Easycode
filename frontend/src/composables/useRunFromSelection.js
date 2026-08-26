@@ -13,6 +13,7 @@ export function useRunFromSelection(options = {}) {
     const externallyBlocked = computed(() => Boolean(unref(options.blocked)))
 
     const disabledReason = computed(() => {
+        if (projectStore.readOnly) return '项目以只读方式打开，不能运行或修改脚本'
         if (uiStore.canvasMode !== 'workflow') return '请切换到业务流程后执行节点'
         if (executionStore.isRunning || executionStore.isPaused) return '已有任务正在执行或暂停，请先停止'
         if (externallyBlocked.value) return options.blockedReason || '当前模式下不能运行节点'

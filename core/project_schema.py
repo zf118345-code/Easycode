@@ -1,9 +1,9 @@
 """EasyCode project document schema version 3.
 
 Persisted data separates the main graph, callable functions and the one
-project-wide page map. Canvas blocks are geometry-only editor data. Runtime
-adapters may still use internal task objects, but version-3 documents never
-store tasks, cross-graph edges or node folders.
+project-wide page map. Runtime adapters may still use internal task objects,
+but version-3 documents never store tasks, cross-graph edges, node folders or
+visual-only canvas regions.
 """
 
 from __future__ import annotations
@@ -16,10 +16,6 @@ from typing import Any
 
 
 PROJECT_SCHEMA_VERSION = 3
-BLOCK_GRID = 20
-BLOCK_GAP = 20
-BLOCK_MIN_WIDTH = 200
-BLOCK_MIN_HEIGHT = 160
 PROJECT_FILE = 'project.json'
 WORKFLOW_FILE = 'workflow.json'
 TOPOLOGY_FILE = 'topology.json'
@@ -60,7 +56,7 @@ def empty_project_meta(project_name: str, project_id: str | None = None) -> dict
 
 
 def empty_canvas_graph(graph_id: str = '') -> dict[str, Any]:
-    graph: dict[str, Any] = {'nodes': [], 'edges': [], 'blocks': []}
+    graph: dict[str, Any] = {'nodes': [], 'edges': []}
     if graph_id:
         graph['graph_id'] = graph_id
     return graph
@@ -76,7 +72,7 @@ def empty_workflow_graph() -> dict[str, Any]:
 
 
 def empty_page_map() -> dict[str, Any]:
-    return {'schema_version': PROJECT_SCHEMA_VERSION, 'nodes': [], 'edges': [], 'blocks': []}
+    return {'schema_version': PROJECT_SCHEMA_VERSION, 'nodes': [], 'edges': []}
 
 
 def create_function_definition(name: str = '新建函数', folder_id: str | None = None) -> dict[str, Any]:
@@ -114,7 +110,6 @@ def create_function_definition(name: str = '新建函数', folder_id: str | None
                 },
             ],
             'edges': [],
-            'blocks': [],
         },
     }
 
@@ -169,7 +164,7 @@ def _validate_node(node: Any, label: str) -> str:
     if not isinstance(node.get('params'), dict):
         raise ProjectFormatError(f'{label}.params 必须是对象')
     if 'folder_id' in node:
-        raise ProjectFormatError(f'{label} 不再支持 folder_id；请使用画布区块几何归属')
+        raise ProjectFormatError(f'{label} 不支持 folder_id；节点直接属于所在画布')
     _validate_asset_references(node['params'], f'{label}.params')
     params = node['params']
     obsolete = {'on_success', 'on_failure'} & set(params)
@@ -182,34 +177,6 @@ def _validate_node(node: Any, label: str) -> str:
     if node['node_type'] == 'page_state' and not str(params.get('page_id') or '').strip():
         raise ProjectFormatError(f'{label} 缺少 page_id')
     return str(node['node_id'])
-
-
-def _validate_block(block: Any, label: str) -> str:
-    block = _require_object(block, label)
-    block_id = str(block.get('block_id') or '').strip()
-    if not block_id or not str(block.get('name') or '').strip():
-        raise ProjectFormatError(f'{label} 缺少 block_id 或 name')
-    for field in ('x', 'y', 'width', 'height'):
-        value = block.get(field)
-        if not isinstance(value, (int, float)) or isinstance(value, bool):
-            raise ProjectFormatError(f'{label}.{field} 必须是数字')
-        scaled = float(value) / BLOCK_GRID
-        if abs(scaled - round(scaled)) > 1e-9:
-            raise ProjectFormatError(f'{label}.{field} 必须对齐 {BLOCK_GRID}px 网格')
-    if float(block['width']) < BLOCK_MIN_WIDTH or float(block['height']) < BLOCK_MIN_HEIGHT:
-        raise ProjectFormatError(f'{label} 最小尺寸为 {BLOCK_MIN_WIDTH}x{BLOCK_MIN_HEIGHT}')
-    if 'node_ids' in block:
-        raise ProjectFormatError(f'{label} 不允许持久化 node_ids；区块归属由几何关系计算')
-    return block_id
-
-
-def _blocks_overlap_with_gap(first: dict[str, Any], second: dict[str, Any]) -> bool:
-    return not (
-        float(first['x']) + float(first['width']) + BLOCK_GAP <= float(second['x'])
-        or float(second['x']) + float(second['width']) + BLOCK_GAP <= float(first['x'])
-        or float(first['y']) + float(first['height']) + BLOCK_GAP <= float(second['y'])
-        or float(second['y']) + float(second['height']) + BLOCK_GAP <= float(first['y'])
-    )
 
 
 def _validate_edge(edge: Any, label: str, node_ids: set[str]) -> str:
@@ -228,11 +195,11 @@ def validate_canvas_graph(value: Any, label: str, *, require_graph_id: bool = Fa
     graph = _require_object(value, label)
     if require_graph_id and not str(graph.get('graph_id') or '').strip():
         raise ProjectFormatError(f'{label} 缺少 graph_id')
-    if {'tasks', 'node_folders'} & set(graph):
-        raise ProjectFormatError(f'{label} 不再支持 tasks 或 node_folders')
+    obsolete = {'tasks', 'node_folders', 'blocks'} & set(graph)
+    if obsolete:
+        raise ProjectFormatError(f'{label} 包含已移除字段: {", ".join(sorted(obsolete))}')
     nodes = _require_list(graph.get('nodes'), f'{label}.nodes')
     edges = _require_list(graph.get('edges'), f'{label}.edges')
-    blocks = _require_list(graph.get('blocks'), f'{label}.blocks')
     node_ids: set[str] = set()
     for index, node in enumerate(nodes):
         node_id = _validate_node(node, f'{label}.nodes[{index}]')
@@ -245,17 +212,6 @@ def validate_canvas_graph(value: Any, label: str, *, require_graph_id: bool = Fa
         if edge_id in edge_ids:
             raise ProjectFormatError(f'{label} 存在重复 edge_id: {edge_id}')
         edge_ids.add(edge_id)
-    block_ids: set[str] = set()
-    for index, block in enumerate(blocks):
-        block_id = _validate_block(block, f'{label}.blocks[{index}]')
-        if block_id in block_ids:
-            raise ProjectFormatError(f'{label} 存在重复 block_id: {block_id}')
-        for other_index, other in enumerate(blocks[:index]):
-            if _blocks_overlap_with_gap(block, other):
-                raise ProjectFormatError(
-                    f'{label}.blocks[{index}] 与 blocks[{other_index}] 重叠或间距小于 {BLOCK_GAP}px'
-                )
-        block_ids.add(block_id)
     return graph
 
 
@@ -401,8 +357,8 @@ def validate_workflow(data: Any) -> dict[str, Any]:
 def validate_topology(data: Any) -> dict[str, Any]:
     data = _require_object(data, TOPOLOGY_FILE)
     _validate_version(data, TOPOLOGY_FILE)
-    if {'tasks', 'collections', 'regions'} & set(data):
-        raise ProjectFormatError(f'{TOPOLOGY_FILE} 是唯一扁平页面地图，不支持集合或区域')
+    if {'tasks', 'collections', 'regions', 'blocks'} & set(data):
+        raise ProjectFormatError(f'{TOPOLOGY_FILE} 是唯一扁平页面地图，不支持集合、区域或区块')
     validate_canvas_graph(data, TOPOLOGY_FILE)
     page_ids: set[str] = set()
     for node in data['nodes']:

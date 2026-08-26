@@ -6,13 +6,17 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
 from datetime import datetime, timezone
 
 
 class SnapshotService:
     HISTORY_DIR = '.easycode/history'
+    INDEX_FILE = 'index.json'
+    INDEX_VERSION = 1
     MAX_SNAPSHOTS = 100
     MAX_BYTES = 500 * 1024 * 1024
+    _lock = threading.RLock()
 
     @classmethod
     def _history_dir(cls, project_path: str) -> str:
@@ -26,29 +30,33 @@ class SnapshotService:
         return hashlib.sha256(payload).hexdigest()
 
     @classmethod
-    def create(cls, project_path: str, blueprint: dict, reason: str = 'save') -> dict:
-        history_dir = cls._history_dir(project_path)
-        digest = cls._canonical_hash(blueprint)
-        latest = cls.list(project_path)
-        if latest and latest[0].get('hash') == digest:
-            return {**latest[0], 'deduplicated': True}
+    def _snapshot_names(cls, history_dir: str) -> list[str]:
+        """Return immutable snapshot files, excluding the lightweight index."""
+        try:
+            names = os.listdir(history_dir)
+        except FileNotFoundError:
+            return []
+        return sorted(
+            (
+                name
+                for name in names
+                if name.endswith('.json') and name != cls.INDEX_FILE
+            ),
+            reverse=True,
+        )
 
-        now = datetime.now(timezone.utc)
-        snapshot_id = f'{now.strftime("%Y%m%dT%H%M%S%fZ")}-{digest[:12]}'
-        record = {
-            'snapshot_id': snapshot_id,
-            'created_at': now.isoformat(),
-            'reason': reason,
-            'hash': digest,
-            'project_name': blueprint.get('project_name', ''),
-            'blueprint': blueprint,
-        }
-        target = os.path.join(history_dir, snapshot_id + '.json')
-        fd, tmp_path = tempfile.mkstemp(prefix='snapshot_', suffix='.tmp', dir=history_dir)
+    @staticmethod
+    def _metadata(record: dict) -> dict:
+        return {key: value for key, value in record.items() if key != 'blueprint'}
+
+    @classmethod
+    def _atomic_write_json(cls, path: str, data: dict) -> None:
+        directory = os.path.dirname(path)
+        fd, tmp_path = tempfile.mkstemp(prefix='history_', suffix='.tmp', dir=directory)
         try:
             with os.fdopen(fd, 'w', encoding='utf-8') as stream:
-                json.dump(record, stream, ensure_ascii=False, indent=2)
-            os.replace(tmp_path, target)
+                json.dump(data, stream, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, path)
         except Exception:
             try:
                 os.unlink(tmp_path)
@@ -56,8 +64,84 @@ class SnapshotService:
                 pass
             raise
 
-        cls._prune(history_dir)
-        return {key: value for key, value in record.items() if key != 'blueprint'}
+    @classmethod
+    def _write_index(cls, history_dir: str, records: list[dict]) -> None:
+        cls._atomic_write_json(
+            os.path.join(history_dir, cls.INDEX_FILE),
+            {
+                'version': cls.INDEX_VERSION,
+                # Keep every observed file, including a corrupt snapshot.  This
+                # prevents reparsing the same damaged file on every autosave.
+                'files': cls._snapshot_names(history_dir),
+                'snapshots': records,
+            },
+        )
+
+    @classmethod
+    def _rebuild_index(cls, history_dir: str) -> list[dict]:
+        records = []
+        for name in cls._snapshot_names(history_dir):
+            path = os.path.join(history_dir, name)
+            try:
+                with open(path, encoding='utf-8') as stream:
+                    record = json.load(stream)
+                metadata = cls._metadata(record)
+                if metadata.get('snapshot_id'):
+                    records.append(metadata)
+            except (OSError, ValueError, TypeError):
+                # A broken recovery point must not make saving the live project
+                # fail.  It remains on disk for manual inspection.
+                continue
+        cls._write_index(history_dir, records)
+        return records
+
+    @classmethod
+    def _load_index(cls, history_dir: str) -> list[dict]:
+        """Load metadata without deserializing each (potentially huge) blueprint."""
+        path = os.path.join(history_dir, cls.INDEX_FILE)
+        current_files = cls._snapshot_names(history_dir)
+        try:
+            with open(path, encoding='utf-8') as stream:
+                index = json.load(stream)
+            records = index.get('snapshots')
+            indexed_files = index.get('files')
+            if (
+                index.get('version') == cls.INDEX_VERSION
+                and isinstance(records, list)
+                and all(isinstance(item, dict) and item.get('snapshot_id') for item in records)
+                and indexed_files == current_files
+            ):
+                return records
+        except (OSError, ValueError, TypeError, AttributeError):
+            pass
+        return cls._rebuild_index(history_dir)
+
+    @classmethod
+    def create(cls, project_path: str, blueprint: dict, reason: str = 'save') -> dict:
+        with cls._lock:
+            history_dir = cls._history_dir(project_path)
+            digest = cls._canonical_hash(blueprint)
+            latest = cls._load_index(history_dir)
+            if latest and latest[0].get('hash') == digest:
+                return {**latest[0], 'deduplicated': True}
+
+            now = datetime.now(timezone.utc)
+            snapshot_id = f'{now.strftime("%Y%m%dT%H%M%S%fZ")}-{digest[:12]}'
+            record = {
+                'snapshot_id': snapshot_id,
+                'created_at': now.isoformat(),
+                'reason': reason,
+                'hash': digest,
+                'project_name': blueprint.get('project_name', ''),
+                'blueprint': blueprint,
+            }
+            target = os.path.join(history_dir, snapshot_id + '.json')
+            cls._atomic_write_json(target, record)
+
+            records = [cls._metadata(record), *latest]
+            retained = cls._prune(history_dir, records)
+            cls._write_index(history_dir, retained)
+            return cls._metadata(record)
 
     @classmethod
     def capture_current(cls, project_path: str, reason: str = 'save') -> dict:
@@ -80,19 +164,11 @@ class SnapshotService:
 
     @classmethod
     def list(cls, project_path: str) -> list[dict]:
-        history_dir = cls._history_dir(project_path)
-        records = []
-        for name in sorted(os.listdir(history_dir), reverse=True):
-            if not name.endswith('.json'):
-                continue
-            path = os.path.join(history_dir, name)
-            try:
-                with open(path, encoding='utf-8') as stream:
-                    record = json.load(stream)
-                records.append({key: value for key, value in record.items() if key != 'blueprint'})
-            except (OSError, ValueError):
-                continue
-        return records
+        with cls._lock:
+            history_dir = cls._history_dir(project_path)
+            # Return detached dictionaries: API serialization and callers must
+            # never mutate the in-memory representation used for deduplication.
+            return [dict(record) for record in cls._load_index(history_dir)]
 
     @classmethod
     def restore(cls, project_path: str, snapshot_id: str) -> dict:
@@ -129,11 +205,8 @@ class SnapshotService:
         return {'status': 'success', 'restored': restored}
 
     @classmethod
-    def _prune(cls, history_dir: str):
-        files = sorted(
-            (name for name in os.listdir(history_dir) if name.endswith('.json')),
-            reverse=True,
-        )
+    def _prune(cls, history_dir: str, records: list[dict]) -> list[dict]:
+        files = cls._snapshot_names(history_dir)
         sizes = {}
         total = 0
         for name in files:
@@ -154,3 +227,8 @@ class SnapshotService:
                 retained -= 1
             except FileNotFoundError:
                 retained -= 1
+        remaining_ids = {
+            os.path.splitext(name)[0]
+            for name in cls._snapshot_names(history_dir)
+        }
+        return [record for record in records if record.get('snapshot_id') in remaining_ids]

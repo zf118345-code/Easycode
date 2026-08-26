@@ -18,6 +18,7 @@
                     <button
                         v-for="session in sessions"
                         :key="session.session_id"
+                        type="button"
                         class="session-item"
                         :class="{ active: session.session_id === activeSessionId }"
                         @click="selectSession(session)">
@@ -65,7 +66,7 @@
                 </div>
 
                 <div v-if="frameTotal" class="thumbnail-timeline">
-                    <button v-for="frame in thumbnailFrames" :key="frame.index" :class="{ active: frame.index === currentIndex }" @click="selectFrameIndex(frame.index)">
+                    <button v-for="frame in thumbnailFrames" :key="frame.index" type="button" :class="{ active: frame.index === currentIndex }" @click="selectFrameIndex(frame.index)">
                         <img v-if="thumbnailUrls.get(frame.index)" :src="thumbnailUrls.get(frame.index)" alt="录制帧缩略图">
                         <span>{{ frame.index }}</span>
                     </button>

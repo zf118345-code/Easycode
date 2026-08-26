@@ -155,6 +155,7 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
 
         <!-- ① 主控按钮：就绪=运行（需选中节点）/ 运行中=暂停 / 暂停=运行到下一个断点 -->
         <button
+            type="button"
             class="dbg-btn"
             :class="{ primary: isPaused }"
             :disabled="mainBtnDisabled"
@@ -166,13 +167,13 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
         </button>
 
         <!-- ② 下一步：仅暂停时可用（执行当前节点后暂停，不跳到断点） -->
-        <button class="dbg-btn" :disabled="!isPaused" @click="stepNext" title="下一步，执行当前节点后暂停 (F10)">
+        <button type="button" class="dbg-btn" :disabled="!isPaused" @click="stepNext" title="下一步，执行当前节点后暂停 (F10)">
             <SkipForward class="dbg-icon" :size="16" />
             <span class="dbg-hint">F10</span>
         </button>
 
         <!-- ③ 停止：运行中/暂停时可用（退出流程并复位为未启动状态） -->
-        <button class="dbg-btn danger" :disabled="!isRunning && !isPaused" @click="stopExec" title="停止，退出流程并复位 (Shift+F5)">
+        <button type="button" class="dbg-btn danger" :disabled="!isRunning && !isPaused" @click="stopExec" title="停止，退出流程并复位 (Shift+F5)">
             <Square class="dbg-icon" :size="16" />
             <span class="dbg-hint">S+F5</span>
         </button>
@@ -184,7 +185,7 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
             <span class="bp-dot-inline" />
             <span class="dbg-count">{{ breakpointCount }}</span>
             <span class="dbg-meta-label">断点</span>
-            <button v-if="breakpointCount > 0" class="dbg-mini-btn" @click="clearAllBreakpoints" title="清除所有断点">清除</button>
+            <button v-if="breakpointCount > 0" type="button" class="dbg-mini-btn" @click="clearAllBreakpoints" title="清除所有断点">清除</button>
         </div>
 
         <!-- 激活节点（显示节点名；与断点无关，仅指示当前执行位置） -->

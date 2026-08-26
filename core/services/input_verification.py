@@ -69,7 +69,7 @@ def mark_background_input_unsupported(context, reason: str):
     profile = getattr(context, '_input_capability_profile', None)
     if not isinstance(profile, dict):
         profile = {}
-        setattr(context, '_input_capability_profile', profile)
+        context._input_capability_profile = profile
     profile['background_click'] = {'supported': False, 'reason': str(reason), 'updated_at': time.time()}
     try:
         from core.services.target_capability_profile import target_capability_profiles
@@ -83,7 +83,7 @@ def mark_background_input_supported(context, reason: str = '点击后置验证�
     profile = getattr(context, '_input_capability_profile', None)
     if not isinstance(profile, dict):
         profile = {}
-        setattr(context, '_input_capability_profile', profile)
+        context._input_capability_profile = profile
     profile['background_click'] = {'supported': True, 'reason': str(reason), 'updated_at': time.time()}
     try:
         from core.services.target_capability_profile import target_capability_profiles

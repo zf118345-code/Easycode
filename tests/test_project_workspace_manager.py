@@ -1,5 +1,4 @@
 import json
-import json
 import os
 import shutil
 
@@ -17,6 +16,18 @@ def manager_for(tmp_path, name='app-state'):
         app_data_dir=str(tmp_path / name),
         process_id=os.getpid(),
     )
+
+
+def test_app_data_directory_can_be_isolated_by_environment(tmp_path, monkeypatch):
+    source = tmp_path / 'source'
+    source.mkdir()
+    isolated = tmp_path / 'isolated-app-state'
+    monkeypatch.setenv('EASYCODE_APP_DATA_DIR', str(isolated))
+
+    manager = ProjectWorkspaceManager(source_root=str(source), process_id=os.getpid())
+
+    assert manager.app_data_dir == str(isolated.resolve())
+    assert isolated.is_dir()
 
 
 def test_empty_project_initialization_is_complete_and_transactional(tmp_path):
@@ -156,6 +167,50 @@ def test_external_change_fingerprint_ignores_generated_outputs(tmp_path):
     assert changed['paths'] == ['workflow.json']
     manager.acknowledge(workspace['workspace_id'], workspace['generation'])
     assert manager.external_changes(workspace['workspace_id'], workspace['generation'])['changed'] is False
+    manager.shutdown()
+
+
+def test_external_change_fingerprint_includes_project_capabilities(tmp_path):
+    manager = manager_for(tmp_path)
+    project = tmp_path / 'capability-watched'
+    manager.initialize(str(project), 'Capability Watched')
+    workspace = manager.open(str(project))['workspace']
+
+    capability = project / 'capabilities' / 'ticketing'
+    capability.mkdir(parents=True)
+    (capability / 'main.py').write_text('def run():\n    return True\n', encoding='utf-8')
+    changed = manager.external_changes(workspace['workspace_id'], workspace['generation'])
+    assert changed['changed'] is True
+    assert changed['paths'] == ['capabilities/ticketing/main.py']
+    manager.shutdown()
+
+
+def test_incremental_acknowledge_updates_only_known_internal_documents(tmp_path, monkeypatch):
+    manager = manager_for(tmp_path)
+    project = tmp_path / 'incremental-ack'
+    manager.initialize(str(project), 'Incremental')
+    workspace = manager.open(str(project))['workspace']
+    meta = json.loads((project / 'project.json').read_text(encoding='utf-8'))
+    meta['revision'] += 1
+    (project / 'project.json').write_text(json.dumps(meta), encoding='utf-8')
+
+    full_scans = 0
+    original = manager._workspace_fingerprint
+
+    def counted_scan(path):
+        nonlocal full_scans
+        full_scans += 1
+        return original(path)
+
+    monkeypatch.setattr(manager, '_workspace_fingerprint', counted_scan)
+    manager.acknowledge(
+        workspace['workspace_id'],
+        workspace['generation'],
+        ('project.json',),
+    )
+    assert full_scans == 0
+    assert manager.external_changes(workspace['workspace_id'], workspace['generation'])['changed'] is False
+    assert full_scans == 1
     manager.shutdown()
 
 

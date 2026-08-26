@@ -155,12 +155,12 @@ export function createCanvasUndoRedo(mode = 'workflow') {
         const graph = isTopology
             ? store.blueprint.page_map
             : getGraph(store.blueprint, graphId, 'workflow')
-        return JSON.parse(JSON.stringify({ graphId, graph: graph || { nodes: [], edges: [], blocks: [] } }))
+        return JSON.parse(JSON.stringify({ graphId, graph: graph || { nodes: [], edges: [] } }))
     }
 
     function setState(snapshot) {
         const store = useProjectStore()
-        const restored = JSON.parse(JSON.stringify(snapshot?.graph || { nodes: [], edges: [], blocks: [] }))
+        const restored = JSON.parse(JSON.stringify(snapshot?.graph || { nodes: [], edges: [] }))
         if (isTopology) {
             store.blueprint.page_map = restored
             store.saveTopologyDebounced()

@@ -11,8 +11,8 @@ import {
 
 describe('v3 画布与函数模型', () => {
     it('为主流程和页面地图创建唯一的扁平画布', () => {
-        expect(createMainGraph()).toEqual({ graph_id: MAIN_GRAPH_ID, nodes: [], edges: [], blocks: [] })
-        expect(createPageMap()).toEqual({ schema_version: 3, nodes: [], edges: [], blocks: [] })
+        expect(createMainGraph()).toEqual({ graph_id: MAIN_GRAPH_ID, nodes: [], edges: [] })
+        expect(createPageMap()).toEqual({ schema_version: 3, nodes: [], edges: [] })
     })
 
     it('新函数拥有独立画布、固定入口、显式返回与系统异常出口', () => {

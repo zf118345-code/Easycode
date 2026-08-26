@@ -10,10 +10,10 @@ def seed_cache(monkeypatch):
 
     ps.PlayerService._MEMORY_CACHE['blueprint'] = {
         'variables': {'numrun': 0},
-        'main_graph': {'graph_id': 'main', 'nodes': [{'node_id': 'n1', 'node_name': '节点A'}], 'edges': [], 'blocks': []},
+        'main_graph': {'graph_id': 'main', 'nodes': [{'node_id': 'n1', 'node_name': '节点A'}], 'edges': []},
         'functions': [],
         'function_folders': [],
-        'page_map': {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []},
+        'page_map': {'schema_version': 3, 'nodes': [], 'edges': []},
     }
     ps.PlayerService._MEMORY_CACHE['form_schema'] = None
     ps.PlayerService._MEMORY_CACHE['user_config'] = {'vars': {'numrun': 5}, 'ctx': {'offset_top': 12}}
@@ -182,7 +182,7 @@ def test_player_runtime_overrides_only_declared_settings_and_node_fields():
         'main_graph': {'graph_id': 'main', 'nodes': [{
             'node_id': 'n1', 'node_type': 'wait', 'delay_before': 0, 'loop_count': 1,
             'params': {'duration_ms': 100},
-        }], 'edges': [], 'blocks': []},
+        }], 'edges': []},
         'functions': [],
     }
     schema = {'groups': [{'fields': [
@@ -209,7 +209,7 @@ def test_player_runtime_override_updates_nested_page_feature_leaf():
 
     blueprint = {
         'settings': {},
-        'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': [], 'blocks': []},
+        'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': []},
         'functions': [],
         'page_map': {'nodes': [{
             'node_id': 'page_login',
@@ -218,7 +218,7 @@ def test_player_runtime_override_updates_nested_page_feature_leaf():
                 'page_id': 'page_login_stable',
                 'features': [{'condition_type': 'image_exists', 'image_source': 'asset://original'}],
             },
-        }], 'edges': [], 'blocks': []},
+        }], 'edges': []},
     }
     target = '$node.page_login.params.features.0.image_source'
     schema = {'groups': [{'fields': [{'target': target, 'ui_type': 'image_asset'}]}]}

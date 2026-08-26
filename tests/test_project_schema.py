@@ -31,7 +31,7 @@ def test_current_v3_project_loads_as_main_functions_and_flat_page_map(tmp_path):
     assert all(value['schema_version'] == PROJECT_SCHEMA_VERSION for value in loaded.values())
     assert loaded['workflow.json']['main_graph']['graph_id'] == 'main'
     assert loaded['workflow.json']['functions'][0]['function_id'] == fn['function_id']
-    assert loaded['topology.json'] == {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []}
+    assert loaded['topology.json'] == {'schema_version': 3, 'nodes': [], 'edges': []}
 
 
 def test_missing_or_unversioned_documents_are_rejected_without_mutation(tmp_path):
@@ -53,7 +53,7 @@ def test_v2_tasks_cross_graph_edges_and_node_folders_are_rejected():
     with pytest.raises(ProjectFormatError, match='main_graph'):
         validate_workflow(documents['workflow.json'])
 
-    graph = {'graph_id': 'main', 'nodes': [], 'edges': [], 'blocks': [], 'node_folders': []}
+    graph = {'graph_id': 'main', 'nodes': [], 'edges': [], 'node_folders': []}
     with pytest.raises(ProjectFormatError, match='node_folders'):
         validate_canvas_graph(graph, 'graph', require_graph_id=True)
 
@@ -61,7 +61,7 @@ def test_v2_tasks_cross_graph_edges_and_node_folders_are_rejected():
         {'node_id': 'a', 'node_name': 'A', 'node_type': 'log', 'params': {}},
         {'node_id': 'b', 'node_name': 'B', 'node_type': 'log', 'params': {}},
     ]
-    graph = {'graph_id': 'main', 'nodes': nodes, 'blocks': [], 'edges': [{
+    graph = {'graph_id': 'main', 'nodes': nodes, 'edges': [{
         'edge_id': 'e1', 'source_node': 'a', 'target_node': 'b',
         'source_port': 'success', 'source_port_id': 'success', 'target_task': 'other',
     }]}
@@ -69,33 +69,12 @@ def test_v2_tasks_cross_graph_edges_and_node_folders_are_rejected():
         validate_canvas_graph(graph, 'graph', require_graph_id=True)
 
 
-def test_geometric_blocks_never_persist_node_membership():
+def test_removed_blocks_field_is_rejected():
     graph = {
         'graph_id': 'main', 'nodes': [], 'edges': [],
         'blocks': [{'block_id': 'b1', 'name': '阶段', 'x': 0, 'y': 0, 'width': 400, 'height': 260}],
     }
-    assert validate_canvas_graph(graph, 'graph', require_graph_id=True) is graph
-    graph['blocks'][0]['node_ids'] = ['node_a']
-    with pytest.raises(ProjectFormatError, match='node_ids'):
-        validate_canvas_graph(graph, 'graph', require_graph_id=True)
-
-
-def test_geometric_blocks_require_grid_alignment_and_one_grid_gap():
-    graph = {
-        'graph_id': 'main', 'nodes': [], 'edges': [],
-        'blocks': [
-            {'block_id': 'a', 'name': 'A', 'x': 0, 'y': 0, 'width': 400, 'height': 260},
-            {'block_id': 'b', 'name': 'B', 'x': 420, 'y': 0, 'width': 200, 'height': 160},
-        ],
-    }
-    assert validate_canvas_graph(graph, 'graph', require_graph_id=True) is graph
-
-    graph['blocks'][1]['x'] = 400
-    with pytest.raises(ProjectFormatError, match='间距小于 20px'):
-        validate_canvas_graph(graph, 'graph', require_graph_id=True)
-
-    graph['blocks'][1]['x'] = 430
-    with pytest.raises(ProjectFormatError, match='对齐 20px 网格'):
+    with pytest.raises(ProjectFormatError, match='blocks'):
         validate_canvas_graph(graph, 'graph', require_graph_id=True)
 
 
@@ -109,6 +88,6 @@ def test_function_contract_and_flat_page_map_are_strict():
     workflow['functions'].append(fn)
     assert validate_workflow(workflow) is workflow
 
-    topology = {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': [], 'collections': []}
+    topology = {'schema_version': 3, 'nodes': [], 'edges': [], 'collections': []}
     with pytest.raises(ProjectFormatError, match='唯一扁平页面地图'):
         validate_topology(topology)

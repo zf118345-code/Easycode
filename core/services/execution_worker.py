@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import multiprocessing
 import os
 import queue
@@ -11,6 +10,8 @@ import tempfile
 import threading
 import time
 from typing import Any
+
+from core.security import atomic_write_json
 
 
 def _safe_put(events, payload: dict, *, final: bool = False):
@@ -108,15 +109,17 @@ def execution_worker_main(payload: dict, events, start_event, stop_event):
                     'variables': variables,
                     'updated_at': time.time(),
                 }
-                temporary = checkpoint_path + '.tmp'
                 checkpoint_storage_root = payload.get('checkpoint_storage_root')
                 if checkpoint_storage_root:
                     from core.services.player_secret_service import PlayerSecretService
 
                     value = PlayerSecretService.protect_document(value, checkpoint_storage_root)
-                with open(temporary, 'w', encoding='utf-8') as stream:
-                    json.dump(value, stream, ensure_ascii=False, indent=2, default=str)
-                os.replace(temporary, checkpoint_path)
+                atomic_write_json(
+                    checkpoint_path,
+                    value,
+                    clean_transient=False,
+                    default=str,
+                )
 
             executor.checkpoint_callback = save_checkpoint
 

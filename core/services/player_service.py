@@ -19,6 +19,7 @@ from fastapi import BackgroundTasks, HTTPException
 from core.player.loader import PlayerAssetLoader
 from core.player.providers import SystemDataProvider
 from core.player.schema import build_user_config, normalize_form_schema, split_target, validate_user_config
+from core.security import atomic_write_json
 from core.security.crypto import SecureAssetCrypto
 from core.security.licensing import LicenseManager
 from core.services.execution_service import ExecutionService
@@ -51,6 +52,7 @@ class PlayerService:
     _current_execution_id: str = None
     _instances: dict[str, dict[str, Any]] = {}
     _state_lock = threading.Lock()
+    _profiles_lock = threading.Lock()
 
     @staticmethod
     def _runtime_graphs(blueprint: dict[str, Any], *, include_page_map: bool = True) -> list[dict[str, Any]]:
@@ -455,7 +457,7 @@ class PlayerService:
                     try:
                         cls._assign_existing_runtime_path(node.setdefault('params', {}), keys, value)
                     except (KeyError, IndexError, TypeError, ValueError):
-                        raise HTTPException(status_code=422, detail=f'Player 绑定的节点参数不存在: {target}')
+                        raise HTTPException(status_code=422, detail=f'Player 绑定的节点参数不存在: {target}') from None
         return templates
 
     @staticmethod
@@ -511,15 +513,12 @@ class PlayerService:
             config_path = os.path.join(cls._runtime_root(), 'user_config.json')
 
         try:
-            temp_path = config_path + '.tmp'
             from core.services.player_secret_service import PlayerSecretService
 
             protected_config = PlayerSecretService.transform_config(
                 form_schema, normalized_config, storage_root=cls._runtime_root(),
             )
-            with open(temp_path, 'w', encoding='utf-8') as f:
-                json.dump(protected_config, f, ensure_ascii=False, indent=2)
-            os.replace(temp_path, config_path)
+            atomic_write_json(config_path, protected_config, clean_transient=False)
             return {'status': 'success', 'instance_id': instance_id}
         except Exception as e:
             raise HTTPException(status_code=500, detail=f'保存 user_config 失败: {e}') from e
@@ -753,16 +752,13 @@ class PlayerService:
         errors = validate_user_config(schema, normalized)
         if errors:
             raise HTTPException(status_code=422, detail={'message': '方案参数无效', 'fields': errors})
-        profiles = cls._load_profiles()
         from core.services.player_secret_service import PlayerSecretService
 
         protected = PlayerSecretService.transform_config(schema, normalized, storage_root=cls._runtime_root())
-        profiles[clean_name] = {'updated_at': datetime.now(timezone.utc).isoformat(), 'user_config': protected}
-        path = cls._profiles_path()
-        temp_path = path + '.tmp'
-        with open(temp_path, 'w', encoding='utf-8') as stream:
-            json.dump(profiles, stream, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
+        with cls._profiles_lock:
+            profiles = cls._load_profiles()
+            profiles[clean_name] = {'updated_at': datetime.now(timezone.utc).isoformat(), 'user_config': protected}
+            atomic_write_json(cls._profiles_path(), profiles, clean_transient=False)
         return {'status': 'success', 'name': clean_name}
 
     @classmethod
@@ -783,15 +779,12 @@ class PlayerService:
 
     @classmethod
     def delete_profile(cls, name: str) -> dict:
-        profiles = cls._load_profiles()
-        if name not in profiles:
-            raise HTTPException(status_code=404, detail='配置方案不存在')
-        profiles.pop(name)
-        path = cls._profiles_path()
-        temp_path = path + '.tmp'
-        with open(temp_path, 'w', encoding='utf-8') as stream:
-            json.dump(profiles, stream, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
+        with cls._profiles_lock:
+            profiles = cls._load_profiles()
+            if name not in profiles:
+                raise HTTPException(status_code=404, detail='配置方案不存在')
+            profiles.pop(name)
+            atomic_write_json(cls._profiles_path(), profiles, clean_transient=False)
         return {'status': 'success'}
 
     @classmethod

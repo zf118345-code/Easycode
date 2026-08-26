@@ -5,6 +5,62 @@ from fastapi import HTTPException, Request
 from core.services.project_workspace_service import WorkspaceError, project_workspace_manager
 
 
+_PROJECT_FILE_MUTATION_PATHS = frozenset({
+    '/api/blueprint/save',
+    '/api/workflow/save',
+    '/api/topology/save',
+    '/api/functions',
+    '/api/functions/import',
+    '/api/exporter/schema',
+    '/api/capabilities/packages',
+    '/api/regions',
+    '/api/context',
+    '/api/project/settings',
+    '/api/capture/assets',
+    '/api/capture/assets/undo',
+})
+_PROJECT_FILE_MUTATION_PREFIXES = (
+    '/api/functions/',
+    '/api/history/',
+    '/api/templates/',
+)
+_PROJECT_MUTATION_DOCUMENTS = {
+    '/api/blueprint/save': ('project.json', 'workflow.json', 'topology.json'),
+    '/api/workflow/save': ('project.json', 'workflow.json'),
+    '/api/topology/save': ('project.json', 'topology.json'),
+    '/api/exporter/schema': ('project.json', 'form_schema.json'),
+    '/api/context': ('context.json',),
+    '/api/project/settings': ('project.json',),
+}
+
+
+def mutates_project_files(method: str, path: str) -> bool:
+    """Return whether a successful request changes watched project inputs.
+
+    Runtime commands such as capture heartbeats, execution control and Player
+    state must not trigger a full workspace fingerprint scan.
+    """
+    if str(method or '').upper() not in {'POST', 'PUT', 'PATCH', 'DELETE'}:
+        return False
+    normalized = '/' + str(path or '').strip().strip('/')
+    return (
+        normalized in _PROJECT_FILE_MUTATION_PATHS
+        or any(normalized.startswith(prefix) for prefix in _PROJECT_FILE_MUTATION_PREFIXES)
+    )
+
+
+def project_mutation_documents(method: str, path: str) -> tuple[str, ...] | None:
+    """Return directly changed documents, or ``None`` when a tree rescan is required."""
+    if not mutates_project_files(method, path):
+        return ()
+    normalized = '/' + str(path or '').strip().strip('/')
+    if normalized.startswith('/api/functions/') or normalized in {'/api/functions', '/api/functions/import'}:
+        return ('project.json', 'workflow.json')
+    if normalized.startswith('/api/history/'):
+        return ('project.json', 'workflow.json', 'topology.json', 'context.json', 'form_schema.json')
+    return _PROJECT_MUTATION_DOCUMENTS.get(normalized)
+
+
 def request_project_path(request: Request, *, writable: bool = False) -> str:
     workspace_id = str(request.headers.get('x-workspace-id') or '')
     generation_raw = request.headers.get('x-workspace-generation')
@@ -34,4 +90,3 @@ def assert_matching_legacy_path(request: Request, supplied_path: str | None, *, 
         if supplied_key != active_key:
             raise HTTPException(status_code=409, detail='请求中的项目路径不属于当前工作区')
     return active
-

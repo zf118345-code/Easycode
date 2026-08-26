@@ -47,7 +47,7 @@ class TopologySaveRequestSchema(BaseModel):
     model_config = {'extra': 'allow'}
 
     project_path: str
-    topology_data: dict[str, Any] = Field(..., description='页面地图数据 {nodes, edges, blocks}')
+    topology_data: dict[str, Any] = Field(..., description='页面地图数据 {nodes, edges}')
 
 
 class FunctionCreateRequestSchema(BaseModel):

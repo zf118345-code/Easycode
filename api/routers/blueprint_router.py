@@ -1,4 +1,3 @@
-import logging
 import os
 
 from fastapi import APIRouter, HTTPException, Request
@@ -13,8 +12,7 @@ from core.schemas import (
     WorkflowSaveRequestSchema,
 )
 from api.workspace_context import assert_matching_legacy_path
-
-logger = logging.getLogger(__name__)
+from api.error_handling import internal_http_error
 
 
 def _service_unavailable(name):
@@ -37,8 +35,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'加载项目元数据失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'加载项目元数据失败: {str(e)}') from e
+            raise internal_http_error('加载项目元数据失败', e) from e
 
     @router.post('/api/blueprint/save')
     async def save_full_blueprint(payload: SaveBlueprintRequestSchema, request: Request):
@@ -52,8 +49,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'保存蓝图失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'保存蓝图失败: {str(e)}') from e
+            raise internal_http_error('保存蓝图失败', e) from e
 
     # ============ 流程画布（workflow.json） ============
 
@@ -68,8 +64,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'加载流程画布失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'加载流程画布失败: {str(e)}') from e
+            raise internal_http_error('加载流程画布失败', e) from e
 
     @router.post('/api/workflow/save')
     async def save_workflow(payload: WorkflowSaveRequestSchema, request: Request):
@@ -83,14 +78,13 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'保存流程画布失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'保存流程画布失败: {str(e)}') from e
+            raise internal_http_error('保存流程画布失败', e) from e
 
     # ============ 拓扑地图（topology.json） ============
 
     @router.get('/api/topology')
     async def get_topology(request: Request, project_path: str | None = None):
-        """加载项目唯一扁平页面地图（topology.json：{nodes, edges, blocks}）。"""
+        """加载项目唯一扁平页面地图（topology.json：{nodes, edges}）。"""
         if blueprint_service is None:
             _service_unavailable('BlueprintService')
         try:
@@ -99,8 +93,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'加载拓扑地图失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'加载拓扑地图失败: {str(e)}') from e
+            raise internal_http_error('加载拓扑地图失败', e) from e
 
     @router.post('/api/topology/save')
     async def save_topology(payload: TopologySaveRequestSchema, request: Request):
@@ -114,8 +107,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'保存拓扑地图失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'保存拓扑地图失败: {str(e)}') from e
+            raise internal_http_error('保存拓扑地图失败', e) from e
 
     # ============ 函数库 ============
 
@@ -128,7 +120,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'获取函数列表失败: {str(e)}') from e
+            raise internal_http_error('获取函数列表失败', e) from e
 
     @router.get('/api/functions/{function_id}')
     async def get_function(function_id: str, request: Request, project_path: str | None = None):
@@ -139,7 +131,7 @@ def create_blueprint_router(blueprint_service, load_project_fn):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'获取函数失败: {str(e)}') from e
+            raise internal_http_error('获取函数失败', e) from e
 
     @router.put('/api/functions/{function_id}')
     async def save_function(function_id: str, payload: FunctionSaveRequestSchema, request: Request):

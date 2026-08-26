@@ -2,11 +2,11 @@ export const MAIN_GRAPH_ID = 'main'
 export const SYSTEM_EXCEPTION_OUTCOME_ID = 'system_exception'
 
 export function createMainGraph() {
-    return { graph_id: MAIN_GRAPH_ID, nodes: [], edges: [], blocks: [] }
+    return { graph_id: MAIN_GRAPH_ID, nodes: [], edges: [] }
 }
 
 export function createPageMap() {
-    return { schema_version: 3, nodes: [], edges: [], blocks: [] }
+    return { schema_version: 3, nodes: [], edges: [] }
 }
 
 export function createStableId(prefix) {
@@ -38,8 +38,7 @@ export function createFunctionDefinition(name = '新建函数', folderId = null)
                 { node_id: entryId, node_name: '函数入口', node_type: 'function_entry', params: {}, delay_before: 0, loop_count: 1, enabled: true, fixed: true, position: { x: 80, y: 160 }, size: { w: 180, h: 84 } },
                 { node_id: returnId, node_name: '返回成功', node_type: 'function_return', params: { outcome_id: successId, output_bindings: [] }, delay_before: 0, loop_count: 1, enabled: true, position: { x: 420, y: 160 }, size: { w: 180, h: 92 } }
             ],
-            edges: [],
-            blocks: []
+            edges: []
         }
     }
 }

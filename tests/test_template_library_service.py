@@ -35,19 +35,19 @@ def graph_with_reference(reference: str, *, feature=False):
     }
     if feature:
         params = {'page_id': 'page_test', 'features': [{'condition_type': 'image_exists', **params}]}
+    node = {
+        'node_id': 'node_a',
+        'node_name': '识别节点',
+        'node_type': 'page_state' if feature else 'image_recognition',
+        'params': params,
+    }
+    if feature:
+        return {'schema_version': PROJECT_SCHEMA_VERSION, 'nodes': [node], 'edges': []}
     return {
         'schema_version': PROJECT_SCHEMA_VERSION,
-        'tasks': [{
-            'task_id': 'task_a',
-            'task_name': '测试组',
-            'nodes': [{
-                'node_id': 'node_a',
-                'node_name': '识别节点',
-                'node_type': 'page_state' if feature else 'image_recognition',
-                'params': params,
-            }],
-        }],
-        'edges': [],
+        'main_graph': {'graph_id': 'main', 'nodes': [node], 'edges': []},
+        'functions': [],
+        'function_folders': [],
     }
 
 
@@ -80,14 +80,14 @@ def test_delete_asset_is_recoverable_and_clears_graph_state(tmp_path):
     assert (trash_image.parents[2] / 'manifest.json').is_file()
     assert record['id'] not in AssetService.load_registry(str(tmp_path))['assets']
 
-    workflow_params = read_json(tmp_path / 'workflow.json')['tasks'][0]['nodes'][0]['params']
+    workflow_params = read_json(tmp_path / 'workflow.json')['main_graph']['nodes'][0]['params']
     assert workflow_params['image_source'] == ''
     assert workflow_params['region_type'] == 'fullwindow'
     assert workflow_params['region_value'] == [0, 0, 0, 0]
     assert workflow_params['region_reference_size'] == [0, 0]
     assert workflow_params['crop_rect'] == [0, 0, 0, 0]
     assert workflow_params['region'] == [0, 0, 0, 0]
-    topology_feature = read_json(tmp_path / 'topology.json')['tasks'][0]['nodes'][0]['params']['features'][0]
+    topology_feature = read_json(tmp_path / 'topology.json')['nodes'][0]['params']['features'][0]
     assert topology_feature['image_source'] == ''
     assert topology_feature['region_value'] == [0, 0, 0, 0]
     assert not (tmp_path / 'templates' / 'regions.json').exists()
@@ -102,7 +102,7 @@ def test_delete_asset_is_recoverable_and_clears_graph_state(tmp_path):
     assert restored_record['capture']['region'] == [10, 20, 30, 40]
     assert TemplateLibraryService.list_trash(str(tmp_path))['entries'] == []
     # Restoring a resource does not overwrite graph edits made after deletion.
-    assert read_json(tmp_path / 'workflow.json')['tasks'][0]['nodes'][0]['params']['image_source'] == ''
+    assert read_json(tmp_path / 'workflow.json')['main_graph']['nodes'][0]['params']['image_source'] == ''
 
 
 def test_move_keeps_stable_id_and_requires_no_graph_rewrite(tmp_path):
@@ -127,8 +127,8 @@ def test_move_keeps_stable_id_and_requires_no_graph_rewrite(tmp_path):
     assert moved_record['path'] == 'page/login/submit.png'
     assert moved_record['kind'] == 'page'
     assert moved_record['display_name'] == 'submit'
-    workflow_ref = read_json(tmp_path / 'workflow.json')['tasks'][0]['nodes'][0]['params']['image_source']
-    topology_ref = read_json(tmp_path / 'topology.json')['tasks'][0]['nodes'][0]['params']['features'][0]['image_source']
+    workflow_ref = read_json(tmp_path / 'workflow.json')['main_graph']['nodes'][0]['params']['image_source']
+    topology_ref = read_json(tmp_path / 'topology.json')['nodes'][0]['params']['features'][0]['image_source']
     assert workflow_ref == AssetService.reference(record['id'])
     assert topology_ref == AssetService.reference(record['id'])
     assert not (tmp_path / 'templates' / 'regions.json').exists()
@@ -196,7 +196,7 @@ def test_stale_editor_save_cannot_revive_a_deleted_asset_reference(tmp_path):
     TemplateLibraryService.delete(str(tmp_path), 'image/stale.png')
     BlueprintService.save_workflow(str(tmp_path), stale_graph, create_snapshot=False)
 
-    params = read_json(tmp_path / 'workflow.json')['tasks'][0]['nodes'][0]['params']
+    params = read_json(tmp_path / 'workflow.json')['main_graph']['nodes'][0]['params']
     assert params['image_source'] == ''
     assert params['region_value'] == [0, 0, 0, 0]
 
@@ -214,4 +214,4 @@ def test_registering_a_new_file_does_not_reactivate_deleted_stable_id(tmp_path):
 
     old_stable_graph = graph_with_reference(AssetService.reference(old_record['id']))
     BlueprintService.save_workflow(str(tmp_path), old_stable_graph, create_snapshot=False)
-    assert read_json(tmp_path / 'workflow.json')['tasks'][0]['nodes'][0]['params']['image_source'] == ''
+    assert read_json(tmp_path / 'workflow.json')['main_graph']['nodes'][0]['params']['image_source'] == ''

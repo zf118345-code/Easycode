@@ -1,10 +1,8 @@
 # core/services/vision_service.py
 import base64
-import json
 import os
 
-import pyautogui
-import win32gui
+import numpy as np
 from fastapi import HTTPException
 
 from core.security import assert_safe_path

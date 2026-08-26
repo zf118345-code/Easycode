@@ -37,7 +37,7 @@ class TestBlueprintAPI:
         assert meta.json()['schema_version'] == PROJECT_SCHEMA_VERSION
         assert workflow.json()['main_graph']['graph_id'] == 'main'
         assert workflow.json()['functions'] == []
-        assert topology.json() == {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []}
+        assert topology.json() == {'schema_version': 3, 'nodes': [], 'edges': []}
 
     def test_empty_project_is_rejected_without_writing_back(self, client, tmp_path):
         empty = tmp_path / 'empty'
@@ -66,13 +66,12 @@ class TestBlueprintAPI:
                         'waypoints': [{'id': 'waypoint_1', 'x': 240, 'y': 160}],
                     },
                 }],
-                'blocks': [{'block_id': 'block_1', 'name': '阶段', 'x': 0, 'y': 0, 'width': 400, 'height': 260}],
             },
             'functions': [], 'function_folders': [],
         }
         topology = {
             'nodes': [{'node_id': 'page_node', 'node_name': '登录页', 'node_type': 'page_state', 'params': {'page_id': 'page_login', 'features': [], 'feature_mode': 'and'}}],
-            'edges': [], 'blocks': [],
+            'edges': [],
         }
 
         saved_flow = client.post('/api/workflow/save', json={'project_path': str(project), 'workflow_data': workflow}, headers=headers)
@@ -85,7 +84,6 @@ class TestBlueprintAPI:
         assert loaded_flow['main_graph']['edges'][0]['routing']['waypoints'][0] == {
             'id': 'waypoint_1', 'x': 240, 'y': 160,
         }
-        assert loaded_flow['main_graph']['blocks'][0]['block_id'] == 'block_1'
         assert loaded_map['nodes'][0]['params']['page_id'] == 'page_login'
 
     def test_v2_tasks_and_page_collections_are_rejected(self, client, tmp_path):

@@ -22,14 +22,11 @@ describe('CanvasContextMenu 键盘操作', () => {
         await nextTick()
 
         const items = wrapper.findAll('[role="menuitem"]')
-        expect(items).toHaveLength(3)
+        expect(items).toHaveLength(2)
         expect(document.activeElement).toBe(items[0].element)
 
         await wrapper.find('[role="menu"]').trigger('keydown', { key: 'ArrowDown' })
         expect(document.activeElement).toBe(items[1].element)
-        await wrapper.find('[role="menu"]').trigger('keydown', { key: 'ArrowDown' })
-        expect(document.activeElement).toBe(items[2].element)
-
         await wrapper.find('[role="menu"]').trigger('keydown', { key: 'Escape' })
         expect(wrapper.emitted('dismiss')).toHaveLength(1)
         wrapper.unmount()

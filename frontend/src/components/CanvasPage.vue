@@ -1,29 +1,23 @@
 <!-- frontend/src/components/CanvasPage.vue
   唯一画布页面（业务流程与页面拓扑完全共用一个页面/一套逻辑）：
   - 画布渲染/交互（节点卡片、连线、端口、拖拽、碰撞、断点、缩放、快捷键）全部复用 CanvasView
-  - 「模式」只存在于数据读写层：canvasMode 决定读取哪个 JSON（workflow.json / topology.json）
-    与显示哪些节点类型（nodeRegistry 白名单）；两数据源结构完全同构（{tasks, edges}）
+  - 工作区只从左侧导航进入；canvasMode 决定读取主流程、函数图或 page_map
+    与显示哪些节点类型（nodeRegistry 白名单）；持久化图统一为 {nodes, edges}
 -->
 <template>
     <div class="canvas-page-shell">
-        <nav v-if="!isTopology" class="flow-breadcrumb" aria-label="当前画布位置">
-            <button type="button" class="breadcrumb-root" title="返回项目主流程" @click="openMainFlow">
-                {{ store.currentProjectName || '当前项目' }}
-            </button>
-            <ChevronRight />
-            <template v-if="isFunctionCanvas">
-                <button type="button" class="breadcrumb-root" @click="openMainFlow">函数库</button>
-                <ChevronRight />
-            </template>
-            <span class="breadcrumb-current">{{ activeGraphLabel }}</span>
-            <span v-if="isFunctionCanvas" class="flow-context-note">函数画布</span>
-        </nav>
+        <div v-if="isFunctionWorkspaceEmpty" class="function-workspace-empty">
+            <div class="function-empty-icon"><Braces :size="22" /></div>
+            <strong>选择一个函数开始编辑</strong>
+            <p>函数拥有独立画布、形参、局部变量、输出和结果出口。</p>
+            <button type="button" @click="requestCreateFunction"><Plus :size="14" />新建函数</button>
+        </div>
         <CanvasView
+            v-else
             ref="canvasViewRef"
             :mode="canvasMode"
             :tasks="renderCanvasData.tasks"
             :edges="renderCanvasData.edges"
-            :blocks="renderCanvasData.blocks"
             :available-node-types="availableNodeTypes"
             :has-breakpoints="true"
             :on-save="handleSave"
@@ -32,15 +26,13 @@
             :on-undo="activeUndoRedo.undo"
             :on-redo="activeUndoRedo.redo"
             @update-tasks="handleUpdateTasks"
-            @update-blocks="handleUpdateBlocks"
             @update-geometry="handleUpdateGeometry"
             @add-edge="handleAddEdge"
             @remove-edge="handleRemoveEdge"
             @update-edge-routing="handleUpdateEdgeRouting"
             @create-node="handleCreateNode"
             @paste-subgraph="handlePasteSubgraph"
-            @delete-node="handleDeleteNode"
-            @request-delete-block="handleDeleteBlock" />
+            @delete-node="handleDeleteNode" />
     </div>
     <el-dialog v-model="layoutDialogVisible" title="自动布局预览" width="460px" append-to-body @closed="cancelLayoutPreview">
         <el-form label-width="90px">
@@ -83,12 +75,13 @@
     import { autoLayoutGraphGeometry } from '@/utils/autoLayout'
     import { getPrimarySourcePort, getSourcePortDescriptors } from '@/utils/portModel'
     import { getGraph, getGraphLabel, MAIN_GRAPH_ID } from '@/utils/flowModel'
+    import { notifyActionError } from '@/utils/userActionErrors'
     import {
         normalizeEdgeRouting,
         reconcileEdgeWaypoints,
         translateInternalEdgeWaypoints
     } from '@/utils/edgePresentation'
-    import { ChevronRight } from 'lucide-vue-next'
+    import { Braces, Plus } from 'lucide-vue-next'
 
     const store = useIdeStore()
     const uiStore = useUiStore()
@@ -147,18 +140,18 @@
     const canvasMode = computed(() => store.canvasMode || 'workflow')
     const isTopology = computed(() => canvasMode.value === 'topology')
     const isFunctionCanvas = computed(() => canvasMode.value === 'function')
+    const isFunctionWorkspaceEmpty = computed(() => isFunctionCanvas.value && store.functionWorkspaceEmpty)
     const activeGraph = computed(() => (
-        isTopology.value
+        isFunctionWorkspaceEmpty.value
+            ? null
+            : isTopology.value
             ? store.blueprint.page_map
             : getGraph(store.blueprint, isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID)
     ))
     const activeGraphLabel = computed(() => isTopology.value ? '页面地图' : getGraphLabel(store.blueprint, isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID))
 
-    async function openMainFlow() {
-        uiStore.clearSelection()
-        await store.loadTaskData(MAIN_GRAPH_ID)
-        await store.setCanvasMode('workflow')
-        uiStore.setFocusTarget({ type: 'graph', id: MAIN_GRAPH_ID, timestamp: Date.now() })
+    function requestCreateFunction() {
+        window.dispatchEvent(new CustomEvent('easycode:create-function'))
     }
 
     // 节点可用类型：modes/label 来自后端 /api/params 配置（单一数据源），前端表兜底
@@ -167,18 +160,17 @@
     // ===== 当前数据源（唯一模式判断点 1：读取哪个 JSON） =====
     const renderCanvasData = computed(() => {
         const graph = activeGraph.value
-        if (!graph) return { tasks: [], edges: [], blocks: [] }
+        if (!graph) return { tasks: [], edges: [] }
         const graphId = isTopology.value ? 'page_map' : (isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID)
         return {
             tasks: [{ task_id: graphId, task_name: activeGraphLabel.value, role: isFunctionCanvas.value ? 'function' : canvasMode.value, nodes: graph.nodes }],
-            edges: graph.edges || [],
-            blocks: graph.blocks || []
+            edges: graph.edges || []
         }
     })
 
     const canvasName = computed(() => (isTopology.value ? 'topology' : 'workflow'))
 
-    // 撤销重做：快照结构同构 {tasks, edges}，仅数据键不同，各持一个实例避免跨 Tab 撤销
+    // 撤销重做：主流程/函数与页面地图分别维护历史，避免跨工作区撤销
     const workflowUndoRedo = createCanvasUndoRedo('workflow')
     const topologyUndoRedo = createCanvasUndoRedo('topology')
     const activeUndoRedo = computed(() => (isTopology.value ? topologyUndoRedo : workflowUndoRedo))
@@ -194,7 +186,7 @@
         }
     }
 
-    // ===== 节点/组结构更新（两 Tab 同一套逻辑，操作当前数据源） =====
+    // ===== 节点结构更新（三类画布复用同一套逻辑） =====
 
     async function handleUpdateTasks(tasks) {
         activeUndoRedo.value.commit()
@@ -206,16 +198,9 @@
         }
     }
 
-    async function handleUpdateBlocks(blocks) {
-        activeUndoRedo.value.commit()
-        if (activeGraph.value) activeGraph.value.blocks = JSON.parse(JSON.stringify(blocks || []))
-        await saveCanvas()
-    }
-
-    async function handleUpdateGeometry({ tasks, blocks, movedNodeIds = [], delta = null }) {
+    async function handleUpdateGeometry({ tasks, movedNodeIds = [], delta = null }) {
         activeUndoRedo.value.commit()
         if (activeGraph.value && tasks) activeGraph.value.nodes = JSON.parse(JSON.stringify(tasks?.[0]?.nodes || []))
-        if (activeGraph.value) activeGraph.value.blocks = JSON.parse(JSON.stringify(blocks || []))
         if (activeGraph.value && delta) {
             translateInternalEdgeWaypoints(activeGraph.value.edges || [], movedNodeIds, delta)
         }
@@ -273,9 +258,13 @@
     }
 
     async function handleCreateNode(payload) {
+        if (!activeGraph.value) {
+            ElMessage.error('当前画布尚未就绪，请重新打开主流程、函数或页面地图后再新建节点')
+            return { error: 'active graph missing' }
+        }
         activeUndoRedo.value.commit()
         const tasks = renderCanvasData.value.tasks
-        const graphBefore = JSON.parse(JSON.stringify(activeGraph.value || { nodes: [], edges: [], blocks: [] }))
+        const graphBefore = JSON.parse(JSON.stringify(activeGraph.value || { nodes: [], edges: [] }))
         let targetTask = null
         let sourceNodeObj = null
 
@@ -292,7 +281,10 @@
             targetTask = tasks.find(task => task.task_id === store.currentTaskId) || null
         }
         if (!targetTask) targetTask = tasks[0] || null
-        if (!targetTask) return { error: 'active graph missing' }
+        if (!targetTask) {
+            ElMessage.error('当前画布没有可写入的流程，请重新打开对应画布后再试')
+            return { error: 'active graph missing' }
+        }
 
         if (!targetTask.nodes) targetTask.nodes = []
 
@@ -394,7 +386,6 @@
             if (activeGraph.value) {
                 activeGraph.value.nodes = graphBefore.nodes || []
                 activeGraph.value.edges = graphBefore.edges || []
-                activeGraph.value.blocks = graphBefore.blocks || []
             }
             ElMessage.error(`节点创建失败，画布已恢复：${error?.message || '保存失败'}`)
             return { error: error?.message || 'save failed' }
@@ -564,40 +555,6 @@
         ElMessage.success('节点已删除')
     }
 
-    async function handleDeleteBlock({ block, containedNodeIds = [] }) {
-        if (!block?.block_id || !activeGraph.value) return
-        let deleteContained = false
-        try {
-            await ElMessageBox.confirm(
-                `区块“${block.name}”当前完整包含 ${containedNodeIds.length} 个节点。默认只删除区块，节点和连线都会保留。`,
-                '删除区块',
-                {
-                    type: 'warning',
-                    distinguishCancelAndClose: true,
-                    confirmButtonText: '仅删除区块',
-                    cancelButtonText: containedNodeIds.length ? '区块和节点一起删除' : '取消',
-                    closeOnClickModal: false
-                }
-            )
-        } catch (action) {
-            if (action !== 'cancel' || !containedNodeIds.length) return
-            deleteContained = true
-        }
-        activeUndoRedo.value.commit()
-        activeGraph.value.blocks = (activeGraph.value.blocks || []).filter(item => item.block_id !== block.block_id)
-        if (deleteContained) {
-            const fixedIds = new Set((activeGraph.value.nodes || []).filter(node => node.fixed).map(node => node.node_id))
-            const removableIds = containedNodeIds.filter(id => !fixedIds.has(id))
-            let tasks = renderCanvasData.value.tasks
-            for (const id of removableIds) tasks = removeNode(tasks, activeGraph.value.edges || [], id)
-            activeGraph.value.nodes = tasks[0]?.nodes || []
-            if (removableIds.length !== containedNodeIds.length) ElMessage.warning('固定入口节点已保留')
-        }
-        uiStore.clearSelection()
-        await saveCanvas()
-        ElMessage.success(deleteContained ? '区块及其中可删除节点已删除' : '区块已删除，节点保持原位')
-    }
-
     // ===== 通用操作（两 Tab 共用） =====
 
     async function handleSave() {
@@ -606,10 +563,8 @@
     }
 
     function openAutoLayout() {
-        layoutOriginal.value = JSON.parse(JSON.stringify({
-            nodes: activeGraph.value?.nodes || [],
-            blocks: activeGraph.value?.blocks || []
-        }))
+        if (!activeGraph.value) return ElMessage.warning('请先打开可编辑画布')
+        layoutOriginal.value = JSON.parse(JSON.stringify({ nodes: activeGraph.value.nodes || [] }))
         layoutPreviewActive.value = false
         layoutDialogVisible.value = true
     }
@@ -620,34 +575,30 @@
             ElMessage.warning('请先选中要布局的节点')
             return
         }
-        const original = layoutOriginal.value || JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [], blocks: activeGraph.value?.blocks || [] }))
+        const original = layoutOriginal.value || JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [] }))
         const preview = autoLayoutGraphGeometry({
             nodes: original.nodes || [],
-            edges: renderCanvasData.value.edges,
-            blocks: original.blocks || []
+            edges: renderCanvasData.value.edges
         }, {
             scope: layoutScope.value,
             selectedNodeIds
         })
         if (activeGraph.value) {
             activeGraph.value.nodes = preview.nodes
-            activeGraph.value.blocks = preview.blocks
         }
         layoutPreviewActive.value = true
     }
 
     async function confirmAutoLayout() {
         if (!layoutPreviewActive.value) return
-        const preview = JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [], blocks: activeGraph.value?.blocks || [] }))
-        const original = JSON.parse(JSON.stringify(layoutOriginal.value || { nodes: [], blocks: [] }))
+        const preview = JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [] }))
+        const original = JSON.parse(JSON.stringify(layoutOriginal.value || { nodes: [] }))
         if (activeGraph.value) {
             activeGraph.value.nodes = original.nodes || []
-            activeGraph.value.blocks = original.blocks || []
         }
         activeUndoRedo.value.commit()
         if (activeGraph.value) {
             activeGraph.value.nodes = preview.nodes || []
-            activeGraph.value.blocks = preview.blocks || []
         }
         await saveCanvas()
         layoutOriginal.value = null
@@ -661,7 +612,6 @@
             const original = JSON.parse(JSON.stringify(layoutOriginal.value))
             if (activeGraph.value) {
                 activeGraph.value.nodes = original.nodes || []
-                activeGraph.value.blocks = original.blocks || []
             }
         }
         layoutOriginal.value = null
@@ -785,7 +735,7 @@
             }
         }
         const activeTask = isTopology.value
-            ? tasks.find(task => uiStore.selectedGroupId === `group_${task.task_id}`)
+            ? tasks[0]
             : tasks.find(task => task.task_id === store.currentTaskId)
         if (activeTask) {
             return {
@@ -1017,10 +967,12 @@
     const navigateToFlow = async event => {
         const taskId = event?.detail?.taskId
         if (!taskId || (taskId !== MAIN_GRAPH_ID && !(store.blueprint.functions || []).some(item => item.function_id === taskId))) return
-        uiStore.clearSelection()
-        await store.loadTaskData(taskId)
-        await store.setCanvasMode(taskId === MAIN_GRAPH_ID ? 'workflow' : 'function')
-        uiStore.setFocusTarget({ type: 'graph', id: taskId, timestamp: Date.now() })
+        try {
+            await store.navigateToGraph(taskId === MAIN_GRAPH_ID ? 'workflow' : 'function', taskId)
+            uiStore.setFocusTarget({ type: 'graph', id: taskId, timestamp: Date.now() })
+        } catch (error) {
+            notifyActionError(error, '无法打开目标流程')
+        }
     }
     onMounted(() => {
         window.addEventListener('easycode:navigate-flow', navigateToFlow)
@@ -1054,11 +1006,11 @@
 <style scoped>
 .canvas-page-shell{width:100%;height:100%;min-height:0;display:flex;flex-direction:column;background:var(--el-bg-color-page)}
 .canvas-page-shell :deep(.custom-canvas-container){min-height:0;flex:1}
-.flow-breadcrumb{height:32px;min-height:32px;padding:0 10px;border-bottom:1px solid var(--el-border-color-lighter);display:flex;align-items:center;gap:4px;color:var(--el-text-color-secondary);background:var(--el-bg-color);font-size:11px}
-.flow-breadcrumb>svg{width:12px;height:12px;color:var(--el-text-color-placeholder)}
-.breadcrumb-root{max-width:180px;padding:3px 5px;border:0;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--el-text-color-secondary);background:transparent;cursor:pointer}
-.breadcrumb-root:hover{color:var(--el-text-color-primary);background:var(--el-fill-color-light)}
-.breadcrumb-root:focus-visible{outline:0;box-shadow:var(--focus-ring)}
-.breadcrumb-current{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--el-text-color-primary);font-weight:620}
-.flow-context-note{margin-left:auto;color:var(--el-text-color-placeholder)}
+.function-workspace-empty{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;text-align:center;color:var(--app-text-secondary);background:var(--app-canvas-bg)}
+.function-empty-icon{width:44px;height:44px;display:grid;place-items:center;margin-bottom:12px;border:1px solid var(--app-border-subtle);border-radius:10px;background:var(--app-panel-bg);color:var(--el-color-primary)}
+.function-workspace-empty strong{font-size:14px;color:var(--app-text-primary)}
+.function-workspace-empty p{max-width:360px;margin:7px 0 16px;font-size:11px;line-height:1.6;color:var(--app-text-placeholder)}
+.function-workspace-empty button{height:30px;display:flex;align-items:center;gap:6px;padding:0 11px;border:0;border-radius:6px;background:var(--el-color-primary);color:var(--app-color-on-primary);font:inherit;cursor:pointer}
+.function-workspace-empty button:hover{background:var(--app-color-primary-hover)}
+.function-workspace-empty button:focus-visible{outline:0;box-shadow:var(--focus-ring)}
 </style>

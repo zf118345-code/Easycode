@@ -1143,58 +1143,60 @@ export const SHARED_NODE_CSS = `
 /* ---------- Minimap ---------- */
 .minimap-container {
     position: absolute;
-    right: 16px;
-    bottom: 16px;
-    width: 160px;
-    height: 120px;
-    background: rgba(29, 30, 33, 0.88);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px;
-    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.34);
+    right: 12px;
+    bottom: 12px;
+    width: 152px;
+    height: 112px;
+    background: var(--app-bg-raised);
+    border: 1px solid var(--app-border-default);
+    border-radius: var(--app-radius-md);
+    box-shadow: var(--app-shadow-sm);
     z-index: 998;
     overflow: hidden;
+}
+.minimap-container canvas {
+    display: block;
+    margin: 1px;
 }
 
 /* ---------- Canvas Toolbar ---------- */
 .canvas-toolbar {
     position: absolute;
-    top: 14px;
-    right: 14px;
+    top: 12px;
+    right: 12px;
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 5px 10px;
-    background: rgba(36, 37, 40, 0.94);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 7px;
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
+    gap: 2px;
+    padding: 3px;
+    background: var(--app-bg-raised);
+    border: 1px solid var(--app-border-default);
+    border-radius: var(--app-radius-md);
     z-index: 100;
-    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
+    box-shadow: var(--app-shadow-sm);
 }
 .toolbar-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 30px;
-    height: 30px;
+    width: 28px;
+    height: 28px;
     border: none;
     background: transparent;
-    color: #a0a1ab;
-    border-radius: 6px;
+    color: var(--app-text-secondary);
+    border-radius: var(--app-radius-sm);
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
 }
 .toolbar-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #fff;
+    background: var(--app-bg-hover);
+    color: var(--app-text-primary);
 }
 .zoom-display {
-    font-size: 12px;
-    color: #a0a1ab;
-    min-width: 42px;
+    min-width: 38px;
+    padding: 0 4px;
+    color: var(--app-text-placeholder);
+    font-family: var(--app-font-mono);
+    font-size: 10px;
     text-align: center;
     font-weight: 500;
 }

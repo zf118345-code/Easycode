@@ -210,8 +210,8 @@ class TemplateLibraryService:
         registry = AssetService.load_registry(project_path)
         records = cls._matching_records(registry, source_relative, is_directory)
         workflow_path, topology_path = cls._project_documents(project_path)
-        workflow = cls._read_json(workflow_path, {'main_graph': {'nodes': [], 'edges': [], 'blocks': []}, 'functions': []})
-        topology = cls._read_json(topology_path, {'nodes': [], 'edges': [], 'blocks': []})
+        workflow = cls._read_json(workflow_path, {'main_graph': {'nodes': [], 'edges': []}, 'functions': []})
+        topology = cls._read_json(topology_path, {'nodes': [], 'edges': []})
         workflow_hits, _ = cls._mutate_graph(
             copy.deepcopy(workflow), 'workflow', source_relative, is_directory, set(records)
         )

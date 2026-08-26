@@ -21,12 +21,12 @@ function makeStore() {
     store.currentProjectPath = 'D:/test/proj'
     store.blueprint = {
         variables: { numrun: 0, isnew: false },
-        main_graph: { graph_id: 'main', nodes: [{ node_id: 'n1', node_name: '日志A' }, { node_id: 'n2', node_name: '点击B' }], edges: [], blocks: [] },
+        main_graph: { graph_id: 'main', nodes: [{ node_id: 'n1', node_name: '日志A' }, { node_id: 'n2', node_name: '点击B' }], edges: [] },
         functions: [], function_folders: [],
         page_map: { nodes: [{
             node_id: 'page_login', node_name: '登录页', node_type: 'page_state',
             params: { page_id: 'page_login_stable', features: [{ condition_type: 'image_exists', image_source: 'asset://login' }] }
-        }], edges: [], blocks: [] }
+        }], edges: [] }
     }
     return store
 }

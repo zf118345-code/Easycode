@@ -26,9 +26,21 @@ export const DEFAULT_UI_STATE = {
 
 const PROJECT_SCHEMA_VERSION = 3
 const saveQueues = new WeakMap()
+const saveCoordinators = new WeakMap()
 
 function clone(value) {
     return JSON.parse(JSON.stringify(value))
+}
+
+function enqueueProjectWrite(store, writer) {
+    const coordinator = saveCoordinators.get(store) || { tail: Promise.resolve() }
+    saveCoordinators.set(store, coordinator)
+    const operation = coordinator.tail.catch(() => undefined).then(writer)
+    // Keep the shared tail fulfilled so one failed document domain does not
+    // permanently block later retries, while the caller still receives the
+    // original rejection and updates the corresponding save error state.
+    coordinator.tail = operation.catch(() => undefined)
+    return operation
 }
 
 function createQueue(store, queueName, runner) {
@@ -60,7 +72,7 @@ function createQueue(store, queueName, runner) {
             // per keystroke when only the final state will be persisted.
             const snapshot = snapshotFactory()
             if (!snapshot) return
-            await runner(snapshot)
+            await enqueueProjectWrite(store, () => runner(snapshot))
             setQueueError(null)
             store._lastSavedAt = Date.now()
         }).catch((error) => {
@@ -357,8 +369,8 @@ export const useProjectStore = defineStore('project', {
             if (!meta || !workflow || !workflow.main_graph || !Array.isArray(workflow.functions) || !Array.isArray(workflow.function_folders)) {
                 throw new Error('项目数据结构无效：workflow.json 必须包含 main_graph、functions 与 function_folders')
             }
-            if (!topology || !Array.isArray(topology.nodes) || !Array.isArray(topology.edges) || !Array.isArray(topology.blocks)) {
-                throw new Error('项目数据结构无效：topology.json 必须包含 nodes、edges 与 blocks 数组')
+            if (!topology || !Array.isArray(topology.nodes) || !Array.isArray(topology.edges)) {
+                throw new Error('项目数据结构无效：topology.json 必须包含 nodes 与 edges 数组')
             }
             if ([meta, workflow, topology].some(document => document.schema_version !== PROJECT_SCHEMA_VERSION)) {
                 throw new Error(`项目格式版本不匹配：当前只支持 schema_version ${PROJECT_SCHEMA_VERSION}`)
@@ -389,7 +401,6 @@ export const useProjectStore = defineStore('project', {
                 if (!graph) continue
                 graph.nodes = Array.isArray(graph.nodes) ? graph.nodes : []
                 graph.edges = Array.isArray(graph.edges) ? graph.edges : []
-                graph.blocks = Array.isArray(graph.blocks) ? graph.blocks : []
                 const graphTask = { task_id: id, nodes: graph.nodes }
                 reconcileStablePortRoutes([graphTask], graph.edges)
                 reconcileGraphIntegrity([graphTask], graph.edges)
@@ -483,29 +494,74 @@ export const useProjectStore = defineStore('project', {
             if (this.readOnly) throw new Error('项目以只读方式打开，不能修改或运行')
         },
 
+        _clearSaveErrors(queueNames) {
+            const names = new Set(Array.isArray(queueNames) ? queueNames : [queueNames])
+            const errors = { ...(this._saveErrors || {}) }
+            names.forEach(name => delete errors[name])
+            this._saveErrors = errors
+            const first = Object.values(errors)[0]
+            this._lastSaveError = first ? new Error(first) : null
+        },
+
+        _recordImmediateSaveError(queueName, error) {
+            const errors = { ...(this._saveErrors || {}) }
+            errors[queueName] = error?.message || String(error)
+            this._saveErrors = errors
+            this._lastSaveError = new Error(errors[queueName])
+        },
+
+        async _runImmediateSave(queueNames, writer) {
+            const names = Array.isArray(queueNames) ? queueNames : [queueNames]
+            const errorKey = names.length === 1 ? names[0] : 'blueprint'
+            // A deliberate retry must be allowed to recover from a previous
+            // transient error.  Keep errors from unrelated document domains.
+            this._clearSaveErrors(names)
+            this._savePendingCount += 1
+            try {
+                const result = await enqueueProjectWrite(this, writer)
+                this._clearSaveErrors(names)
+                this._lastSavedAt = Date.now()
+                return result
+            } catch (error) {
+                this._recordImmediateSaveError(errorKey, error)
+                throw error
+            } finally {
+                this._savePendingCount = Math.max(0, this._savePendingCount - 1)
+            }
+        },
+
         async saveProjectMeta(snapshot = null) {
             if (!this.currentProjectPath) return
             this._assertWritable()
             const value = snapshot || this._metaSnapshot()
-            if (value) await blueprintApi.saveBlueprint(value.path, value.data, value.identity)
+            if (value) return await this._runImmediateSave('meta', () => (
+                blueprintApi.saveBlueprint(value.path, value.data, value.identity)
+            ))
         },
         async saveWorkflowImmediately(snapshot = null) {
             if (!this.currentProjectPath) return
             this._assertWritable()
             const value = snapshot || this._workflowSnapshot()
-            if (value) await blueprintApi.saveWorkflow(value.path, value.data, value.identity)
+            if (value) return await this._runImmediateSave('workflow', () => (
+                blueprintApi.saveWorkflow(value.path, value.data, value.identity)
+            ))
         },
         async saveTopologyData(snapshot = null) {
             if (!this.currentProjectPath) return
             this._assertWritable()
             const value = snapshot || this._topologySnapshot()
-            if (value) await blueprintApi.saveTopology(value.path, value.data, value.identity)
+            if (value) return await this._runImmediateSave('topology', () => (
+                blueprintApi.saveTopology(value.path, value.data, value.identity)
+            ))
         },
         async saveBlueprintImmediately(snapshot = null) {
             if (!this.currentProjectPath) return
             this._assertWritable()
             const value = snapshot || this._blueprintSnapshot()
-            if (value) await blueprintApi.saveBlueprint(value.path, value.data, value.identity)
+            if (value) return await this._runImmediateSave(
+                ['meta', 'workflow', 'topology', 'blueprint'],
+                () => blueprintApi.saveBlueprint(value.path, value.data, value.identity)
+            )
         },
 
         saveProjectMetaDebounced() {

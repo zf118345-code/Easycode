@@ -114,7 +114,7 @@ def refresh_work_area(context) -> tuple[int, int, int, int]:
     if not rect and callable(getter) and not getattr(context, '_refresh_work_area_active', False):
         # Compatibility for node/test/plugin contexts that expose the original
         # get_window_rect contract without a public window_rect attribute.
-        setattr(context, '_refresh_work_area_active', True)
+        context._refresh_work_area_active = True
         try:
             rect = getter()
         finally:

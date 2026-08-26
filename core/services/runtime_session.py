@@ -535,7 +535,7 @@ def get_android_input_session(context) -> PersistentAdbInputSession:
     if existing is not None and hasattr(existing, 'close'):
         existing.close()
     session = PersistentAdbInputSession(device_id)
-    setattr(context, '_android_input_session', session)
+    context._android_input_session = session
     return session
 
 
@@ -619,5 +619,5 @@ def create_visual_frame_stream(
         return image, region, dict(metadata or {})
 
     stream = LatestFrameStream(profiled_capture, min_interval_ms=min_interval_ms)
-    setattr(context, '_visual_frame_stream', stream)
+    context._visual_frame_stream = stream
     return stream

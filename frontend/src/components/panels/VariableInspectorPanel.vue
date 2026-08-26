@@ -5,19 +5,7 @@
 -->
 <template>
     <div class="app-panel variable-inspector">
-        <div class="app-panel-header">
-            <div class="app-panel-title">
-                <Activity size="14" />
-                <span>变量监控</span>
-            </div>
-            <div class="app-panel-actions">
-                <span v-if="store.isPaused" class="status-text is-paused">● 已暂停<template v-if="store.currentActiveNodeId"> @ {{ store.currentActiveNodeId }}</template></span>
-                <span v-else-if="store.isRunning" class="status-text is-running">● 运行中</span>
-                <span v-else class="status-text">○ 未启动</span>
-            </div>
-        </div>
-
-        <div class="app-panel-toolbar">
+        <div class="app-panel-toolbar variable-toolbar">
             <el-input
                 v-model="searchText"
                 size="small"
@@ -27,6 +15,9 @@
                 <template #prefix><Search size="12" /></template>
             </el-input>
             <span class="var-count">{{ filteredList.length }} 个变量</span>
+            <span v-if="store.isPaused" class="status-text is-paused"><PauseCircle :size="12" />已暂停</span>
+            <span v-else-if="store.isRunning" class="status-text is-running"><LoaderCircle :size="12" class="is-spinning" />运行中</span>
+            <span v-else class="status-text"><CircleOff :size="12" />未启动</span>
         </div>
 
         <div class="app-panel-body">
@@ -58,7 +49,7 @@
 
 <script setup>
     import { ref, computed } from 'vue'
-    import { Activity, Search } from 'lucide-vue-next'
+    import { Activity, CircleOff, LoaderCircle, PauseCircle, Search } from 'lucide-vue-next'
     import { useIdeStore } from '@/stores'
 
     const store = useIdeStore()
@@ -110,11 +101,20 @@
         height: 100%;
         display: flex;
         flex-direction: column;
+        border-radius: 0;
+        background: var(--app-sidebar-bg);
     }
 
+    .variable-inspector :deep(.app-panel-body) { padding: 8px; }
+
     .status-text {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        margin-left: auto;
         font-size: 11px;
         color: var(--el-text-color-secondary);
+        white-space: nowrap;
     }
     .status-text.is-paused { color: #e5484d; }
 .status-text.is-running { color: var(--app-color-success); }
@@ -125,7 +125,7 @@
     .var-count {
         font-size: 11px;
         color: var(--el-text-color-secondary);
-        margin-left: 8px;
+        white-space: nowrap;
     }
 
     .var-table {
@@ -170,4 +170,7 @@
     .var-value.is-prev {
         color: var(--el-text-color-secondary);
     }
+    .variable-toolbar { gap: 7px; }
+    .is-spinning { animation: variable-spin 1s linear infinite; }
+    @keyframes variable-spin { to { transform: rotate(360deg); } }
 </style>

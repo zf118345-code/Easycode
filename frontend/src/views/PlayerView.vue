@@ -41,9 +41,16 @@
             <el-button size="small" text :loading="profileBusy" @click="saveProfile">保存方案</el-button>
             <el-button size="small" text :disabled="!selectedProfile || profileBusy" @click="deleteProfile">删除方案</el-button>
             <el-button size="small" text @click="openEnvironment">环境自检</el-button>
-            <el-dropdown trigger="click" @command="handlePlayerTool"><el-button size="small"><MoreHorizontal :size="15" />更多</el-button><template #dropdown><el-dropdown-menu>
-                <el-dropdown-item command="schedules">计划任务</el-dropdown-item><el-dropdown-item command="runtime">运行服务</el-dropdown-item><el-dropdown-item command="diagnostics" divided>导出诊断包</el-dropdown-item>
-            </el-dropdown-menu></template></el-dropdown>
+            <el-dropdown trigger="click" @command="handlePlayerTool">
+                <el-button size="small"><MoreHorizontal :size="15" />更多</el-button>
+                <template #dropdown>
+                    <el-dropdown-menu>
+                        <el-dropdown-item command="schedules">计划任务</el-dropdown-item>
+                        <el-dropdown-item command="runtime">运行服务</el-dropdown-item>
+                        <el-dropdown-item command="diagnostics" divided>导出诊断包</el-dropdown-item>
+                    </el-dropdown-menu>
+                </template>
+            </el-dropdown>
         </div>
 
         <div class="state-strip" :class="`state-${currentState}`">

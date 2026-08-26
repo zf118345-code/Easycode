@@ -5,15 +5,13 @@
 #   GET/PUT /api/settings/hotkeys        全局快捷键配置 + 冲突检测
 import asyncio
 import json
-import threading
-from typing import Optional
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from core.services import capture_mode
 from api.workspace_context import request_project_path
+from core.services import capture_mode
 
 
 class ModeRequest(BaseModel):

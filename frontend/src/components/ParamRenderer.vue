@@ -25,7 +25,7 @@
                        :model-value="modelValue"
                        :label="displayLabel"
                        :context="context"
-                       :image-version="imageVersion"
+                       :image-version="effectiveImageVersion"
                        @update:model-value="handleUpdate"
                        @auto-change-type="handleAutoChangeType"
                        @capture-reset="handleCaptureReset"
@@ -90,7 +90,8 @@ v-model:visible="condDialogVisible"
         label: { type: String, default: '' },
         context: { type: Object, default: () => ({}) },
         nodeType: { type: String, default: '' },
-        assetCategory: { type: String, default: '' }
+        assetCategory: { type: String, default: '' },
+        previewRevision: { type: Number, default: 0 }
     })
 
     const emit = defineEmits(['update', 'autoChangeType', 'captureReset', 'coordinateMeta', 'captureBundle', 'windowSelected'])
@@ -164,7 +165,8 @@ v-model:visible="condDialogVisible"
     const browserVisible = ref(false)
     const fileBrowserMode = ref('select')
     const browserInitialPath = ref('')
-    const imageVersion = ref(Date.now())
+    const localImageVersion = ref(Date.now())
+    const effectiveImageVersion = computed(() => localImageVersion.value + Number(props.previewRevision || 0))
 
     const condDialogVisible = ref(false)
     const isBranchMode = ref(false)
@@ -245,7 +247,7 @@ v-model:visible="condDialogVisible"
                 referenceSize,
                 coordinateSpace: 'workspace_px'
             })
-            imageVersion.value = Date.now()
+            localImageVersion.value = Date.now()
             return { message: '图片与录制范围已回填' }
         })
 
@@ -269,7 +271,7 @@ v-model:visible="condDialogVisible"
         if (fileBrowserMode.value === 'save') return
         const cleanPath = relPath.replace(/\.png$/i, '')
         emit('update', cleanPath)
-        imageVersion.value = Date.now()
+        localImageVersion.value = Date.now()
         browserVisible.value = false
     }
 

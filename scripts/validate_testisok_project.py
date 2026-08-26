@@ -11,9 +11,6 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if os.fspath(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, os.fspath(PROJECT_ROOT))
-PROJECT_SITE_PACKAGES = PROJECT_ROOT / '.venv' / 'Lib' / 'site-packages'
-if PROJECT_SITE_PACKAGES.is_dir() and os.fspath(PROJECT_SITE_PACKAGES) not in sys.path:
-    sys.path.insert(1, os.fspath(PROJECT_SITE_PACKAGES))
 
 from core.executor import GraphExecutor
 from core.project_loader import load_project
@@ -30,10 +27,10 @@ def validate(project_path: Path) -> dict:
     documents = load_project_documents(root)
 
     workflow = BlueprintService.load_workflow(root)
-    workflow['main_graph']['blocks'][0]['description'] = '已通过 v3 保存回读'
+    workflow['main_graph']['nodes'][0]['params']['message'] = '已通过 v3 保存回读'
     BlueprintService.save_workflow(root, workflow, create_snapshot=False)
     saved = BlueprintService.load_workflow(root)
-    assert saved['main_graph']['blocks'][0]['description'] == '已通过 v3 保存回读'
+    assert saved['main_graph']['nodes'][0]['params']['message'] == '已通过 v3 保存回读'
 
     executor = GraphExecutor(
         load_project(root), project_dir=root,

@@ -71,13 +71,6 @@
             </button>
         </template>
 
-        <template v-else-if="contextMenu.targetType === 'block'">
-            <button type="button" role="menuitem" class="menu-item danger" @click="$emit('delete-block')">
-                <Trash2 class="menu-item-icon" />
-                <span>删除区块</span>
-            </button>
-        </template>
-
         <template v-else-if="contextMenu.targetType === 'edge'">
             <button type="button" role="menuitem" class="menu-item" @click="$emit('add-waypoint')">
                 <Route class="menu-item-icon" />
@@ -93,10 +86,6 @@
             <button type="button" role="menuitem" class="menu-item" @click="$emit('canvas-new-node')">
                 <CirclePlus class="menu-item-icon" />
                 <span>新建节点</span>
-            </button>
-            <button type="button" role="menuitem" class="menu-item" @click="$emit('canvas-new-block')">
-                <PanelsTopLeft class="menu-item-icon" />
-                <span>新建区块</span>
             </button>
             <button type="button" role="menuitem" class="menu-item" :disabled="!hasClipboard" @click="$emit('paste-node')">
                 <ClipboardPaste class="menu-item-icon" />
@@ -117,7 +106,7 @@
 
 <script setup>
     import { nextTick, ref, watch } from 'vue'
-    import { CirclePlay, Trash2, Copy, CirclePlus, PanelsTopLeft, ClipboardPaste, Route, RotateCcw } from 'lucide-vue-next'
+    import { CirclePlay, Trash2, Copy, CirclePlus, ClipboardPaste, Route, RotateCcw } from 'lucide-vue-next'
 
     const props = defineProps({
         spawnMenu: { type: Object, required: true },
@@ -144,11 +133,9 @@
         'copy-node',
         'paste-node',
         'delete-node',
-        'delete-block',
         'add-waypoint',
         'reset-edge-routing',
         'canvas-new-node',
-        'canvas-new-block',
         'dismiss'
     ])
 

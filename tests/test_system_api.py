@@ -1,5 +1,16 @@
 """不含项目路径状态的系统级 API 回归测试。"""
 
+import pytest
+
+from api.app import main
+
+
+def test_packaged_cli_entrypoint_is_callable():
+    with pytest.raises(SystemExit) as exited:
+        main(['--help'])
+    assert exited.value.code == 0
+
+
 class TestSystemAPI:
     """系统路由集成测试"""
 
@@ -7,6 +18,7 @@ class TestSystemAPI:
         """GET /api/params 应返回参数表（可能为空 dict）"""
         resp = client.get('/api/params')
         assert resp.status_code == 200
+
 
 class TestSecurityHeaders:
     """验证安全响应头中间件"""

@@ -10,7 +10,6 @@
 import collections
 import json
 import logging
-import os
 import queue
 import threading
 import time
@@ -329,7 +328,7 @@ class _HotkeyWindow:
             with _state_lock:
                 self._hk_state[hk_id] = [combo, True, '']
             logger.info('全局热键已注册 [%s]: %s', hk_id, combo or format_combo(mods, vk))
-        except Exception as e:
+        except Exception:
             # ⚡ 冲突检测：RegisterHotKey 抛异常 = 组合键已被其他程序占用
             with _state_lock:
                 self._hk_state[hk_id] = [combo, False, f'组合键已被其他软件占用: {combo}']

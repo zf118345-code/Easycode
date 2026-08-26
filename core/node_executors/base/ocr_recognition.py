@@ -5,7 +5,6 @@ import threading
 import time
 
 import cv2
-import numpy as np
 from core.services.input_dispatcher import click_workspace
 from core.services.runtime_target import capture_workspace_region, workspace_rect
 from core.vision.frame_cache import prepared_frame
@@ -188,7 +187,7 @@ def recognize_ocr_region(
     if frame_token is not None:
         if not isinstance(cache, dict) or cache.get('frame_token') != frame_token:
             cache = {'frame_token': frame_token, 'results': {}}
-            setattr(context, '_ocr_frame_cache', cache)
+            context._ocr_frame_cache = cache
         cached = cache['results'].get(cache_key)
         if cached is not None:
             return cached

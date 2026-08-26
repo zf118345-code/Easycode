@@ -386,7 +386,7 @@ def _as_number(v, what: str, node=None):
     try:
         return float(v)
     except (TypeError, ValueError):
-        raise ExpressionError(f'{what} 需要数字，实际得到: {v!r}（类型 {type(v).__name__}）')
+        raise ExpressionError(f'{what} 需要数字，实际得到: {v!r}（类型 {type(v).__name__}）') from None
 
 
 def _require_index_type(idx):
@@ -434,41 +434,41 @@ def _call_function(name: str, args: list) -> Any:
             try:
                 return int(float(args[0]))
             except (TypeError, ValueError):
-                raise ExpressionError(f'int() 无法转换: {args[0]!r}')
+                raise ExpressionError(f'int() 无法转换: {args[0]!r}') from None
     if name == 'float':
         try:
             return float(args[0])
         except (TypeError, ValueError):
-            raise ExpressionError(f'float() 无法转换: {args[0]!r}')
+            raise ExpressionError(f'float() 无法转换: {args[0]!r}') from None
     if name == 'bool':
         return bool(args[0])
     if name == 'len':
         try:
             return len(args[0])
         except TypeError:
-            raise ExpressionError(f'len() 不支持的类型: {args[0]!r}')
+            raise ExpressionError(f'len() 不支持的类型: {args[0]!r}') from None
     if name == 'abs':
         try:
             return abs(args[0])
         except TypeError:
-            raise ExpressionError(f'abs() 需要数字，实际得到: {args[0]!r}')
+            raise ExpressionError(f'abs() 需要数字，实际得到: {args[0]!r}') from None
     if name == 'min':
         try:
             return min(args)
         except (TypeError, ValueError):
-            raise ExpressionError(f'min() 参数无效: {args!r}')
+            raise ExpressionError(f'min() 参数无效: {args!r}') from None
     if name == 'max':
         try:
             return max(args)
         except (TypeError, ValueError):
-            raise ExpressionError(f'max() 参数无效: {args!r}')
+            raise ExpressionError(f'max() 参数无效: {args!r}') from None
     if name == 'round':
         return round(args[0], int(args[1]) if len(args) > 1 else 0)
     if name == 'sum':
         try:
             return sum(args[0])
         except TypeError:
-            raise ExpressionError(f'sum() 需要可枚举集合，实际得到: {args[0]!r}')
+            raise ExpressionError(f'sum() 需要可枚举集合，实际得到: {args[0]!r}') from None
 
     # ---- 字符串类函数：对字符串参数宽容 str() 转换 ----
     if name == 'upper':
@@ -503,7 +503,7 @@ def _call_function(name: str, args: list) -> Any:
         try:
             return str(sep).join(str(x) for x in items)
         except TypeError:
-            raise ExpressionError(f'join() 需要集合参数，实际得到: {items!r}')
+            raise ExpressionError(f'join() 需要集合参数，实际得到: {items!r}') from None
     if name == 'contains':
         a, b = args[0], args[1]
         if isinstance(a, (list, tuple, dict)):
@@ -568,7 +568,7 @@ def eval_node(node, ctx) -> Any:
             try:
                 return left * right
             except TypeError:
-                raise ExpressionError(f'无法相乘: {left!r} * {right!r}')
+                raise ExpressionError(f'无法相乘: {left!r} * {right!r}') from None
         if op == '/':
             r = _as_number(right, '" / " 右侧', node)
             if r == 0:
@@ -610,12 +610,12 @@ def eval_node(node, ctx) -> Any:
             if isinstance(obj, dict):
                 return obj[idx]
             return obj[_require_index_type(idx)]
-        except (KeyError, IndexError, TypeError, ValueError) as e:
+        except (KeyError, IndexError, TypeError, ValueError):
             if isinstance(obj, dict):
-                raise ExpressionError(f'字典中不存在键: {idx!r}')
+                raise ExpressionError(f'字典中不存在键: {idx!r}') from None
             if isinstance(obj, (list, tuple, str)):
-                raise ExpressionError(f'索引越界或无效: {idx!r}（集合长度 {len(obj)}）')
-            raise ExpressionError(f'无法对 {type(obj).__name__} 类型进行下标访问')
+                raise ExpressionError(f'索引越界或无效: {idx!r}（集合长度 {len(obj)}）') from None
+            raise ExpressionError(f'无法对 {type(obj).__name__} 类型进行下标访问') from None
 
     raise ExpressionError(f'未知 AST 节点类型: {t.__name__}')
 
@@ -644,4 +644,4 @@ def evaluate_expression(text: Any, context=None) -> Any:
     except ExpressionError:
         raise
     except Exception as e:  # pragma: no cover - 兜底，避免求值器崩溃整个流程
-        raise ExpressionError(f'表达式求值失败: {e}')
+        raise ExpressionError(f'表达式求值失败: {e}') from e

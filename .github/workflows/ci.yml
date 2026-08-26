@@ -23,6 +23,8 @@ jobs:
           cache: pnpm
           cache-dependency-path: frontend/pnpm-lock.yaml
       - run: pnpm install
+      - name: Lint frontend
+        run: pnpm run lint:check
       - run: pnpm run test
       - run: pnpm run build
 
@@ -37,5 +39,9 @@ jobs:
         run: pip install poetry
       - name: Install dependencies
         run: poetry install
+      - name: Check backend correctness lint
+        run: poetry run ruff check api core --select E9,F,B --ignore B008
+      - name: Scan medium and high severity security issues
+        run: poetry run bandit -q -r api core -ll
       - name: Run tests
         run: poetry run pytest tests/ -v

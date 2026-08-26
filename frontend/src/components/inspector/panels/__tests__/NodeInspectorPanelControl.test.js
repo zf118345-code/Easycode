@@ -21,6 +21,18 @@ const ParamRendererStub = {
     emits: ['update', 'autoChangeType'],
     template: '<div class="pr-stub">{{ label }}|{{ config.type }}|{{ JSON.stringify(config) }}</div>'
 }
+const ElInputStub = {
+    inheritAttrs: false,
+    props: ['modelValue', 'size'],
+    emits: ['update:modelValue', 'change'],
+    template: '<input :value="modelValue" />'
+}
+const ElButtonStub = {
+    inheritAttrs: false,
+    props: ['disabled'],
+    emits: ['click'],
+    template: '<button :disabled="disabled" @click="$emit(\'click\')"><slot /></button>'
+}
 
 function makeNode() {
     const params = buildNodeDefaultParams('control', { control: CONTROL_SCHEMA })
@@ -42,7 +54,10 @@ function mountPanel(node = makeNode()) {
             stubs: {
                 ParamRenderer: ParamRendererStub,
                 'el-dialog': true,
-                'el-tooltip': true
+                'el-tooltip': true,
+                'el-input': ElInputStub,
+                'el-button': ElButtonStub,
+                'el-slider': true
             }
         }
     })
@@ -136,5 +151,54 @@ describe('NodeInspectorPanel × control 节点', () => {
         expect(node.params.region_reference_size).toEqual([960, 540])
         expect(wrapper.emitted('save')).toBeTruthy()
         wrapper.unmount()
+    })
+
+    it('OCR 预览仅在已有模板且换图、提交灰度参数或手动刷新时请求', async () => {
+        vi.useFakeTimers()
+        try {
+            const store = useProjectStore()
+            store.currentProjectPath = 'D:/project'
+            store.paramsDefinitions = {
+                ocr_recognition: {
+                    label: 'OCR 文字识别',
+                    params: {
+                        image_source: { type: 'file', label: 'OCR 模板图片' },
+                        gray_scale: { type: 'bool', label: '灰度处理' },
+                        gray_threshold: { type: 'int', label: '二值化灰度阈值' }
+                    }
+                }
+            }
+            const testOcr = vi.spyOn(visionApi, 'testOcr').mockResolvedValue({ text: '登录成功' })
+            const node = {
+                node_id: 'ocr_1', node_name: 'OCR 识别节点', node_type: 'ocr_recognition',
+                params: { image_source: '', gray_scale: true, gray_threshold: 127 },
+                delay_before: 0, loop_count: 1
+            }
+            const wrapper = mountPanel(node)
+            await flushPromises()
+            expect(testOcr).not.toHaveBeenCalled()
+            expect(wrapper.text()).toContain('选择模板图片后可测试识别')
+
+            const imageField = wrapper.findAllComponents(ParamRendererStub)
+                .find(item => item.text().startsWith('OCR 模板图片'))
+            imageField.vm.$emit('update', 'asset://ocr_login')
+            await vi.advanceTimersByTimeAsync(220)
+            await flushPromises()
+            expect(testOcr).toHaveBeenCalledTimes(1)
+
+            const grayField = wrapper.findAllComponents(ParamRendererStub)
+                .find(item => item.text().startsWith('灰度处理'))
+            grayField.vm.$emit('update', false)
+            await vi.advanceTimersByTimeAsync(220)
+            await flushPromises()
+            expect(testOcr).toHaveBeenCalledTimes(2)
+
+            await wrapper.find('.result-header button').trigger('click')
+            await flushPromises()
+            expect(testOcr).toHaveBeenCalledTimes(3)
+            wrapper.unmount()
+        } finally {
+            vi.useRealTimers()
+        }
     })
 })

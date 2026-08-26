@@ -32,9 +32,9 @@ def test_delete_and_restore_resource_without_rebinding_graph(tmp_path):
     }
     AssetService.save_registry(str(tmp_path), registry)
     workflow = {
-        'schema_version': 2,
-        'tasks': [{
-            'task_id': 'task_1', 'task_name': '组',
+        'schema_version': 3,
+        'main_graph': {
+            'graph_id': 'main',
             'nodes': [{
                 'node_id': 'node_1', 'node_name': '识图', 'node_type': 'image_recognition',
                 'params': {
@@ -44,14 +44,16 @@ def test_delete_and_restore_resource_without_rebinding_graph(tmp_path):
                     'region_reference_size': [100, 80],
                 },
             }],
-        }],
-        'edges': [],
+            'edges': [],
+        },
+        'functions': [],
+        'function_folders': [],
     }
     (tmp_path / 'workflow.json').write_text(json.dumps(workflow), encoding='utf-8')
 
     deleted = TemplateLibraryService.delete(str(tmp_path), 'image/button.png')
     assert json.loads((tmp_path / 'project.json').read_text(encoding='utf-8'))['revision'] == 1
-    params = json.loads((tmp_path / 'workflow.json').read_text(encoding='utf-8'))['tasks'][0]['nodes'][0]['params']
+    params = json.loads((tmp_path / 'workflow.json').read_text(encoding='utf-8'))['main_graph']['nodes'][0]['params']
     assert params['image_source'] == ''
     assert params['region_value'] == [0, 0, 0, 0]
     assert TemplateLibraryService.list_trash(str(tmp_path))['entries'][0]['restorable'] is True
@@ -61,7 +63,7 @@ def test_delete_and_restore_resource_without_rebinding_graph(tmp_path):
     assert restored['references_restored'] == 0
     assert image.read_bytes() == b'not-decoded-in-resource-transaction'
     assert AssetService.load_registry(str(tmp_path))['assets'][asset_id]['capture']['region'] == [1, 2, 3, 4]
-    params = json.loads((tmp_path / 'workflow.json').read_text(encoding='utf-8'))['tasks'][0]['nodes'][0]['params']
+    params = json.loads((tmp_path / 'workflow.json').read_text(encoding='utf-8'))['main_graph']['nodes'][0]['params']
     assert params['image_source'] == ''
 
 

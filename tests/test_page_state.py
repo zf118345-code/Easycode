@@ -62,7 +62,7 @@ class TestPageStateParamsSchema:
         cfg = ALL_PARAMS['page_state']
         assert cfg['modes'] == ['topology']
         # 只保留 页面标识(隐藏) / 特征列表 / 组合模式：page_name、exits 均已移除
-        assert set(cfg['params'].keys()) == {'page_id', 'features', 'feature_mode'}
+        assert set(cfg['params'].keys()) == {'page_id', 'features', 'feature_mode', 'is_random_popup'}
         # page_id 为内部标识：表单隐藏
         assert cfg['params']['page_id'].get('hidden') is True
         # 特征列表：条件列表编辑器（逻辑判断同款交互），页面特征专属

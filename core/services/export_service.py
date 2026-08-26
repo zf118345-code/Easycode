@@ -8,6 +8,7 @@ from fastapi import HTTPException
 
 from core.builder.exporter import ProjectExporter
 from core.player.schema import normalize_form_schema
+from core.security import atomic_write_json
 from core.services.preflight_service import PreflightService
 
 
@@ -133,10 +134,7 @@ class ExportService:
 
     @staticmethod
     def _atomic_write_json(path: str, data: dict) -> None:
-        temp_path = f'{path}.tmp'
-        with open(temp_path, 'w', encoding='utf-8') as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, path)
+        atomic_write_json(path, data, clean_transient=False)
 
     @classmethod
     def _snapshot_and_write_schema(cls, project_path: str, previous: dict, normalized: dict) -> None:

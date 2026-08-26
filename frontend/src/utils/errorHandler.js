@@ -10,6 +10,10 @@ export const ERROR_TYPES = {
     VALIDATION: 'validation', // 数据校验失败
     PERMISSION: 'permission', // 权限不足
     NOT_FOUND: 'not_found',   // 资源不存在
+    CONFLICT: 'conflict',     // 资源或工作区状态冲突
+    TIMEOUT: 'timeout',       // 请求或服务超时
+    RATE_LIMIT: 'rate_limit', // 请求过于频繁
+    SERVICE_UNAVAILABLE: 'service_unavailable',
     SERVER: 'server',         // 服务器内部错误
     UNKNOWN: 'unknown'        // 未知错误
 }
@@ -28,11 +32,17 @@ export const ERROR_SEVERITY = {
 function classifyError(error) {
     if (!error) return ERROR_TYPES.UNKNOWN
 
+    if (error.kind === 'timeout') return ERROR_TYPES.TIMEOUT
+    if (error.kind === 'network') return ERROR_TYPES.NETWORK
     const status = error.status || error.response?.status
     if (!status && !error.response) return ERROR_TYPES.NETWORK
     if (status === 400) return ERROR_TYPES.VALIDATION
     if (status === 401 || status === 403) return ERROR_TYPES.PERMISSION
     if (status === 404) return ERROR_TYPES.NOT_FOUND
+    if (status === 408) return ERROR_TYPES.TIMEOUT
+    if (status === 409) return ERROR_TYPES.CONFLICT
+    if (status === 429) return ERROR_TYPES.RATE_LIMIT
+    if (status === 503) return ERROR_TYPES.SERVICE_UNAVAILABLE
     if (status >= 500) return ERROR_TYPES.SERVER
     return ERROR_TYPES.UNKNOWN
 }

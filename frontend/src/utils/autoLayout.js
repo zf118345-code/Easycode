@@ -58,72 +58,9 @@ export function autoLayoutTasks(tasks, edges, options = {}) {
     return next
 }
 
-function fullyContained(block, node) {
-    const x = Number(node.position?.x || 0)
-    const y = Number(node.position?.y || 0)
-    const width = Number(node.size?.w || 160)
-    const height = Number(node.size?.h || 96)
-    const left = Number(block.x || 0) + 20
-    const top = Number(block.y || 0) + 52
-    const right = Number(block.x || 0) + Number(block.width || 200) - 20
-    const bottom = Number(block.y || 0) + Number(block.height || 160) - 20
-    return x >= left && y >= top && x + width <= right && y + height <= bottom
-}
-
-/**
- * Block-aware layout. Blocks are rigid geometry units: their internal nodes keep
- * their exact relative positions. Only uncontained nodes are graph-laid out.
- */
 export function autoLayoutGraphGeometry(graph, options = {}) {
     const nodes = clone(graph?.nodes || [])
     const edges = clone(graph?.edges || [])
-    const blocks = clone(graph?.blocks || [])
-    if (!blocks.length) {
-        return { nodes: autoLayoutTasks([{ task_id: 'graph', nodes }], edges, options)[0].nodes, blocks }
-    }
-
-    const contained = new Set()
-    const membersByBlock = new Map()
-    for (const block of blocks) {
-        const members = nodes.filter(node => fullyContained(block, node))
-        membersByBlock.set(block.block_id, members)
-        members.forEach(node => contained.add(node.node_id))
-    }
-
-    if ((options.scope || 'whole') === 'whole') {
-        let cursorX = 80
-        let cursorY = 80
-        let rowHeight = 0
-        const rowLimit = Math.max(900, Number(options.rowLimit || 1600))
-        for (const block of blocks) {
-            const width = Number(block.width || 400)
-            const height = Number(block.height || 260)
-            if (cursorX > 80 && cursorX + width > rowLimit) {
-                cursorX = 80
-                cursorY += rowHeight + 80
-                rowHeight = 0
-            }
-            const dx = cursorX - Number(block.x || 0)
-            const dy = cursorY - Number(block.y || 0)
-            block.x = cursorX
-            block.y = cursorY
-            for (const node of membersByBlock.get(block.block_id) || []) {
-                node.position = { x: Number(node.position?.x || 0) + dx, y: Number(node.position?.y || 0) + dy }
-            }
-            cursorX += width + 80
-            rowHeight = Math.max(rowHeight, height)
-        }
-        const looseNodes = nodes.filter(node => !contained.has(node.node_id))
-        layoutNodeSet(looseNodes, edges, { x: 80, y: cursorY + rowHeight + 100 })
-    } else {
-        const selected = new Set(options.selectedNodeIds || [])
-        const looseSelection = nodes.filter(node => selected.has(node.node_id) && !contained.has(node.node_id))
-        if (looseSelection.length) {
-            layoutNodeSet(looseSelection, edges, {
-                x: Math.min(...looseSelection.map(node => node.position?.x ?? 80)),
-                y: Math.min(...looseSelection.map(node => node.position?.y ?? 80))
-            })
-        }
-    }
-    return { nodes, blocks }
+    const laidOut = autoLayoutTasks([{ task_id: 'graph', nodes }], edges, options)
+    return { nodes: laidOut[0]?.nodes || nodes }
 }

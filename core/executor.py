@@ -279,7 +279,7 @@ class GraphExecutor:
                         }
                     task_id, page_node, page_id = hit
                     label = self._topology_page_label(page_id)
-                    self.log(f'🚨 [弹窗处理] 第 {handled_count + 1} 次：检测到 [{label}]，执行关闭流程')
+                    self.log(f'[弹窗处理] 第 {handled_count + 1} 次：检测到 [{label}]，执行关闭流程')
                     close_result = self._execute_popup_close(task_id, page_node)
                     if not close_result.get('success'):
                         return {
@@ -531,7 +531,7 @@ class GraphExecutor:
             if repeat_count < -1:
                 raise ValueError(f'流程 [{task.task_name or task_id}] 的调用次数无效: {repeat_count}')
             if repeat_count == 0:
-                self.log(f'⏭️ [执行] 图 [{task.task_name or task_id}] 调用次数为 0，已跳过', 'warning')
+                self.log(f'[执行] 图 [{task.task_name or task_id}] 调用次数为 0，已跳过', 'warning')
                 self._remove_frame(frame)
                 continue
 
@@ -591,7 +591,7 @@ class GraphExecutor:
             if is_infinite or frame['repeat_index'] < repeat_count:
                 interval_ms = max(0, int(frame.get('repeat_interval_ms', 0) or 0))
                 self.log(
-                    f'🔁 [执行] 图 [{task.task_name or task_id}] 完成第 {frame["repeat_index"]} 次，'
+                    f'[执行] 图 [{task.task_name or task_id}] 完成第 {frame["repeat_index"]} 次，'
                     f'准备第 {frame["repeat_index"] + 1} 次执行'
                 )
                 if interval_ms:
@@ -612,6 +612,16 @@ class GraphExecutor:
             self._call_stack.remove(frame)
         except ValueError:
             pass
+
+    @staticmethod
+    def _find_edge_jump(out_edges, port, stable_port_id=None):
+        """Resolve one immutable jump from the current node's outgoing edges."""
+        for target_node, target_task, edge_data in out_edges:
+            edge_port_id = edge_data.get('source_port_id') or edge_data.get('source_port')
+            matches = edge_port_id == stable_port_id if stable_port_id else edge_data.get('source_port') == port
+            if matches and target_node:
+                return Jump(target_task=target_task, target_node=target_node)
+        return None
 
     def _execute_single_task(self, task_id, start_node_id=None) -> str:
         """
@@ -702,24 +712,17 @@ class GraphExecutor:
             graph = self._graph_cache.get(task_id)
             out_edges = graph.get_out_edges(node.node_id) if graph else []
 
-            def _edge_jump(port, stable_port_id=None):
-                for (tgt_node, tgt_task, edge_data) in out_edges:
-                    edge_port_id = edge_data.get('source_port_id') or edge_data.get('source_port')
-                    matches = edge_port_id == stable_port_id if stable_port_id else edge_data.get('source_port') == port
-                    if matches and tgt_node:
-                        return Jump(
-                            target_task=tgt_task,
-                            target_node=tgt_node,
-                        )
-                return None
-
             if result.get('success', True) and result.get('call_function'):
                 try:
                     outcome_jumps = {}
                     for _target, _target_task, edge_data in out_edges:
                         stable_id = str(edge_data.get('source_port_id') or edge_data.get('source_port') or '')
                         if stable_id:
-                            outcome_jumps[stable_id] = _edge_jump(str(edge_data.get('source_port') or ''), stable_id)
+                            outcome_jumps[stable_id] = self._find_edge_jump(
+                                out_edges,
+                                str(edge_data.get('source_port') or ''),
+                                stable_id,
+                            )
                     self._schedule_function_call(result['call_function'], outcome_jumps)
                     return 'call'
                 except Exception as exc:
@@ -740,11 +743,11 @@ class GraphExecutor:
             branch_id = result.get('branch_id')
 
             if branch_index is not None:
-                jump = _edge_jump(f'branch_{branch_index}', branch_id)
+                jump = self._find_edge_jump(out_edges, f'branch_{branch_index}', branch_id)
             elif not is_success:
-                jump = _edge_jump('failure')
+                jump = self._find_edge_jump(out_edges, 'failure')
             else:
-                jump = _edge_jump('success')
+                jump = self._find_edge_jump(out_edges, 'success')
 
             # 处理跳转
             should_return = self._handle_jump(jump, node_id_to_index, is_success=is_success)
@@ -1116,7 +1119,7 @@ class GraphExecutor:
                     break
         # ⚡ 弹窗组节点不在主图索引中：从弹窗页列表反查（按 page_id 或 node_id）
         if node is None and self._popup_pages:
-            for tid, pn in self._popup_pages:
+            for _, pn in self._popup_pages:
                 pid = TopologyMap.node_page_id(pn) or pn.node_id
                 if pid == ref or pn.node_id == ref:
                     node = pn
@@ -1712,7 +1715,7 @@ class GraphExecutor:
             self.window_rect = (offset_left, offset_top, width, height)
             self.variables['window_rect'] = self.window_rect
             self.log(
-                'ℹ️ [目标绑定] 全桌面模式无定向后台输入后端；'
+                '[目标绑定] 全桌面模式无定向后台输入后端；'
                 '未开启物理输入回退时，点击节点会被明确阻止'
             )
             return
@@ -1724,7 +1727,7 @@ class GraphExecutor:
             import win32gui
             import win32process
         except ImportError:
-            raise RuntimeError('当前环境缺少 Windows 窗口绑定能力，已阻止运行')
+            raise RuntimeError('当前环境缺少 Windows 窗口绑定能力，已阻止运行') from None
 
         expected_hwnd = int(pick('window_hwnd', 'windowHwnd', default=0) or 0)
         expected_pid = int(pick('window_process_id', 'windowProcessId', default=0) or 0)
@@ -1789,7 +1792,7 @@ class GraphExecutor:
         self.variables['window_class_name'] = resolved['class_name']
 
         if target_w > 0 and target_h > 0 and not is_emulator:
-            self.log(f'📏 [目标绑定] 执行窗口 Resize: {target_w}x{target_h}')
+            self.log(f'[目标绑定] 执行窗口 Resize: {target_w}x{target_h}')
             try:
                 window_rect = win32gui.GetWindowRect(hwnd)
                 pos_x, pos_y = window_rect[0], window_rect[1]
@@ -1811,7 +1814,7 @@ class GraphExecutor:
             except Exception as e:
                 raise RuntimeError(f'目标窗口 Resize 失败，已阻止运行: {e}') from e
         elif target_w > 0 and target_h > 0 and is_emulator:
-            self.log(f'📏 [目标绑定] ADB 工作区使用项目尺寸: {target_w}x{target_h}（不改变模拟器窗口）')
+            self.log(f'[目标绑定] ADB 工作区使用项目尺寸: {target_w}x{target_h}（不改变模拟器窗口）')
 
         from core.services.runtime_target import refresh_work_area
 

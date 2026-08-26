@@ -2,8 +2,8 @@
     <section class="capability-panel">
         <div class="panel-toolbar">
             <el-input v-model="query" clearable placeholder="搜索能力名称或 ID"><template #prefix><Search :size="14" /></template></el-input>
-            <button class="tool-button" title="重新扫描" aria-label="重新扫描能力库" @click="load(true)"><RefreshCw /></button>
-            <button class="tool-button primary" title="创建能力" aria-label="创建能力" @click="createVisible = true"><Plus /></button>
+            <button type="button" class="tool-button" title="重新扫描" aria-label="重新扫描能力库" @click="load(true)"><RefreshCw /></button>
+            <button type="button" class="tool-button primary" title="创建能力" aria-label="创建能力" @click="createVisible = true"><Plus /></button>
         </div>
         <div v-if="errors.length" class="catalog-errors">
             <TriangleAlert :size="15" />
@@ -13,7 +13,7 @@
         <div class="catalog" v-loading="loading">
             <div v-for="group in groups" :key="group.key" class="catalog-group">
                 <div class="group-title"><component :is="group.icon" /><span>{{ group.title }}</span><em>{{ group.items.length }}</em></div>
-                <button v-for="item in group.items" :key="`${item.id}@${item.version}`" class="capability-row" :class="{ active: selected?.id === item.id }" @click="selected = item">
+                <button v-for="item in group.items" :key="`${item.id}@${item.version}`" type="button" class="capability-row" :class="{ active: selected?.id === item.id }" @click="selected = item">
                     <div><strong>{{ item.name }}</strong><small>{{ item.id }}@{{ item.version }}</small></div>
                     <ChevronRight />
                 </button>
@@ -21,7 +21,7 @@
             </div>
         </div>
         <div v-if="selected" class="detail-card">
-            <div class="detail-heading"><div><strong>{{ selected.name }}</strong><small>{{ selected.id }}@{{ selected.version }}</small></div><button class="tool-button" title="复制能力 ID" aria-label="复制能力 ID" @click="copyId"><Copy /></button></div>
+            <div class="detail-heading"><div><strong>{{ selected.name }}</strong><small>{{ selected.id }}@{{ selected.version }}</small></div><button type="button" class="tool-button" title="复制能力 ID" aria-label="复制能力 ID" @click="copyId"><Copy /></button></div>
             <p>{{ selected.description || '暂无说明。能力的参数、权限和返回值由 capability.json 声明。' }}</p>
             <div class="detail-line"><span>来源</span><b>{{ sourceLabel(selected.source) }}</b></div>
             <div class="detail-line"><span>超时</span><b>{{ selected.timeout_ms }} ms</b></div>

@@ -1,15 +1,12 @@
 # core/conditions/handlers/image_exists.py
-import os
 from typing import Any
 
-import cv2
-from core.services.runtime_target import capture_workspace, workspace_rect
-from core.services.asset_service import AssetService
-from core.services.runtime_session import TemplateCache
-from core.vision.frame_cache import prepared_frame
-from core.utils import load_image
-
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
+from core.services.asset_service import AssetService
+from core.services.runtime_target import capture_workspace, workspace_rect
+from core.services.runtime_session import TemplateCache
+from core.utils import load_image
+from core.vision.frame_cache import prepared_frame
 from core.vision.memory_matcher import MemoryTemplateMatcher
 
 

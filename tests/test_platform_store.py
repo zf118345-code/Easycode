@@ -1,8 +1,20 @@
 import time
 import urllib.error
 
+import pytest
+
 from core.services.platform_runtime_service import PlatformRuntimeService
 from core.services.platform_store import PlatformStore
+
+
+def test_remote_coordinator_rejects_non_http_schemes_before_opening(monkeypatch):
+    opened = []
+    monkeypatch.setattr('urllib.request.urlopen', lambda *_args, **_kwargs: opened.append(True))
+
+    with pytest.raises(ValueError, match='HTTP'):
+        PlatformRuntimeService._post_json('file:///C:/Windows/win.ini', 'secret', {})
+
+    assert opened == []
 
 
 def test_state_is_namespaced_and_persistent(tmp_path):

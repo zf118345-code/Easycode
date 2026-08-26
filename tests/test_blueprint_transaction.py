@@ -29,10 +29,10 @@ def test_combined_save_rolls_back_every_document_on_replace_failure(tmp_path, mo
     with pytest.raises(OSError, match='simulated'):
         BlueprintService.save_blueprint(str(tmp_path), {
             'project_name': 'new name',
-            'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': [], 'blocks': []},
+            'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': []},
             'functions': [],
             'function_folders': [],
-            'page_map': {'nodes': [], 'edges': [], 'blocks': []},
+            'page_map': {'nodes': [], 'edges': []},
         })
 
     assert {name: (tmp_path / name).read_bytes() for name in before} == before

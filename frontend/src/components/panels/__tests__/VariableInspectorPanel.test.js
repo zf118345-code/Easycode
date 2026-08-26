@@ -28,6 +28,8 @@ describe('VariableInspectorPanel 变量监控', () => {
         expect(text).toContain('coin')
         expect(text).toContain('5')
         expect(text).toContain('alice')
+        expect(text).not.toContain('变量监控')
+        expect(text).toContain('未启动')
     })
 
     it('暂停时展示运行时快照 + 上一节点值 + 变化行高亮', () => {

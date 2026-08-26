@@ -9,7 +9,6 @@
                 </div>
                 <div class="node-heading-copy">
                     <el-input v-model="node.node_name" size="default" class="node-name-input" placeholder="节点名称" @change="handleSave" />
-                    <span>{{ nodeTypeLabel }}<code>{{ node.node_id }}</code></span>
                 </div>
             </div>
         </div>
@@ -17,18 +16,17 @@
         <!-- 2. 中间滚动参数区 -->
         <div class="inspector-scrollable-body">
             <div class="params-container">
-                <div class="inspector-section-heading"><strong>节点配置</strong><span>更改会自动保存</span></div>
                 <!-- ⚡ OCR 专属: 顶部图片下方的实时识字高亮结果框 -->
                 <div v-if="node.node_type === 'ocr_recognition'" class="ocr-live-result-card">
                     <div class="result-header">
-                        <span><ScanText :size="14" /> 当前视角识别文字结果</span>
-                        <el-button size="small" type="primary" link :loading="previewLoading" @click="fetchOcrText">
+                        <span><ScanText :size="14" /> 识别结果</span>
+                        <el-button size="small" type="primary" link :disabled="!hasOcrTemplate" :loading="previewLoading" @click="fetchOcrText">
                             <RefreshCcw style="width: 12px; height: 12px; margin-right: 2px;" :class="{ 'is-spinning': previewLoading }" />
-                            测试识别
+                            刷新识别
                         </el-button>
                     </div>
                     <div class="result-text-box" :class="{ 'is-empty': !previewText }">
-                        {{ previewText || '(暂未识别到文本，拖动灰度滑条或点击测试)' }}
+                        {{ previewText || ocrPreviewHint }}
                     </div>
                 </div>
 
@@ -45,7 +43,6 @@ v-model="node.params.gray_threshold"
                                    :min="0"
                                    :max="255"
                                    :step="1"
-                                   @input="val => handleParamUpdate('gray_threshold', val)"
                                    @change="val => handleParamUpdate('gray_threshold', val)" />
                     </div>
 
@@ -57,6 +54,7 @@ v-model="node.params.gray_threshold"
                                        :label="config.label || paramName"
                                        :context="node.params"
                                        :node-type="node.node_type"
+                                       :preview-revision="imageVersion"
                                        @update="val => handleParamUpdate(paramName, val)"
                                        @coordinate-meta="meta => handleCoordinateMeta(paramName, meta)"
                                        @capture-bundle="bundle => handleCaptureBundle(paramName, bundle)"
@@ -136,6 +134,10 @@ v-model="node.params.gray_threshold"
 
     const nodeTypeLabel = computed(() => store.paramsDefinitions[props.node?.node_type]?.label || props.node?.node_type)
     const allParams = computed(() => store.paramsDefinitions[props.node?.node_type]?.params || {})
+    const hasOcrTemplate = computed(() => !!String(props.node?.params?.image_source || '').trim())
+    const ocrPreviewHint = computed(() => (
+        hasOcrTemplate.value ? '尚未识别到文字，可点击刷新' : '选择模板图片后可测试识别'
+    ))
     const autosaveLabel = computed(() => ({
         saving: '正在保存…',
         error: '保存失败',
@@ -146,6 +148,16 @@ v-model="node.params.gray_threshold"
     // ⚡ OCR 文本测试识别方法
     const fetchOcrText = async () => {
         if (!props.node || props.node.node_type !== 'ocr_recognition') return
+        if (ocrTimer) {
+            clearTimeout(ocrTimer)
+            ocrTimer = null
+        }
+        if (!hasOcrTemplate.value) {
+            ocrRequestId += 1
+            previewLoading.value = false
+            previewText.value = ''
+            return
+        }
         const requestId = ++ocrRequestId
         previewLoading.value = true
         try {
@@ -165,6 +177,21 @@ v-model="node.params.gray_threshold"
         } finally {
             if (requestId === ocrRequestId) previewLoading.value = false
         }
+    }
+
+    const scheduleOcrPreview = () => {
+        if (ocrTimer) clearTimeout(ocrTimer)
+        ocrTimer = null
+        if (!hasOcrTemplate.value) {
+            ocrRequestId += 1
+            previewLoading.value = false
+            previewText.value = ''
+            return
+        }
+        ocrTimer = setTimeout(() => {
+            ocrTimer = null
+            fetchOcrText()
+        }, 200)
     }
 
     const syncRecordedRegion = async (prefix = '') => {
@@ -212,9 +239,8 @@ v-model="node.params.gray_threshold"
             syncRecordedRegion('stop_')
         }
         previewText.value = ''
-        if (props.node?.node_type === 'ocr_recognition') {
-            fetchOcrText()
-        }
+        ocrRequestId += 1
+        previewLoading.value = false
     }, { immediate: true })
 
     const handleAutoChangeType = (inferredType) => {
@@ -278,16 +304,15 @@ v-model="node.params.gray_threshold"
             else props.node.params.adb_device_id = ''
         }
 
-        if (paramName === 'region_type' && value === 'recorded') syncRecordedRegion()
-        if (paramName === 'image_source' && props.node.params.region_type === 'recorded') syncRecordedRegion()
-        if (paramName === 'stop_region_type' && value === 'recorded') syncRecordedRegion('stop_')
-        if (paramName === 'stop_image_source' && props.node.params.stop_region_type === 'recorded') syncRecordedRegion('stop_')
+        if (paramName === 'region_type' && value === 'recorded') await syncRecordedRegion()
+        if (paramName === 'image_source' && props.node.params.region_type === 'recorded') await syncRecordedRegion()
+        if (paramName === 'stop_region_type' && value === 'recorded') await syncRecordedRegion('stop_')
+        if (paramName === 'stop_image_source' && props.node.params.stop_region_type === 'recorded') await syncRecordedRegion('stop_')
 
         if (['image_source', 'gray_scale', 'gray_threshold'].includes(paramName)) {
             imageVersion.value = Date.now()
             if (props.node?.node_type === 'ocr_recognition') {
-                if (ocrTimer) clearTimeout(ocrTimer)
-                ocrTimer = setTimeout(fetchOcrText, 200)
+                scheduleOcrPreview()
             }
         }
         handleSave()
@@ -316,7 +341,7 @@ v-model="node.params.gray_threshold"
         props.node.params = { ...props.node.params }
         if (!isStopFeature) originalRecordedRegion.value = [...props.node.params.region_value]
         imageVersion.value = Date.now()
-        if (props.node.node_type === 'ocr_recognition') fetchOcrText()
+        if (props.node.node_type === 'ocr_recognition') scheduleOcrPreview()
         handleSave()
     }
 
@@ -387,9 +412,7 @@ v-model="node.params.gray_threshold"
         color: var(--el-color-primary);
     }
 
-    .node-heading-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
-    .node-heading-copy > span { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:10px; }
-    .node-heading-copy code { min-width:0; overflow:hidden; color:var(--app-text-placeholder); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    .node-heading-copy { min-width: 0; flex: 1; }
     .node-name-input :deep(.el-input__wrapper) { min-height:28px !important; padding:0 8px !important; background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
     .node-name-input :deep(.el-input__wrapper:hover), .node-name-input :deep(.el-input__wrapper.is-focus) { background:var(--app-bg-input) !important; border-color:var(--app-border-default) !important; }
     .node-name-input :deep(.el-input__inner) { font-size:13px; font-weight:600; }
@@ -400,10 +423,6 @@ v-model="node.params.gray_threshold"
         gap: 0;
     }
 
-    .inspector-section-heading { height:28px; display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; border-bottom:1px solid var(--app-separator); }
-    .inspector-section-heading strong { color:var(--app-text-primary); font-size:11px; font-weight:600; }
-    .inspector-section-heading span { color:var(--app-text-placeholder); font-size:10px; }
-
     .param-item {
         display: flex;
         flex-direction: column;
@@ -411,8 +430,8 @@ v-model="node.params.gray_threshold"
     }
 
     .ocr-live-result-card {
-        background: rgba(103, 194, 58, 0.08);
-        border: 1px solid rgba(103, 194, 58, 0.3);
+        background: var(--app-bg-raised);
+        border: 1px solid var(--app-border-default);
         border-radius: 8px;
         padding: 10px 12px;
         margin-bottom: 4px;
@@ -423,8 +442,8 @@ v-model="node.params.gray_threshold"
         justify-content: space-between;
         align-items: center;
         font-size: 11px;
-        font-weight: bold;
-        color: var(--el-color-success);
+        font-weight: 600;
+        color: var(--app-text-secondary);
         margin-bottom: 6px;
     }
 
@@ -436,8 +455,8 @@ v-model="node.params.gray_threshold"
 
     .result-text-box {
         font-size: 15px;
-        font-weight: bold;
-        color: var(--el-color-success);
+        font-weight: 600;
+        color: var(--app-text-primary);
         word-break: break-all;
         line-height: 1.4;
     }
@@ -516,7 +535,6 @@ v-model="node.params.gray_threshold"
         .footer-setting-group { gap:4px; }
         .footer-label { font-size:10px; }
         .footer-unit { display:none; }
-        .node-heading-copy code { display:none; }
     }
 
     @keyframes spin {

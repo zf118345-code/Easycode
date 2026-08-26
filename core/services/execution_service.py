@@ -14,6 +14,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from core.executor import GraphExecutor
 from core.project_loader import load_project, project_from_dict
+from core.security import atomic_write_json
 from core.services.blueprint_service import BlueprintService
 from core.services.debug_service import DebugService, DebugSession
 from core.services.execution_db import ExecutionDB
@@ -44,15 +45,13 @@ _target_owners: dict[str, str] = {}
 
 def record_execution(execution_id, status_data, logs_data):
     with _status_lock:
-        if len(execution_status) >= MAX_LOG_ENTRIES:
+        execution_status[execution_id] = status_data
+        while len(execution_status) > MAX_LOG_ENTRIES:
             execution_status.popitem(last=False)
     with _logs_lock:
-        if len(execution_logs) >= MAX_LOG_ENTRIES:
-            execution_logs.popitem(last=False)
-    with _status_lock:
-        execution_status[execution_id] = status_data
-    with _logs_lock:
         execution_logs[execution_id] = logs_data
+        while len(execution_logs) > MAX_LOG_ENTRIES:
+            execution_logs.popitem(last=False)
 
 
 class ExecutionService:
@@ -292,14 +291,16 @@ class ExecutionService:
                             'variables': variables,
                             'updated_at': time.time(),
                         }
-                        temp_path = checkpoint_path + '.tmp'
                         if checkpoint_storage_root:
                             from core.services.player_secret_service import PlayerSecretService
 
                             payload = PlayerSecretService.protect_document(payload, checkpoint_storage_root)
-                        with open(temp_path, 'w', encoding='utf-8') as stream:
-                            json.dump(payload, stream, ensure_ascii=False, indent=2, default=str)
-                        os.replace(temp_path, checkpoint_path)
+                        atomic_write_json(
+                            checkpoint_path,
+                            payload,
+                            clean_transient=False,
+                            default=str,
+                        )
 
                     executor.checkpoint_callback = save_checkpoint
 
@@ -381,8 +382,9 @@ class ExecutionService:
             executor = _active_executors.get(execution_id)
         if not status:
             raise HTTPException(status_code=404, detail='执行记录不存在')
+        status = dict(status)
         with _logs_lock:
-            logs = execution_logs.get(execution_id, [])
+            logs = list(execution_logs.get(execution_id, []))
         runtime_metrics = {}
         stream = getattr(executor, '_visual_frame_stream', None) if executor is not None else None
         if stream is not None and hasattr(stream, 'metrics'):
@@ -440,7 +442,7 @@ class ExecutionService:
         last_debug_state = None
         while True:
             with _status_lock:
-                status = execution_status.get(execution_id, {'status': 'unknown'})
+                status = dict(execution_status.get(execution_id, {'status': 'unknown'}))
             with _logs_lock:
                 logs = execution_logs.get(execution_id, [])
                 logs_copy = list(logs)
@@ -448,7 +450,8 @@ class ExecutionService:
             # ⚡ #5 调试状态轻量快照（is_paused / current_node_id / pause_reason）
             debug_state = None
             try:
-                session = DebugService._sessions.get(execution_id)
+                with DebugService._lock:
+                    session = DebugService._sessions.get(execution_id)
                 if session is not None:
                     with session._lock:
                         if session._is_paused or session._current_node_id:

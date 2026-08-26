@@ -21,13 +21,13 @@
                 <div v-if="store.recentProjects?.length" class="recent">
                     <div class="recent-title">最近项目</div>
                     <div v-for="project in visibleRecentProjects" :key="project.path" class="recent-item">
-                        <button class="recent-open" :disabled="project.missing" @click="handleOpenRecent(project)">
+                        <button type="button" class="recent-open" :disabled="project.missing || store.workspaceBusy" @click="handleOpenRecent(project)">
                             <Folder :size="15" />
                             <span class="recent-name">{{ project.name }}</span>
                             <span class="recent-path">{{ project.path }}</span>
                             <span v-if="project.missing" class="missing-badge">路径已失效</span>
                         </button>
-                        <button class="recent-remove" title="从最近项目移除" @click="handleRemoveRecent(project.path)">
+                        <button type="button" class="recent-remove" title="从最近项目移除" aria-label="从最近项目移除" @click="handleRemoveRecent(project.path)">
                             <X :size="14" />
                         </button>
                     </div>

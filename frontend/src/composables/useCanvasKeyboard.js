@@ -28,7 +28,7 @@ export function useCanvasKeyboard(options = {}) {
         logger.info('Keyboard', 'Ctrl+S: 保存蓝图')
         try {
             if (options.onSave) {
-                options.onSave()
+                await options.onSave()
             } else {
                 const projectStore = useProjectStore()
                 await projectStore.saveBlueprintImmediately()
@@ -62,20 +62,23 @@ export function useCanvasKeyboard(options = {}) {
         }
 
         // 从当前任务的节点列表中移除
-        const task = projectStore.currentTask
-        if (task && task.nodes) {
-            task.nodes = task.nodes.filter(n => !idsToDelete.includes(n.node_id))
+        const graph = uiStore.canvasMode === 'topology'
+            ? projectStore.blueprint.page_map
+            : projectStore.currentTask
+        if (graph?.nodes) {
+            graph.nodes = graph.nodes.filter(n => !idsToDelete.includes(n.node_id))
         }
 
         // 同时移除关联的边
-        if (projectStore.blueprint.edges) {
-            projectStore.blueprint.edges = projectStore.blueprint.edges.filter(
-                e => !idsToDelete.includes(e.source_node) && !idsToDelete.includes(e.target_node)
+        if (graph?.edges) {
+            graph.edges = graph.edges.filter(
+                edge => !idsToDelete.includes(edge.source_node) && !idsToDelete.includes(edge.target_node)
             )
         }
 
         uiStore.clearSelection()
-        projectStore.saveBlueprintDebounced()
+        if (uiStore.canvasMode === 'topology') projectStore.saveTopologyDebounced()
+        else projectStore.saveWorkflowDebounced()
         ElMessage.success(`已删除 ${idsToDelete.length} 个节点`)
     }
 

@@ -211,8 +211,6 @@ def create_workspace_router(workspace_service, recording_service=None):
     # ⚡ 项目级引擎设置（前端「项目设置」页面）：GET 返回合并后的设置 + 分组元数据；PUT 保存
     @router.get('/api/project/settings')
     async def get_project_settings(request: Request, project_path: str | None = None):
-        import os
-
         from core.services.blueprint_service import BlueprintService
         from core.settings import SETTINGS_GROUPS, merge_settings
 
@@ -223,8 +221,6 @@ def create_workspace_router(workspace_service, recording_service=None):
 
     @router.put('/api/project/settings')
     async def save_project_settings(request: Request, data: dict = Body(...)):
-        import os
-
         from core.services.blueprint_service import BlueprintService
         from core.settings import merge_settings
 

@@ -11,7 +11,7 @@ export const blueprintApi = {
     // 流程画布（workflow.json：{main_graph, functions, function_folders}）
     getWorkflow: (projectPath) => client.get('/api/workflow', { params: { project_path: projectPath } }),
     saveWorkflow: (projectPath, workflowData, workspaceIdentity) => client.post('/api/workflow/save', { project_path: projectPath, workflow_data: workflowData }, { workspaceIdentity }),
-    // 页面地图（topology.json：{nodes, edges, blocks}）
+    // 页面地图（topology.json：{nodes, edges}）
     getTopology: (projectPath) => client.get('/api/topology', { params: { project_path: projectPath } }),
     saveTopology: (projectPath, topologyData, workspaceIdentity) => client.post('/api/topology/save', { project_path: projectPath, topology_data: topologyData }, { workspaceIdentity }),
     listFunctions: projectPath => client.get('/api/functions', { params: { project_path: projectPath } }),

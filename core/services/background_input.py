@@ -126,7 +126,7 @@ def background_click(hwnd, screen_x: int, screen_y: int, button: str = 'left', c
     try:
         count = max(1, int(clicks or 1))
         posted = True
-        for i in range(count):
+        for _ in range(count):
             posted = _post(target_hwnd, win32con.WM_MOUSEMOVE, 0, lparam) and posted  # 移动消息前置
             posted = _post(target_hwnd, down_msg, down_wparam, lparam) and posted
             posted = _post(target_hwnd, up_msg, 0, lparam) and posted

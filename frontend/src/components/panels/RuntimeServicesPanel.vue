@@ -1,11 +1,11 @@
 <template>
     <section class="runtime-panel">
         <nav class="service-tabs">
-            <button v-for="item in tabs" :key="item.id" :class="{ active: tab === item.id }" :title="item.label" @click="tab = item.id"><component :is="item.icon" /><span>{{ item.label }}</span></button>
+            <button v-for="item in tabs" :key="item.id" type="button" :class="{ active: tab === item.id }" :title="item.label" @click="tab = item.id"><component :is="item.icon" /><span>{{ item.label }}</span></button>
         </nav>
         <div class="service-body" v-loading="loading">
             <template v-if="tab === 'overview'">
-                <header class="section-header"><div><strong>运行服务</strong><small>项目级持久化与多实例协调基础设施</small></div><button class="icon-button" @click="loadAll"><RefreshCw /></button></header>
+                <div class="overview-lead"><small>项目级持久化与多实例协调基础设施</small><button type="button" class="icon-button" title="刷新服务概览" aria-label="刷新服务概览" @click="loadAll"><RefreshCw /></button></div>
                 <div class="metric-grid">
                     <div v-for="metric in metrics" :key="metric.key"><span>{{ metric.label }}</span><b>{{ overview.counts?.[metric.key] || 0 }}</b></div>
                 </div>
@@ -15,25 +15,25 @@
 
             <template v-else-if="tab === 'schedules'">
                 <header class="section-header"><div><strong>计划任务</strong><small>每日、固定间隔或单次运行</small></div></header>
-                <button class="primary-action" @click="scheduleVisible = true"><CalendarClock />管理计划任务</button>
+                <button type="button" class="primary-action" @click="scheduleVisible = true"><CalendarClock />管理计划任务</button>
                 <p class="section-note">计划由后端常驻服务维护，即使 IDE 页面暂时不在前台也会按时触发；IDE 后端退出期间不会执行。</p>
             </template>
 
             <template v-else-if="tab === 'state'">
-                <header class="section-header"><div><strong>持久状态</strong><small>跨流程、跨重启保存进度</small></div><button class="icon-button" @click="loadStates"><RefreshCw /></button></header>
+                <header class="section-header"><div><strong>持久状态</strong><small>跨流程、跨重启保存进度</small></div><button type="button" class="icon-button" title="刷新持久状态" aria-label="刷新持久状态" @click="loadStates"><RefreshCw /></button></header>
                 <div class="compact-form"><el-input v-model="stateDraft.namespace" placeholder="命名空间" /><el-input v-model="stateDraft.key" placeholder="键" /><el-input v-model="stateDraft.value" type="textarea" :rows="2" placeholder="JSON 或普通文本" /><el-button type="primary" @click="saveState">保存状态</el-button></div>
-                <div class="record-list"><div v-for="item in states" :key="`${item.namespace}:${item.key}`" class="record-row"><div><strong>{{ item.namespace }} / {{ item.key }}</strong><small>{{ stringify(item.value) }}</small></div><button class="icon-button danger" @click="removeState(item)"><Trash2 /></button></div><div v-if="!states.length" class="empty">暂无持久状态</div></div>
+                <div class="record-list"><div v-for="item in states" :key="`${item.namespace}:${item.key}`" class="record-row"><div><strong>{{ item.namespace }} / {{ item.key }}</strong><small>{{ stringify(item.value) }}</small></div><button type="button" class="icon-button danger" title="删除状态" aria-label="删除状态" @click="removeState(item)"><Trash2 /></button></div><div v-if="!states.length" class="empty">暂无持久状态</div></div>
             </template>
 
             <template v-else-if="tab === 'messages'">
-                <header class="section-header"><div><strong>本地消息</strong><small>同一电脑上的 IDE / Player / 多开实例协同</small></div><button class="icon-button" @click="loadMessages"><RefreshCw /></button></header>
+                <header class="section-header"><div><strong>本地消息</strong><small>同一电脑上的 IDE / Player / 多开实例协同</small></div><button type="button" class="icon-button" title="刷新本地消息" aria-label="刷新本地消息" @click="loadMessages"><RefreshCw /></button></header>
                 <div class="compact-form"><el-input v-model="messageDraft.channel" placeholder="频道" /><el-input v-model="messageDraft.sender" placeholder="发送者（可选）" /><el-input v-model="messageDraft.payload" type="textarea" :rows="2" placeholder="消息 JSON 或文本" /><el-button type="primary" @click="publishMessage">发布消息</el-button></div>
                 <div class="claim-line"><el-input v-model="consumer" placeholder="消费者 ID" /><el-button @click="claimMessages">领取待处理消息</el-button></div>
                 <div class="record-list"><div v-for="item in messages" :key="item.id" class="record-row"><div><strong>#{{ item.channel }} · {{ item.sender || '匿名' }}</strong><small>{{ stringify(item.payload) }}</small><em>{{ item.status }} · {{ formatTime(item.created_at) }}</em></div><el-button v-if="item.status === 'claimed' && item.claimed_by === consumer" text type="success" @click="ackMessage(item)">确认</el-button></div><div v-if="!messages.length" class="empty">暂无消息</div></div>
             </template>
 
             <template v-else-if="tab === 'leases'">
-                <header class="section-header"><div><strong>资源租约</strong><small>防止多个实例同时占用同一账号、窗口或设备</small></div><button class="icon-button" @click="loadLeases"><RefreshCw /></button></header>
+                <header class="section-header"><div><strong>资源租约</strong><small>防止多个实例同时占用同一账号、窗口或设备</small></div><button type="button" class="icon-button" title="刷新资源租约" aria-label="刷新资源租约" @click="loadLeases"><RefreshCw /></button></header>
                 <div class="compact-form"><el-input v-model="leaseDraft.resource_key" placeholder="资源键，例如 emulator-1" /><el-input v-model="leaseDraft.owner" placeholder="实例/所有者 ID" /><el-input-number v-model="leaseDraft.ttl_seconds" :min="5" :max="86400" /><el-button type="primary" @click="acquireLease">获取租约</el-button></div>
                 <div class="record-list"><div v-for="item in leases" :key="item.resource_key" class="record-row"><div><strong>{{ item.resource_key }}</strong><small>所有者：{{ item.owner }}</small><em>到期：{{ formatTime(item.expires_at) }}</em></div><el-button v-if="ownedTokens[item.resource_key]" text type="danger" @click="releaseLease(item)">释放</el-button></div><div v-if="!leases.length" class="empty">暂无有效租约</div></div>
             </template>
@@ -156,6 +156,7 @@ watch(() => props.instanceId, value => { if (props.scope === 'player' && value) 
 .service-tabs { display:grid; grid-template-columns:repeat(3,1fr); gap:3px; padding:7px; border-bottom:1px solid var(--app-separator); }
 .service-tabs button { min-width:0; height:30px; display:flex; align-items:center; justify-content:center; gap:4px; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); font-size:10px; cursor:pointer; }.service-tabs button.active,.service-tabs button:hover { background:var(--el-fill-color-light); color:var(--el-color-primary); }.service-tabs svg { width:13px; }
 .service-body { flex:1; overflow:auto; padding:10px; }.section-header { display:flex; align-items:center; margin-bottom:10px; }.section-header>div { flex:1; display:flex; flex-direction:column; gap:2px; }.section-header strong { font-size:13px; }.section-header small,.section-note { color:var(--el-text-color-secondary); font-size:10.5px; line-height:1.5; }
+.overview-lead { min-height:28px; display:flex; align-items:center; gap:8px; margin-bottom:8px; }.overview-lead small { min-width:0; flex:1; color:var(--el-text-color-secondary); font-size:10.5px; line-height:1.4; }
 .icon-button { width:28px; height:28px; display:grid; place-items:center; padding:0; border:0; border-radius:6px; background:transparent; color:var(--el-text-color-secondary); cursor:pointer; }.icon-button:hover { background:var(--el-fill-color-light); color:var(--el-color-primary); }.icon-button.danger:hover { color:var(--el-color-danger); }.icon-button svg { width:14px; }
 .metric-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:6px; }.metric-grid div { padding:9px; border:1px solid var(--el-border-color-light); border-radius:7px; display:flex; flex-direction:column; gap:3px; }.metric-grid span { color:var(--el-text-color-secondary); font-size:10px; }.metric-grid b { font-size:17px; }
 .info-card { margin-top:8px; padding:9px; display:flex; gap:8px; border-radius:7px; background:var(--el-fill-color-extra-light); }.info-card>svg { flex:0 0 auto; color:var(--el-color-primary); }.info-card div { min-width:0; display:flex; flex-direction:column; gap:3px; }.info-card strong { font-size:11px; }.info-card small { color:var(--el-text-color-secondary); font-size:10px; overflow-wrap:anywhere; line-height:1.4; }

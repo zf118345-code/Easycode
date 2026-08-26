@@ -89,6 +89,55 @@ def test_binary_template_preview_does_not_capture_minimized_workspace(monkeypatc
     assert result['confidence'] is None
 
 
+def test_live_template_test_converts_captured_pil_frame_for_memory_matcher(monkeypatch):
+    import core.services.vision_service as vision_module
+    from core.services.asset_service import AssetService
+    from core.services.vision_service import VisionService
+    from core.vision.memory_matcher import MemoryTemplateMatcher
+
+    template = np.zeros((12, 16, 3), dtype=np.uint8)
+    captured = Image.new('RGB', (120, 80), color=(12, 34, 56))
+    observed = {}
+    monkeypatch.setattr(
+        AssetService,
+        'resolve',
+        lambda *_args, **_kwargs: {'full_path': 'virtual-template.png'},
+    )
+    monkeypatch.setattr(vision_module, 'load_image', lambda *_args, **_kwargs: template.copy())
+    monkeypatch.setattr(VisionService, '_capture_project_workspace', lambda *_args: captured)
+
+    def match_in_memory(*, screen_bgr, template_bgr, region_type, region_value):
+        observed.update({
+            'shape': screen_bgr.shape,
+            'pixel': screen_bgr[0, 0].tolist(),
+            'template_shape': template_bgr.shape,
+            'region_type': region_type,
+            'region_value': region_value,
+        })
+        return 0.9876, (42, 24)
+
+    monkeypatch.setattr(MemoryTemplateMatcher, 'match_in_memory', match_in_memory)
+
+    result = VisionService.test_image(
+        'virtual-project',
+        'asset://template',
+        False,
+        127,
+        preview_only=False,
+    )
+
+    assert result['status'] == 'success'
+    assert result['confidence'] == 0.9876
+    assert result['center_pos'] == [42, 24]
+    assert observed == {
+        'shape': (80, 120, 3),
+        'pixel': [56, 34, 12],
+        'template_shape': (12, 16, 3),
+        'region_type': 'custom',
+        'region_value': [0, 0, 120, 80],
+    }
+
+
 def test_window_capture_rejects_minimized_target_before_cached_wgc(monkeypatch):
     import sys
     import types

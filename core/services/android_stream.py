@@ -753,7 +753,7 @@ def get_android_video_session(context, workspace_size: tuple[int, int]) -> Scrcp
     if existing is not None and hasattr(existing, 'close'):
         existing.close()
     session = ScrcpyVideoSession(device_id, max_size=max(workspace_size), max_fps=60)
-    setattr(context, '_android_video_session', session)
+    context._android_video_session = session
     return session
 
 
@@ -769,5 +769,5 @@ def get_android_control_session(context) -> ScrcpyVideoSession:
     if existing is not None and hasattr(existing, 'close'):
         existing.close()
     session = ScrcpyControlSession(device_id)
-    setattr(context, '_android_control_session', session)
+    context._android_control_session = session
     return session

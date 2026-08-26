@@ -22,5 +22,5 @@ def prepared_frame(context: Any, image) -> dict[str, Any]:
             'bgr': bgr,
             'gray': cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY),
         }
-        setattr(context, '_vision_frame_cache', cache)
+        context._vision_frame_cache = cache
     return cache

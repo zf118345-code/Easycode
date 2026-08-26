@@ -100,6 +100,14 @@ class TestAtomicWriteJson:
         assert loaded['nested']['keep'] == 3
         assert '_drop' not in loaded['nested']
 
+    def test_runtime_document_can_preserve_private_keys(self, tmp_path):
+        """运行时配置不是项目蓝图，显式关闭清理时必须原样保留用户键。"""
+        file_path = str(tmp_path / 'runtime.json')
+        data = {'_customer_key': 'kept', 'nested': {'_token_alias': 7}}
+        atomic_write_json(file_path, data, clean_transient=False)
+        with open(file_path, encoding='utf-8') as stream:
+            assert json.load(stream) == data
+
     def test_permission_error_fails_immediately_without_tempfile_retry(self, tmp_path, monkeypatch):
         """Windows 目录不可写时只尝试一次，并保留真实权限异常。"""
         real_open = open

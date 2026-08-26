@@ -5,7 +5,7 @@ import sqlite3
 import threading
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -194,9 +194,11 @@ class PlatformStore:
             ids = [row['id'] for row in rows]
             if ids:
                 placeholders = ','.join('?' for _ in ids)
+                # The interpolated text is generated exclusively from one '?' per id.
+                claim_sql = f'''UPDATE messages SET status='claimed', claimed_by=?, claimed_until=?
+                    WHERE id IN ({placeholders})'''  # nosec B608
                 db.execute(
-                    f'''UPDATE messages SET status='claimed', claimed_by=?, claimed_until=?
-                        WHERE id IN ({placeholders})''',
+                    claim_sql,
                     (str(consumer), until, *ids),
                 )
             db.execute('COMMIT')
@@ -376,7 +378,7 @@ class PlatformStore:
             if ids:
                 placeholders = ','.join('?' for _ in ids)
                 db.execute(
-                    f'UPDATE schedules SET claimed_by=?, claimed_until=? WHERE id IN ({placeholders})',
+                    f'UPDATE schedules SET claimed_by=?, claimed_until=? WHERE id IN ({placeholders})',  # nosec B608
                     (str(owner), until, *ids),
                 )
             db.execute('COMMIT')

@@ -15,6 +15,7 @@ build/
 .easycode/
 .tmp/
 artifacts/
+.artifacts/
 *.db
 # 忽略 OCR 模型与调试截图
 models/

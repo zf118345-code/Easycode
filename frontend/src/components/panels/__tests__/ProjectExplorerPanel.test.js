@@ -4,10 +4,14 @@ import { createPinia, setActivePinia } from 'pinia'
 import ProjectExplorerPanel from '../ProjectExplorerPanel.vue'
 import { useProjectStore, useUiStore } from '@/stores'
 
-const node = (id, x, y, name = id) => ({
+const node = (id, name = id) => ({
     node_id: id, node_name: name, node_type: 'wait', params: {},
-    position: { x, y }, size: { w: 160, h: 96 }
+    position: { x: 80, y: 80 }, size: { w: 160, h: 96 }
 })
+
+function edge(id, source, target) {
+    return { edge_id: id, source_node: source, target_node: target, source_port: 'success', source_port_id: 'success' }
+}
 
 function mountPanel() {
     const project = useProjectStore()
@@ -18,12 +22,11 @@ function mountPanel() {
         schema_version: 3,
         main_graph: {
             graph_id: 'main',
-            nodes: [node('inside', 120, 140, '区块内节点'), node('partial', 430, 140, '跨边界节点'), node('loose', 700, 140, '自由节点')],
-            edges: [],
-            blocks: [{ block_id: 'block_a', name: '登录阶段', x: 80, y: 80, width: 400, height: 260, color: 'slate' }]
+            nodes: [node('start', '开始节点'), node('middle', '处理中间页'), node('finish', '完成节点')],
+            edges: [edge('e1', 'start', 'middle'), edge('e2', 'middle', 'finish')]
         },
         functions: [], function_folders: [],
-        page_map: { schema_version: 3, nodes: [], edges: [], blocks: [] },
+        page_map: { schema_version: 3, nodes: [], edges: [] },
         variables: {}, ui_state: {}, settings: {}
     }
     vi.spyOn(project, 'saveWorkflowImmediately').mockResolvedValue({ status: 'success' })
@@ -31,51 +34,51 @@ function mountPanel() {
     return mount(ProjectExplorerPanel, { attachTo: document.body })
 }
 
-describe('ProjectExplorerPanel v3 主流程大纲', () => {
+describe('ProjectExplorerPanel 主流程大纲', () => {
     beforeEach(() => {
         document.body.innerHTML = ''
         setActivePinia(createPinia())
     })
 
-    it('按几何完整包含关系展示区块成员，其余节点保持无区块', () => {
+    it('以扁平列表展示主流程全部节点，不再出现区块入口', () => {
         const wrapper = mountPanel()
-        const section = wrapper.find('.block-section')
-        expect(section.text()).toContain('登录阶段')
-        expect(section.text()).toContain('区块内节点')
-        expect(section.text()).not.toContain('跨边界节点')
-        expect(wrapper.find('.loose-section').text()).toContain('跨边界节点')
-        expect(wrapper.find('.loose-section').text()).toContain('自由节点')
+        expect(wrapper.findAll('.node-row')).toHaveLength(3)
+        expect(wrapper.text()).toContain('开始节点')
+        expect(wrapper.text()).toContain('处理中间页')
+        expect(wrapper.text()).not.toContain('V3Outline')
+        expect(wrapper.find('.node-row small').text()).toBe('等待')
+        expect(wrapper.text()).not.toContain('区块')
         wrapper.unmount()
     })
 
-    it('点击区块只选择完整位于区块内的节点', async () => {
+    it('单击与 Ctrl 单击同步画布多选状态', async () => {
         const wrapper = mountPanel()
-        await wrapper.find('.block-row').trigger('click')
+        const rows = wrapper.findAll('.node-row')
+        await rows[0].trigger('click')
+        await rows[2].trigger('click', { ctrlKey: true })
         await flushPromises()
-        expect(useUiStore().selectedNodeIds).toEqual(['inside'])
+        expect(new Set(useUiStore().selectedNodeIds)).toEqual(new Set(['start', 'finish']))
         wrapper.unmount()
     })
 
-    it('新建区块自动避让并使用不重复名称，不会为普通节点强制建区块', async () => {
+    it('Shift 单击选中两个节点之间的路径节点和连线', async () => {
         const wrapper = mountPanel()
-        await wrapper.find('.icon-button').trigger('click')
+        const rows = wrapper.findAll('.node-row')
+        await rows[0].trigger('click')
+        await rows[2].trigger('click', { shiftKey: true })
         await flushPromises()
-        const graph = useProjectStore().blueprint.main_graph
-        expect(graph.blocks).toHaveLength(2)
-        expect(graph.blocks[1].name).toBe('新区块')
-        expect(graph.blocks[1]).toEqual(expect.objectContaining({ width: 400, height: 260 }))
-        expect(graph.nodes).toHaveLength(3)
-        expect(useProjectStore().saveWorkflowImmediately).toHaveBeenCalled()
+        expect(useUiStore().selectedNodeIds).toEqual(['start', 'middle', 'finish'])
+        expect(useUiStore().selectedEdgeIds).toEqual(['e1', 'e2'])
         wrapper.unmount()
     })
 
-    it('大纲单选与 Ctrl 增减多选和画布选择状态一致', async () => {
+    it('搜索只保留名称或类型匹配的节点', async () => {
         const wrapper = mountPanel()
-        const looseRows = wrapper.findAll('.loose-section .node-row')
-        await looseRows[0].trigger('click')
-        await looseRows[1].trigger('click', { ctrlKey: true })
-        await flushPromises()
-        expect(new Set(useUiStore().selectedNodeIds)).toEqual(new Set(['partial', 'loose']))
+        await wrapper.find('.outline-search input').setValue('完成')
+        expect(wrapper.findAll('.node-row')).toHaveLength(1)
+        expect(wrapper.find('.node-row').text()).toContain('完成节点')
+        await wrapper.find('.outline-search input').setValue('等待')
+        expect(wrapper.findAll('.node-row')).toHaveLength(3)
         wrapper.unmount()
     })
 })

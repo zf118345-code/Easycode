@@ -7,12 +7,18 @@ from core.security.crypto import SecureAssetCrypto
 from core.security.licensing import LicenseManager
 
 
-def atomic_write_json(file_path: str, data: dict) -> None:
+def atomic_write_json(
+    file_path: str,
+    data: dict,
+    *,
+    clean_transient: bool = True,
+    default=None,
+) -> None:
     """
     工业级原子文件写入工具
     先写入临时文件，再通过系统原子的 replace 操作覆盖目标文件，防止并发读写或中断导致 JSON 文件损坏
-    同时过滤以 '_' 开头的瞬态私有字段（如 _memory_templates 运行时内存矩阵），
-    但保留公开文件协议中的 ``__meta__`` 元数据段。
+    项目文档默认过滤以 '_' 开头的瞬态私有字段（如 _memory_templates），
+    运行时配置、检查点等非项目文档可传 ``clean_transient=False`` 保留原始键。
     """
     dir_name = os.path.dirname(file_path)
     if dir_name:
@@ -29,7 +35,7 @@ def atomic_write_json(file_path: str, data: dict) -> None:
             return [clean_transient_fields(item) for item in obj]
         return obj
 
-    cleaned_data = clean_transient_fields(data)
+    cleaned_data = clean_transient_fields(data) if clean_transient else data
 
     # ``tempfile.NamedTemporaryFile`` can spin through thousands of candidate
     # names on Windows when the directory exists but the current security
@@ -42,7 +48,7 @@ def atomic_write_json(file_path: str, data: dict) -> None:
     )
     try:
         with open(temp_path, 'x', encoding='utf-8') as stream:
-            json.dump(cleaned_data, stream, ensure_ascii=False, indent=2)
+            json.dump(cleaned_data, stream, ensure_ascii=False, indent=2, default=default)
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, file_path)

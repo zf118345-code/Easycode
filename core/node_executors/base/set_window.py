@@ -22,7 +22,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
 
         # ---------------- 1. 全桌面模式 (Desktop Mode) ----------------
         if work_mode == 'desktop':
-            context.log('🖥️ 切换为 [全桌面模式]，清除窗口句柄限制')
+            context.log('[设置窗口] 切换为全桌面模式，清除窗口句柄限制')
             screen_w, screen_h = pyautogui.size()
 
             # 裁剪偏移 [T, B, L, R]
@@ -99,7 +99,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
                 offset_bottom = auto_off.get('bottom', 0)
                 offset_left = auto_off.get('left', 0)
                 offset_right = auto_off.get('right', 0)
-                context.log(f'📱 自动匹配模拟器预设裁剪偏移: {auto_off}')
+                context.log(f'[设置窗口] 自动匹配模拟器预设裁剪偏移: {auto_off}')
             else:
                 offset_top = offset_bottom = offset_left = offset_right = 0
 
@@ -111,7 +111,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
             target_w = target_h = 0
 
         if target_w > 0 and target_h > 0:
-            context.log(f'📏 检测到目标内容尺寸: {target_w}x{target_h}，准备调整窗口大小...')
+            context.log(f'[设置窗口] 检测到目标内容尺寸: {target_w}x{target_h}，准备调整窗口大小...')
             try:
                 window_rect = win32gui.GetWindowRect(hwnd)
                 pos_x, pos_y = window_rect[0], window_rect[1]
@@ -183,7 +183,7 @@ class SetWindowNodeExecutor(BaseNodeExecutor):
                 context.log(' 未绑定唯一 ADB serial，已阻止运行；禁止回退桌面或物理鼠标', 'error')
                 return self.build_result(False, error='adb binding required')
 
-        context.log(f'🎉 工作窗口设置完成 | 标题: {title} | 最终内容区域: {content_rect}')
+        context.log(f'[设置窗口] 设置完成 | 标题: {title} | 最终内容区域: {content_rect}')
         return self.build_result(True)
 
     # ---------- 辅助工具函数 ----------

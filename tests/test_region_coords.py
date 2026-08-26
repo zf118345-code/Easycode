@@ -57,6 +57,7 @@ def test_image_recognition_region_converts_to_ltrb(monkeypatch):
         'params': {
             'image_source': 'tpl', 'region_type': 'recorded', 'region_value': [10, 20, 100, 80],
             'region_is_relative': True, 'threshold': 85, 'timeout': 100, 'gray_scale': False,
+            'execution_mode': 'wait_present',
         },
     })()
     # 执行一次循环即退出（timeout 很小，匹配永不命中）
@@ -83,7 +84,7 @@ def test_image_recognition_fullwindow_uses_ltrb(monkeypatch):
     ctx = FakeContext(window_rect=(146, 114, 1280, 720))
     node = type('N', (), {
         'node_id': 'n2', 'node_name': '识别', 'node_type': 'image_recognition',
-        'params': {'image_source': 'tpl', 'region_type': 'fullwindow', 'threshold': 85, 'timeout': 100},
+        'params': {'image_source': 'tpl', 'region_type': 'fullwindow', 'threshold': 85, 'timeout': 100, 'execution_mode': 'wait_present'},
     })()
     executor.execute(node, ctx)
     assert captured['region'] == (146, 114, 1426, 834), captured['region']

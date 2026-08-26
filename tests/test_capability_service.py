@@ -71,6 +71,38 @@ def test_unknown_input_and_non_idempotent_retry_are_rejected(tmp_path):
         )
 
 
+def test_timed_out_in_process_retry_cannot_publish_into_next_attempt_queue(monkeypatch, tmp_path):
+    calls = []
+    lock = threading.Lock()
+
+    def entry(_context, **_inputs):
+        with lock:
+            attempt = len(calls) + 1
+            calls.append(attempt)
+        time.sleep(0.075 if attempt == 1 else 0.035)
+        return {'success': True, 'data': {'attempt': attempt}}
+
+    spec = CapabilitySpec(
+        capability_id='test.retry_isolation',
+        version='1.0.0',
+        entry=entry,
+        timeout_ms=50,
+        idempotent=True,
+    )
+    monkeypatch.setattr(CapabilityService, 'resolve', lambda *_args, **_kwargs: spec)
+
+    result = CapabilityService.invoke(
+        FakeExecutor(tmp_path),
+        spec.capability_id,
+        retry_count=1,
+        retry_interval_ms=0,
+    )
+
+    assert calls == [1, 2]
+    assert result['success'] is True
+    assert result['data']['attempt'] == 2
+
+
 def test_platform_capabilities_persist_state(tmp_path):
     executor = FakeExecutor(tmp_path)
     executor._platform_store = PlatformStore(str(tmp_path / 'platform.db'))

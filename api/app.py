@@ -30,6 +30,7 @@ from starlette.responses import JSONResponse, Response  # noqa: E402
 # 安全配置（统一从环境变量读取，避免硬编码密钥/CORS 来源）
 from core.config import SecurityConfig  # noqa: E402
 from core.services.project_workspace_service import project_workspace_manager  # noqa: E402
+from api.workspace_context import mutates_project_files, project_mutation_documents  # noqa: E402
 
 # 速率限制（slowapi 可选，缺失时降级为无限制）
 try:
@@ -177,15 +178,15 @@ def create_app():
         response: Response = await call_next(request)
         if (
             response.status_code < 400
-            and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            and mutates_project_files(request.method, request.url.path)
             and request.headers.get('x-workspace-id')
-            and request.url.path not in {'/api/workspaces/close', '/api/workspaces/open'}
         ):
             try:
                 await asyncio.to_thread(
                     project_workspace_manager.acknowledge,
                     request.headers['x-workspace-id'],
                     int(request.headers.get('x-workspace-generation') or -1),
+                    project_mutation_documents(request.method, request.url.path),
                 )
             except Exception:
                 # A switch may complete while a response is returning; the old
@@ -346,7 +347,8 @@ def start_webview(port: int = 8000):
     webview.start()
 
 
-if __name__ == '__main__':
+def main(argv: list[str] | None = None) -> None:
+    """Canonical CLI/packaged entry point for the EasyCode backend and shell."""
     import argparse
 
     parser = argparse.ArgumentParser(description='Easycode 后端引擎')
@@ -355,7 +357,7 @@ if __name__ == '__main__':
     )
     parser.add_argument('--host', default='127.0.0.1', help='监听地址；局域网协调服务可使用 0.0.0.0')
     parser.add_argument('--port', type=int, default=8000, help='监听端口')
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.host not in {'127.0.0.1', 'localhost', '::1'} and not os.environ.get('EASYCODE_COORDINATOR_TOKEN'):
         parser.error('监听非本机地址时必须设置 EASYCODE_COORDINATOR_TOKEN')
@@ -371,3 +373,7 @@ if __name__ == '__main__':
     else:
         print('FastAPI 后端引擎运行中 (开发模式)...')
         uvicorn.run(app, host=args.host, port=args.port, reload=False)
+
+
+if __name__ == '__main__':
+    main()

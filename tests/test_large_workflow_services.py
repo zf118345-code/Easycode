@@ -1,6 +1,8 @@
 import json
 import os
 
+import pytest
+from fastapi import HTTPException
 from PIL import Image
 
 from core.project_schema import create_function_definition, new_project_documents
@@ -45,6 +47,48 @@ def test_snapshots_deduplicate_restore_and_keep_limit(tmp_path, monkeypatch):
         data['variables'] = {'index': index}
         BlueprintService.save_blueprint(project, data)
     assert len(SnapshotService.list(project)) == 3
+
+
+def test_snapshot_index_avoids_reloading_full_blueprints(tmp_path):
+    project = str(tmp_path / 'project')
+    _create_project(project)
+    created = SnapshotService.capture_current(project, 'save')
+    history_dir = SnapshotService._history_dir(project)
+    snapshot_path = os.path.join(history_dir, created['snapshot_id'] + '.json')
+    index_path = os.path.join(history_dir, SnapshotService.INDEX_FILE)
+
+    assert os.path.isfile(index_path)
+    # Once indexed, listing history reads metadata only.  Even an externally
+    # damaged full recovery file cannot stall or break the autosave hot path.
+    with open(snapshot_path, 'w', encoding='utf-8') as stream:
+        stream.write('{broken snapshot')
+    listed = SnapshotService.list(project)
+    assert listed[0]['snapshot_id'] == created['snapshot_id']
+    assert 'blueprint' not in listed[0]
+
+
+def test_snapshot_index_rebuilds_after_external_file_change(tmp_path):
+    project = str(tmp_path / 'project')
+    _create_project(project)
+    first = SnapshotService.capture_current(project, 'save')
+    history_dir = SnapshotService._history_dir(project)
+    orphan = {
+        'snapshot_id': '99999999T999999999999Z-orphan',
+        'created_at': '2099-01-01T00:00:00+00:00',
+        'reason': 'external',
+        'hash': 'orphan-hash',
+        'project_name': 'external',
+        'blueprint': {'project_name': 'external'},
+    }
+    with open(os.path.join(history_dir, orphan['snapshot_id'] + '.json'), 'w', encoding='utf-8') as stream:
+        json.dump(orphan, stream)
+
+    listed = SnapshotService.list(project)
+    assert [item['snapshot_id'] for item in listed] == [orphan['snapshot_id'], first['snapshot_id']]
+    with open(os.path.join(history_dir, SnapshotService.INDEX_FILE), encoding='utf-8') as stream:
+        index = json.load(stream)
+    assert index['version'] == SnapshotService.INDEX_VERSION
+    assert len(index['files']) == 2
 
 
 def test_ecf_export_import_clones_function_ids_and_keeps_assets(tmp_path):
@@ -149,15 +193,12 @@ def test_function_names_are_automatically_unique(tmp_path):
     assert second['name'] == '登录1'
 
 
-def test_blocks_are_geometry_only_and_normal_nodes_may_remain_unblocked(tmp_path):
+def test_removed_blocks_field_is_rejected(tmp_path):
     project = str(tmp_path / 'project')
     _create_project(project)
     workflow = BlueprintService.load_workflow(project)
     workflow['main_graph']['blocks'] = [{
         'block_id': 'prepare', 'name': '准备阶段', 'x': 0, 'y': 0, 'width': 400, 'height': 260,
     }]
-    BlueprintService.save_workflow(project, workflow)
-    saved = BlueprintService.load_workflow(project)['main_graph']
-    assert saved['blocks'][0]['block_id'] == 'prepare'
-    assert 'folder_id' not in saved['nodes'][0]
-    assert 'node_ids' not in saved['blocks'][0]
+    with pytest.raises(HTTPException, match='blocks'):
+        BlueprintService.save_workflow(project, workflow)

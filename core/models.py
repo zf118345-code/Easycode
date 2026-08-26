@@ -107,7 +107,6 @@ class Task:
     local_variables: list[dict[str, Any]] = field(default_factory=list)
     outcomes: list[dict[str, Any]] = field(default_factory=list)
     entry_node_id: str | None = None
-    blocks: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _topology_node_from_dict(d: Any) -> Optional['Node']:
@@ -147,7 +146,6 @@ class TopologyMap:
 
     tasks: list[Task] = field(default_factory=list)
     edges: list[dict[str, Any]] = field(default_factory=list)
-    blocks: list[dict[str, Any]] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: Any) -> 'TopologyMap':
@@ -156,13 +154,12 @@ class TopologyMap:
         edges = [dict(edge) for edge in d.get('edges', []) if isinstance(edge, dict)]
         nodes = [n for n in (_topology_node_from_dict(nd) for nd in d.get('nodes', []) or []) if n]
         task = Task(task_id='page_map', task_name='页面地图', nodes=nodes, role='page_map')
-        return cls(tasks=[task] if nodes else [], edges=edges, blocks=list(d.get('blocks') or []))
+        return cls(tasks=[task] if nodes else [], edges=edges)
 
     def to_dict(self) -> dict:
         return {
             'nodes': [_topology_node_to_dict(node) for node in self.iter_nodes()],
             'edges': [dict(e) for e in self.edges],
-            'blocks': [dict(block) for block in self.blocks],
         }
 
     def iter_nodes(self):

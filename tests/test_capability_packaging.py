@@ -43,7 +43,6 @@ def test_release_keeps_page_map_when_player_exposes_a_page_node_property():
             'graph_id': 'main',
             'nodes': [{'node_id': 'wait', 'node_name': '等待', 'node_type': 'wait', 'params': {'duration_ms': 0}}],
             'edges': [],
-            'blocks': [],
         },
         'functions': [],
         'function_folders': [],
@@ -56,7 +55,6 @@ def test_release_keeps_page_map_when_player_exposes_a_page_node_property():
                 'params': {'page_id': 'page_login_stable', 'features': [], 'feature_mode': 'and'},
             }],
             'edges': [],
-            'blocks': [],
         },
     }
     schema = {'groups': [{'fields': [{
@@ -72,20 +70,19 @@ def test_release_keeps_page_map_when_player_exposes_a_page_node_property():
 
 def test_release_drops_unused_page_map_without_smart_jump_or_player_binding():
     blueprint = {
-        'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': [], 'blocks': []},
+        'main_graph': {'graph_id': 'main', 'nodes': [], 'edges': []},
         'functions': [],
         'function_folders': [],
         'page_map': {
             'schema_version': 3,
             'nodes': [{'node_id': 'unused_page', 'node_type': 'page_state', 'params': {}}],
             'edges': [],
-            'blocks': [],
         },
     }
 
     trimmed = ProjectExporter._trim_blueprint(blueprint, {'groups': []})
 
-    assert trimmed['page_map'] == {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []}
+    assert trimmed['page_map'] == {'schema_version': 3, 'nodes': [], 'edges': []}
 
 
 def test_release_keeps_transitive_function_closure_and_drops_unused_functions():
@@ -99,7 +96,7 @@ def test_release_keeps_transitive_function_closure_and_drops_unused_functions():
         return {
             'function_id': function_id,
             'name': function_id,
-            'graph': {'graph_id': function_id, 'nodes': nodes, 'edges': [], 'blocks': []},
+            'graph': {'graph_id': function_id, 'nodes': nodes, 'edges': []},
         }
 
     blueprint = {
@@ -113,7 +110,6 @@ def test_release_keeps_transitive_function_closure_and_drops_unused_functions():
                 'params': {'function_id': 'parent'},
             }],
             'edges': [],
-            'blocks': [],
         },
         'functions': [
             function('parent', 'child', 'call_function'),
@@ -126,7 +122,6 @@ def test_release_keeps_transitive_function_closure_and_drops_unused_functions():
             'schema_version': 3,
             'nodes': [{'node_id': 'page_login', 'node_type': 'page_state', 'params': {}}],
             'edges': [],
-            'blocks': [],
         },
     }
 

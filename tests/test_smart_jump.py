@@ -24,11 +24,7 @@ def make_topology():
     """拓扑地图：page4 --op_a--> page2 --op_b--> page1 --op_c--> page2（环形）"""
     return TopologyMap.from_dict(
         {
-            'tasks': [
-                {
-                    'task_id': 'task_topology',
-                    'task_name': '拓扑地图',
-                    'nodes': [
+            'nodes': [
                         {'node_id': 'page4', 'node_name': '页面4', 'node_type': 'page_state',
                          'params': {'page_id': 'page_4', 'features': [], 'feature_mode': 'and'}},
                         {'node_id': 'page2', 'node_name': '页面2', 'node_type': 'page_state',
@@ -38,8 +34,6 @@ def make_topology():
                         {'node_id': 'op_a', 'node_name': '点击A', 'node_type': 'click', 'params': {}},
                         {'node_id': 'op_b', 'node_name': '点击B', 'node_type': 'click', 'params': {}},
                         {'node_id': 'op_c', 'node_name': '点击C', 'node_type': 'click', 'params': {}},
-                    ],
-                }
             ],
             'edges': [
                 {'source_node': 'page4', 'target_node': 'op_a'},

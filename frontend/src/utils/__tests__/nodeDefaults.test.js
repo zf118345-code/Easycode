@@ -1,6 +1,7 @@
 // frontend/src/utils/__tests__/nodeDefaults.test.js
 // 节点默认值生成：按后端 schema default 构建初始 params（控件节点全链路默认值）
 import { describe, it, expect } from 'vitest'
+import { reactive } from 'vue'
 import { buildNodeDefaultParams, NODE_DEFAULTS } from '../nodeDefaults'
 
 // 与后端 core/params/base/control.py 对齐的 schema（默认值一致）
@@ -52,6 +53,36 @@ describe('buildNodeDefaultParams 节点默认值', () => {
         const b = buildNodeDefaultParams('click', defs)
         a.position[0] = 99
         expect(b.position[0]).toBe(0)
+    })
+
+    it('支持 Pinia 中的 Vue 响应式参数定义，并输出可持久化的普通深拷贝', () => {
+        const definitions = reactive({
+            image_recognition: {
+                params: {
+                    region_value: { type: 'list_int4', default: [1, 2, 3, 4] },
+                    preprocess: {
+                        type: 'dict',
+                        sub: {
+                            thresholds: { default: [80, 160] },
+                            options: { default: { grayscale: true } }
+                        }
+                    }
+                }
+            }
+        })
+
+        const params = buildNodeDefaultParams('image_recognition', definitions)
+
+        expect(params).toEqual({
+            region_value: [1, 2, 3, 4],
+            preprocess: {
+                thresholds: [80, 160],
+                options: { grayscale: true }
+            }
+        })
+        expect(JSON.parse(JSON.stringify(params))).toEqual(params)
+        expect(params.region_value).not.toBe(definitions.image_recognition.params.region_value.default)
+        expect(params.preprocess.options).not.toBe(definitions.image_recognition.params.preprocess.sub.options.default)
     })
 
     it('通用节点默认延迟/循环与后端对齐', () => {

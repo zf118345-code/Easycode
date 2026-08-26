@@ -5,8 +5,8 @@ import logging
 import os
 import tempfile
 import threading
-import time
 import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
@@ -68,13 +68,19 @@ class PlatformRuntimeService:
 
     @staticmethod
     def _post_json(url: str, token: str, payload: Any, timeout: float = 5.0) -> dict[str, Any]:
-        request = urllib.request.Request(
-            url,
+        parsed = urllib.parse.urlsplit(str(url or '').strip())
+        if parsed.scheme.lower() not in {'http', 'https'} or not parsed.hostname:
+            raise ValueError('远程协调器地址必须是有效的 HTTP 或 HTTPS URL')
+        if parsed.username or parsed.password:
+            raise ValueError('远程协调器地址不能包含用户名或密码')
+        request = urllib.request.Request(  # noqa: S310 - scheme validated above
+            parsed.geturl(),
             data=json.dumps(payload, ensure_ascii=False, default=str).encode('utf-8'),
             headers={'Content-Type': 'application/json', 'X-EasyCode-Token': str(token or '')},
             method='POST',
         )
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310 - developer-configured coordinator
+        # urlsplit above rejects every scheme except HTTP(S).
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
             raw = response.read(2 * 1024 * 1024)
         return json.loads(raw.decode('utf-8')) if raw else {'status': 'success'}
 

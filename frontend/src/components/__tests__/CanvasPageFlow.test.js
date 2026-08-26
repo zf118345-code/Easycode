@@ -42,6 +42,25 @@ function mountCanvas() {
     })
 }
 
+function mountInteractiveCanvas() {
+    return mount(CanvasPage, {
+        attachTo: document.body,
+        global: {
+            stubs: {
+                CanvasNodeCard: true,
+                CanvasEdgeLayer: true,
+                'el-dialog': true,
+                'el-form': true,
+                'el-form-item': true,
+                'el-radio-group': true,
+                'el-radio-button': true,
+                'el-alert': true,
+                'el-button': true,
+            },
+        },
+    })
+}
+
 function activateProject() {
     const project = useProjectStore()
     project.currentProjectPath = 'D:/test/canvas-project'
@@ -55,10 +74,10 @@ function activateProject() {
         variables: {},
         ui_state: {},
         settings: {},
-        main_graph: { graph_id: 'main', nodes: [], edges: [], blocks: [] },
+        main_graph: { graph_id: 'main', nodes: [], edges: [] },
         functions: [],
         function_folders: [],
-        page_map: { schema_version: 3, nodes: [], edges: [], blocks: [] },
+        page_map: { schema_version: 3, nodes: [], edges: [] },
     }
     return project
 }
@@ -67,6 +86,18 @@ describe('CanvasPage 捕获到持久化全流程', () => {
     beforeEach(() => {
         vi.clearAllMocks()
         setActivePinia(createPinia())
+        globalThis.ResizeObserver = class ResizeObserver {
+            observe() {}
+            disconnect() {}
+        }
+        HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+            clearRect: vi.fn(),
+            fillRect: vi.fn(),
+            strokeRect: vi.fn(),
+            fillStyle: '',
+            strokeStyle: '',
+            lineWidth: 1,
+        }))
         blueprintApi.saveWorkflow.mockResolvedValue({ status: 'success' })
         blueprintApi.saveTopology.mockResolvedValue({ status: 'success' })
     })
@@ -159,7 +190,7 @@ describe('CanvasPage 捕获到持久化全流程', () => {
         project.blueprint.main_graph = {
             graph_id: 'main', nodes: [{
                 node_id: 'node_a', node_name: '起点', node_type: 'log', params: {}, position: { x: 0, y: 0 }
-            }], edges: [], blocks: []
+            }], edges: []
         }
 
         wrapper.findComponent(CanvasViewStub).vm.$emit('create-node', {
@@ -185,6 +216,36 @@ describe('CanvasPage 捕获到持久化全流程', () => {
         expect(ui.focusTarget).toEqual(expect.objectContaining({ type: 'node', id: 'node_b' }))
     })
 
+    it('从画布工具栏打开节点菜单，点击类型后创建并持久化节点', async () => {
+        const project = activateProject()
+        const wrapper = mountInteractiveCanvas()
+        await flushPromises()
+
+        const canvas = wrapper.find('.custom-canvas-container')
+        Object.defineProperty(canvas.element, 'getBoundingClientRect', {
+            configurable: true,
+            value: () => ({ left: 0, top: 0, width: 960, height: 540, right: 960, bottom: 540 }),
+        })
+
+        await wrapper.find('button[title="新建节点"]').trigger('click')
+        await nextTick()
+        expect(wrapper.find('.spawn-menu').exists()).toBe(true)
+
+        const waitItem = wrapper.findAll('.spawn-menu-item').find(item => item.text().includes('等待'))
+        expect(waitItem).toBeTruthy()
+        await waitItem.trigger('click')
+        await flushPromises()
+
+        expect(project.blueprint.main_graph.nodes).toHaveLength(1)
+        expect(project.blueprint.main_graph.nodes[0]).toEqual(expect.objectContaining({
+            node_type: 'wait',
+            node_name: '等待节点',
+        }))
+        expect(blueprintApi.saveWorkflow).toHaveBeenCalledTimes(1)
+        expect(wrapper.find('.spawn-menu').exists()).toBe(false)
+        wrapper.unmount()
+    })
+
     it('切换画布前权威保存当前拓扑，保存失败时保持当前模式和内存数据', async () => {
         const project = activateProject()
         const ui = useUiStore()
@@ -208,5 +269,45 @@ describe('CanvasPage 捕获到持久化全流程', () => {
             expect.objectContaining({ nodes: [expect.objectContaining({ node_id: 'page_a' })] }),
             { workspaceId: 'workspace-test', generation: 3 }
         )
+    })
+
+    it('从空函数工作区打开函数时，通过同一导航屏障保存旧画布并展示目标函数', async () => {
+        const project = activateProject()
+        const ui = useUiStore()
+        const ide = useIdeStore()
+        project.blueprint.functions = [{
+            function_id: 'fn_target',
+            name: '目标函数',
+            graph: { graph_id: 'fn_target', nodes: [], edges: [] },
+            parameters: [], outputs: [], local_variables: [], outcomes: [],
+        }]
+        ui.enterFunctionLibrary()
+
+        await ide.navigateToGraph('function', 'fn_target')
+
+        expect(project.currentTaskId).toBe('fn_target')
+        expect(ui.canvasMode).toBe('function')
+        expect(ui.functionWorkspaceEmpty).toBe(false)
+        expect(blueprintApi.saveWorkflow).toHaveBeenCalledTimes(1)
+    })
+
+    it('导航前保存失败时不改变当前任务、模式或函数空工作区状态', async () => {
+        const project = activateProject()
+        const ui = useUiStore()
+        const ide = useIdeStore()
+        project.blueprint.functions = [{
+            function_id: 'fn_target',
+            name: '目标函数',
+            graph: { graph_id: 'fn_target', nodes: [], edges: [] },
+            parameters: [], outputs: [], local_variables: [], outcomes: [],
+        }]
+        ui.setCanvasMode('topology')
+        blueprintApi.saveTopology.mockRejectedValueOnce(new Error('topology locked'))
+
+        await expect(ide.navigateToGraph('function', 'fn_target')).rejects.toThrow('topology locked')
+
+        expect(project.currentTaskId).toBe('main')
+        expect(ui.canvasMode).toBe('topology')
+        expect(ui.functionWorkspaceEmpty).toBe(false)
     })
 })

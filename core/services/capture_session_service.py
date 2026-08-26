@@ -564,7 +564,7 @@ class CaptureSessionService:
         overwritten: dict[str, bytes] = {}
         temp_paths: list[str] = []
         try:
-            for path, rect in zip(paths, rects):
+            for path, rect in zip(paths, rects, strict=True):
                 if os.path.exists(path):
                     overwritten[path] = Path(path).read_bytes()
                 x, y, width, height = rect
@@ -572,7 +572,7 @@ class CaptureSessionService:
                 temp_path = f'{path}.capture-{uuid.uuid4().hex}.tmp'
                 cropped.save(temp_path, format='PNG')
                 temp_paths.append(temp_path)
-            for temp_path, path in zip(temp_paths, paths):
+            for temp_path, path in zip(temp_paths, paths, strict=True):
                 os.replace(temp_path, path)
                 created.append(path)
             asset_records = AssetService.register_files(snapshot.project_path, [
@@ -586,7 +586,7 @@ class CaptureSessionService:
                         'snapshot_id': snapshot.snapshot_id,
                     },
                 }
-                for path, rect in zip(paths, rects)
+                for path, rect in zip(paths, rects, strict=True)
             ])
         except Exception as exc:
             for temp_path in temp_paths:

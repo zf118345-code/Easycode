@@ -312,7 +312,7 @@ def click_workspace(
                     if isinstance(known, dict):
                         if not isinstance(profile, dict):
                             profile = {}
-                            setattr(context, '_input_capability_profile', profile)
+                            context._input_capability_profile = profile
                         profile['background_click'] = known
                 except Exception:
                     known = None

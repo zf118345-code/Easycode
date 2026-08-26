@@ -46,7 +46,6 @@ def test_ide_project_authoring_delivery_and_runtime_roundtrip(client, tmp_path):
                 'edge_id': 'edge_main', 'source_node': 'node_log', 'target_node': 'node_wait',
                 'source_port': 'success', 'source_port_id': 'success',
             }],
-            'blocks': [],
         },
         'functions': [],
         'function_folders': [],
@@ -68,7 +67,6 @@ def test_ide_project_authoring_delivery_and_runtime_roundtrip(client, tmp_path):
                 'position': {'x': 120, 'y': 140},
             }],
         'edges': [],
-        'blocks': [],
     }
     assert client.post('/api/topology/save', headers=headers, json={
         'project_path': str(project), 'topology_data': topology,

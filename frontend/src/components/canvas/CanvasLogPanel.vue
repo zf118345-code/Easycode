@@ -72,7 +72,6 @@
                     <span class="log-text">{{ entry.log.text }}</span>
                 </div>
             </div>
-
         </div>
         <button
             v-if="!isFollowing && filteredLogs.length"

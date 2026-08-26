@@ -4,7 +4,7 @@
         <div class="tool-window-header">
             <span class="window-title">{{ title }}</span>
             <div class="window-tools">
-                <button class="window-tool-btn" title="最小化收起" @click="$emit('close')">
+                <button type="button" class="window-tool-btn" title="最小化收起" aria-label="最小化收起" @click="$emit('close')">
                     <Minus style="width: 12px; height: 12px;" />
                 </button>
             </div>

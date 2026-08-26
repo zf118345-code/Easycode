@@ -12,18 +12,6 @@
         @contextmenu="onContextMenu">
         <!-- 视口变换层（网格由统一世界图层矢量绘制，不再用 CSS 背景） -->
         <div class="canvas-viewport" :style="viewportStyle">
-            <CanvasBlock
-                v-for="block in renderBlocks"
-                :key="block.block_id"
-                :block="block"
-                :selected="selectedBlockId === block.block_id"
-                :invalid="blockInteraction.invalid && blockInteraction.blockId === block.block_id"
-                :contained-count="blockNodeCounts.get(block.block_id) || 0"
-                @select="selectBlock"
-                @drag-start="startBlockDrag"
-                @resize-start="startBlockResize"
-                @delete="requestBlockDelete"
-                @contextmenu="openBlockContextMenu" />
             <!-- SVG 世界图层（矢量网格 + 连线，共享子组件） -->
             <CanvasEdgeLayer
                 :edges="visibleComputedEdges"
@@ -81,8 +69,8 @@
         </div>
 
         <!-- 全景缩略图导航面板（两模式共用） -->
-        <div class="minimap-container" v-show="store.uiState.minimapExpanded">
-            <canvas ref="minimapCanvasRef" width="150" height="110" @click="onMinimapClick" />
+        <div class="minimap-container" v-show="store.uiState.minimapExpanded" title="全景导航：点击缩略图定位">
+            <canvas ref="minimapCanvasRef" width="150" height="110" aria-label="画布全景导航" @click="onMinimapClick" />
         </div>
 
         <!-- 框选 UI -->
@@ -90,21 +78,18 @@
 
         <!-- 缩放工具栏（两模式共用） -->
         <div class="canvas-toolbar">
-            <button class="toolbar-btn" @click="zoomIn" title="放大">
+            <button class="toolbar-btn" type="button" aria-label="放大画布" @click="zoomIn" title="放大">
                 <Plus :size="16" />
             </button>
-            <button class="toolbar-btn" @click="zoomOut" title="缩小">
+            <button class="toolbar-btn" type="button" aria-label="缩小画布" @click="zoomOut" title="缩小">
                 <Minus :size="16" />
             </button>
-            <button class="toolbar-btn" @click="resetView" title="重置视图">
+            <button class="toolbar-btn" type="button" aria-label="重置画布视图" @click="resetView" title="重置视图">
                 <Maximize :size="16" />
             </button>
             <span class="toolbar-separator" aria-hidden="true" />
-            <button class="toolbar-btn" @click="createNodeAtViewportCenter" title="新建节点">
+            <button class="toolbar-btn" type="button" aria-label="新建节点" @click="createNodeAtViewportCenter" title="新建节点">
                 <CirclePlus :size="16" />
-            </button>
-            <button class="toolbar-btn" @click="createBlockAtViewportCenter" title="新建区块">
-                <PanelsTopLeft :size="16" />
             </button>
             <span class="zoom-display">{{ Math.round(viewport.zoom * 100) }}%</span>
         </div>
@@ -128,11 +113,9 @@
             @step-over="store.stepOverExecution"
             @stop-execution="store.stopExecution"
             @delete-node="handleDeleteNode"
-            @delete-block="requestSelectedBlockDelete"
             @add-waypoint="addWaypointFromContextMenu"
             @reset-edge-routing="resetSelectedEdgeRouting"
             @canvas-new-node="handleCanvasNewNode"
-            @canvas-new-block="handleCanvasNewBlock"
             @copy-node="handleCopyNode"
             @paste-node="handlePasteNode"
             @dismiss="dismissCanvasMenus" />
@@ -143,7 +126,7 @@
     import { ref, computed, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
     import { useIdeStore, useUiStore } from '@/stores'
     import { ElMessage } from 'element-plus'
-    import { Plus, Minus, Maximize, AlertTriangle, CheckCircle2, PanelsTopLeft, CirclePlus } from 'lucide-vue-next'
+    import { Plus, Minus, Maximize, AlertTriangle, CheckCircle2, CirclePlus } from 'lucide-vue-next'
     import {
         computeEdgePath,
         getSimpleOrthoPath,
@@ -168,11 +151,6 @@
         findNearestFreeWaypoint,
         normalizeEdgeRouting
     } from '@/utils/edgePresentation'
-    import {
-        normalizeBlock, containedNodeIds, canPlaceBlock, resizeBlockFromHandle,
-        findFreeBlockPosition, snapBlockValue
-    } from '@/utils/canvasBlocks'
-
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { useViewport } from '@/composables/useViewport'
     import { useNodeDrag } from '@/composables/useNodeDrag'
@@ -183,7 +161,6 @@
     import CanvasNodeCard from '@/components/canvas/CanvasNodeCard.vue'
     import CanvasEdgeLayer from '@/components/canvas/CanvasEdgeLayer.vue'
     import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
-    import CanvasBlock from '@/components/canvas/CanvasBlock.vue'
 
     useCanvasSharedStyle()
 
@@ -191,7 +168,6 @@
         mode: { type: String, default: 'workflow' },   // 'workflow' | 'topology'
         tasks: { type: Array, default: () => [] },
         edges: { type: Array, default: () => [] },
-        blocks: { type: Array, default: () => [] },
         availableNodeTypes: { type: Object, default: () => ({}) },
         hasBreakpoints: { type: Boolean, default: false },
         // 快捷键回调（由包装器注入）
@@ -204,15 +180,13 @@
 
     const emit = defineEmits([
         'update-tasks',            // (tasks) 节点拖拽结算后的完整流程数组（两 Tab 同构）
-        'update-blocks',
         'update-geometry',
         'add-edge',                // ({source, target, source_port})
         'remove-edge',             // ({sourceNodeId, sourcePort, candIndex, edge_id, targetNodeId})
         'update-edge-routing',     // ({edgeId, routing}) editor-only waypoints
         'create-node',             // ({nodeId, type, position, groupId, sourceNodeId, portType, params?, nodeName?})
         'paste-subgraph',          // ({snapshot, position, groupId, sourceNodeId, sourcePort, sourcePortId})
-        'delete-node',             // ({nodeId, taskId})
-        'request-delete-block'
+        'delete-node'              // ({nodeId, taskId})
     ])
 
     const store = useIdeStore()
@@ -272,24 +246,13 @@
     const waypointDrafts = reactive({})
     const waypointDrag = reactive({ active: false, edgeId: '', waypointId: '', index: -1 })
     const selectedWaypoint = reactive({ edgeId: '', waypointId: '' })
-    const selectedBlockId = ref(null)
-    const localBlocksOverride = ref(null)
-    const renderBlocks = computed(() => (localBlocksOverride.value || props.blocks || []).map(normalizeBlock))
-    const blockInteraction = reactive({ active: false, type: '', blockId: '', handle: '', startX: 0, startY: 0, initialBlock: null, nodeIds: [], initialNodePositions: new Map(), invalid: false })
-    watch(() => props.blocks, () => { if (!blockInteraction.active) localBlocksOverride.value = null }, { deep: true })
     const localSelectedNodeIds = computed(() => store.selectedNodeIds || [])
     // 边路径缓存：key = 两端点(id/坐标/高度)+端口+选项+障碍签名（排除被拖节点）
     const routeCache = new Map()
 
-    // ===== 选中状态（两 Tab 共用 uiStore 同一套选中） =====
-    const syncSelectionToStore = () => {
-        store.setSelectedGroup(null)
-    }
-
+    // ===== 选中状态（三种画布共用 uiStore 同一套选中） =====
     const clearSelection = () => {
         store.clearSelection()
-        store.setSelectedGroup(null)
-        selectedBlockId.value = null
     }
 
     // 拖拽辅助状态
@@ -364,20 +327,55 @@
         return estimateNodeContentHeight(node, dynamicCount)
     }
 
+    // 拖动一个节点会逐帧更新 localDraftPositions。缓存未变化节点的渲染
+    // 对象，避免 Vue 同时重渲染画布上其他图片、端口和内容卡片。
+    const renderNodeCache = new Map()
+
     // 渲染节点（两模式单一实现：统一遍历扁平节点流，尺寸/端口/选中逻辑完全共用）
     const renderNodes = computed(() => {
+        const functionsById = new Map(
+            (store.blueprint?.functions || []).map(item => [item.function_id, item])
+        )
+        const liveIds = new Set()
         const raw = flatNodes.value.map(n => {
+            liveIds.add(n.node_id)
             const targetFunction = (n.node_type || n.type) === 'call_function'
-                ? (store.blueprint?.functions || []).find(item => item.function_id === n.params?.function_id)
+                ? functionsById.get(n.params?.function_id)
                 : null
+            const rawPos = localDraftPositions[n.node_id] || n.position || n._fallbackPos || { x: 0, y: 0 }
+            const selected = selectedNodeIdSet.value.has(n.node_id)
+            const previous = renderNodeCache.get(n.node_id)
+            const cacheState = {
+                source: n,
+                params: n.params,
+                positionSource: rawPos,
+                positionX: rawPos.x,
+                positionY: rawPos.y,
+                edges: props.edges,
+                edgeCount: props.edges.length,
+                selected,
+                nodeName: n.node_name,
+                nodeType: n.node_type || n.type,
+                delay: n.delay_before,
+                loop: n.loop_count,
+                enabled: n.enabled,
+                functionOutcomes: targetFunction?.outcomes,
+                functionOutcomeCount: targetFunction?.outcomes?.length || 0,
+                imageHeight: dynamicImageHeights[n.node_id],
+                tallImage: tallImageFlags[n.node_id]
+            }
+            if (
+                previous
+                && Object.keys(cacheState).every(key => previous.state[key] === cacheState[key])
+            ) return previous.node
+
             const portNode = targetFunction ? { ...n, _functionOutcomes: targetFunction.outcomes || [] } : n
             const ports = buildNodePorts(portNode, props.edges, FAILURE_PORT_TYPES)
-            const rawPos = localDraftPositions[n.node_id] || n.position || n._fallbackPos || { x: 0, y: 0 }
             const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
             const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
             const w = NODE_WIDTH
             const h = computeCanvasNodeHeight(resolveContentHeight(n, ports.dynamic.length), ports.dynamic.length)
-            return {
+            const rendered = {
                 ...portNode,
                 node_type: n.node_type || n.type,
                 node_name: n.node_name || n.label || n.page_id || '未命名',
@@ -386,16 +384,18 @@
                 h,
                 size: { w, h },
                 ports,
-                selected: selectedNodeIdSet.value.has(n.node_id)
+                selected
             }
+            renderNodeCache.set(n.node_id, { state: cacheState, node: rendered })
+            return rendered
         })
-        return normalizeNodeList(raw)
+        for (const nodeId of renderNodeCache.keys()) {
+            if (!liveIds.has(nodeId)) renderNodeCache.delete(nodeId)
+        }
+        return raw
     })
 
     const renderNodeById = computed(() => new Map(renderNodes.value.map(node => [node.node_id, node])))
-    const blockNodeCounts = computed(() => new Map(
-        renderBlocks.value.map(block => [block.block_id, containedNodeIds(block, renderNodes.value).length])
-    ))
     const visibleRenderNodes = computed(() => {
         // Keep full geometry for routing/minimap, but mount only nearby cards.
         return filterNodesToViewport(
@@ -447,100 +447,12 @@
         })
     }
 
-    const uniqueBlockName = () => {
-        const names = new Set(renderBlocks.value.map(block => block.name))
-        if (!names.has('新区块')) return '新区块'
-        let suffix = 1
-        while (names.has(`新区块${suffix}`)) suffix += 1
-        return `新区块${suffix}`
-    }
-
     const clientToWorld = (clientX, clientY) => {
         const rect = containerRef.value?.getBoundingClientRect?.() || { left: 0, top: 0 }
         return {
             x: (clientX - rect.left - viewport.value.x) / viewport.value.zoom,
             y: (clientY - rect.top - viewport.value.y) / viewport.value.zoom
         }
-    }
-
-    const createBlock = (origin) => {
-        const position = findFreeBlockPosition(renderBlocks.value, origin)
-        const block = normalizeBlock({
-            block_id: `block_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
-            name: uniqueBlockName(),
-            description: '',
-            color: 'orange',
-            ...position,
-            width: 400,
-            height: 260
-        })
-        selectedBlockId.value = block.block_id
-        store.clearSelection()
-        emit('update-blocks', [...renderBlocks.value, block])
-        ElMessage.success(`已创建区块“${block.name}”`)
-    }
-
-    const createBlockAtViewportCenter = () => {
-        const center = {
-            x: ((containerRef.value?.clientWidth || 0) / 2 - viewport.value.x) / viewport.value.zoom - 200,
-            y: ((containerRef.value?.clientHeight || 0) / 2 - viewport.value.y) / viewport.value.zoom - 130
-        }
-        createBlock(center)
-    }
-
-    const handleCanvasNewBlock = () => {
-        const origin = clientToWorld(customContextMenu.clientX, customContextMenu.clientY)
-        customContextMenu.visible = false
-        createBlock({ x: origin.x - 200, y: origin.y - 24 })
-    }
-
-    const selectBlock = blockId => {
-        selectedBlockId.value = blockId
-        store.clearSelection()
-        selectedEdgeId.value = null
-    }
-
-    const startBlockInteraction = (event, block, type, handle = '') => {
-        selectBlock(block.block_id)
-        const nodeIds = type === 'drag' ? containedNodeIds(block, renderNodes.value) : []
-        Object.assign(blockInteraction, {
-            active: true,
-            type,
-            blockId: block.block_id,
-            handle,
-            startX: event.clientX,
-            startY: event.clientY,
-            initialBlock: normalizeBlock(block),
-            nodeIds,
-            initialNodePositions: new Map(nodeIds.map(id => [id, { ...(renderNodeById.value.get(id)?.position || { x: 0, y: 0 }) }])),
-            invalid: false
-        })
-        localBlocksOverride.value = renderBlocks.value.map(item => ({ ...item }))
-    }
-
-    const startBlockDrag = (event, block) => startBlockInteraction(event, block, 'drag')
-    const startBlockResize = (event, block, handle) => startBlockInteraction(event, block, 'resize', handle)
-
-    const requestBlockDelete = block => emit('request-delete-block', {
-        block: normalizeBlock(block),
-        containedNodeIds: containedNodeIds(block, renderNodes.value)
-    })
-    const requestSelectedBlockDelete = () => {
-        customContextMenu.visible = false
-        const block = renderBlocks.value.find(item => item.block_id === selectedBlockId.value)
-        if (block) requestBlockDelete(block)
-    }
-    const openBlockContextMenu = (event, block) => {
-        selectBlock(block.block_id)
-        customContextMenu.visible = true
-        customContextMenu.targetType = 'block'
-        customContextMenu.targetId = block.block_id
-        customContextMenu.targetName = block.name
-        customContextMenu.clientX = event.clientX
-        customContextMenu.clientY = event.clientY
-        customContextMenu.x = event.clientX + 8
-        customContextMenu.y = event.clientY + 8
-        menuZIndex.value = getNextZIndex()
     }
 
     const onContextMenu = (e) => {
@@ -1018,9 +930,19 @@
         scheduleMinimapDraw()
     }
 
-    watch([renderNodes, viewport], () => {
+    // The minimap only depends on geometry. Deep-watching every render-node
+    // also traversed params, preview metadata and ports on each form edit.
+    const minimapGeometryKey = computed(() => renderNodes.value
+        .map(node => `${node.node_id}:${node.position.x},${node.position.y},${node.w},${node.h}`)
+        .join('|'))
+    watch([
+        minimapGeometryKey,
+        () => viewport.value.x,
+        () => viewport.value.y,
+        () => viewport.value.zoom,
+    ], () => {
         scheduleMinimapDraw()
-    }, { deep: true, flush: 'post' })
+    }, { flush: 'post' })
 
     watch(() => store.uiState.minimapExpanded, (val) => {
         if (val) {
@@ -1116,8 +1038,6 @@
         selectedWaypoint.edgeId = ''
         selectedWaypoint.waypointId = ''
 
-        syncSelectionToStore()
-
         draggingNodeId.value = node.node_id
         dragStartMouse.value = { x: e.clientX, y: e.clientY }
         nodeInitialPos.value = node.position ? { ...node.position } : { x: 0, y: 0 }
@@ -1154,28 +1074,7 @@
             return
         }
 
-        if (blockInteraction.active) {
-            const dx = (e.clientX - blockInteraction.startX) / viewport.value.zoom
-            const dy = (e.clientY - blockInteraction.startY) / viewport.value.zoom
-            const currentBlocks = localBlocksOverride.value || renderBlocks.value
-            const initial = blockInteraction.initialBlock
-            const candidate = blockInteraction.type === 'resize'
-                ? resizeBlockFromHandle(initial, blockInteraction.handle, dx, dy)
-                : normalizeBlock({ ...initial, x: snapBlockValue(initial.x + dx), y: snapBlockValue(initial.y + dy) })
-            const valid = canPlaceBlock(candidate, currentBlocks, blockInteraction.blockId)
-            blockInteraction.invalid = !valid
-            if (valid) {
-                localBlocksOverride.value = currentBlocks.map(block => block.block_id === candidate.block_id ? candidate : block)
-                if (blockInteraction.type === 'drag') {
-                    const delta = { x: candidate.x - initial.x, y: candidate.y - initial.y }
-                    for (const nodeId of blockInteraction.nodeIds) {
-                        const position = blockInteraction.initialNodePositions.get(nodeId)
-                        if (!position) continue
-                        localDraftPositions[nodeId] = { x: position.x + delta.x, y: position.y + delta.y }
-                    }
-                }
-            }
-        } else if (isPanning.value) {
+        if (isPanning.value) {
             viewport.value.x = e.clientX - panStart.value.x
             viewport.value.y = e.clientY - panStart.value.y
         } else if (selectionBox.value.visible) {
@@ -1376,7 +1275,6 @@
         dragInitialPositions.value = new Map()
         emit('update-geometry', {
             tasks,
-            blocks: renderBlocks.value,
             movedNodeIds: [...selectedIds],
             delta: { x: delta.x + correction.x, y: delta.y + correction.y }
         })
@@ -1414,7 +1312,7 @@
             })
         })
 
-        emit('update-geometry', { tasks, blocks: renderBlocks.value, movedNodeIds: [nodeId], delta: null })
+        emit('update-geometry', { tasks, movedNodeIds: [nodeId], delta: null })
         delete localDraftPositions[nodeId]
         ElMessage.success('节点位置已更新')
     }
@@ -1444,37 +1342,6 @@
             }
             delete waypointDrafts[edgeId]
             Object.assign(waypointDrag, { active: false, edgeId: '', waypointId: '', index: -1 })
-            return
-        }
-
-        if (blockInteraction.active) {
-            const nextBlocks = (localBlocksOverride.value || renderBlocks.value).map(normalizeBlock)
-            const movedNodeIds = new Set(blockInteraction.nodeIds)
-            let tasks = null
-            if (blockInteraction.type === 'drag' && movedNodeIds.size) {
-                tasks = JSON.parse(JSON.stringify(dataTasks.value))
-                for (const task of tasks) {
-                    for (const node of task.nodes || []) {
-                        if (!movedNodeIds.has(node.node_id) || !localDraftPositions[node.node_id]) continue
-                        node.position = { ...localDraftPositions[node.node_id] }
-                        delete localDraftPositions[node.node_id]
-                    }
-                }
-            }
-            const movedDelta = blockInteraction.type === 'drag' && blockInteraction.initialBlock
-                ? {
-                    x: Number(nextBlocks.find(block => block.block_id === blockInteraction.blockId)?.x || 0) - Number(blockInteraction.initialBlock.x || 0),
-                    y: Number(nextBlocks.find(block => block.block_id === blockInteraction.blockId)?.y || 0) - Number(blockInteraction.initialBlock.y || 0)
-                }
-                : null
-            emit('update-geometry', {
-                tasks,
-                blocks: nextBlocks,
-                movedNodeIds: [...movedNodeIds],
-                delta: movedDelta
-            })
-            Object.assign(blockInteraction, { active: false, type: '', blockId: '', handle: '', initialBlock: null, nodeIds: [], initialNodePositions: new Map(), invalid: false })
-            localBlocksOverride.value = null
             return
         }
 
@@ -1552,13 +1419,6 @@
                 targetX = node.position.x + node.w / 2
                 targetY = node.position.y + node.h / 2
             }
-        } else if (target.type === 'block') {
-            const block = renderBlocks.value.find(item => item.block_id === target.id)
-            if (block) {
-                selectedBlockId.value = block.block_id
-                targetX = block.x + block.width / 2
-                targetY = block.y + block.height / 2
-            }
         }
 
         if (targetX !== 0 || targetY !== 0) {
@@ -1566,7 +1426,7 @@
             viewport.value.y = containerH / 2 - targetY * viewport.value.zoom
             scheduleMinimapDraw()
         }
-    }, { deep: true })
+    })
 
     // ===== 拉线落点建立连线 =====
     const onNodeMouseUpCard = (e, targetNode) => {
@@ -1800,10 +1660,6 @@
                 selectedWaypoint.edgeId = ''
                 selectedWaypoint.waypointId = ''
                 e.preventDefault()
-                return
-            }
-            if (selectedBlockId.value && localSelectedNodeIds.value.length === 0 && !selectedEdgeId.value) {
-                requestSelectedBlockDelete()
                 return
             }
             if (selectedEdgeId.value && localSelectedNodeIds.value.length === 0) {

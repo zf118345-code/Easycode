@@ -1,11 +1,9 @@
-import logging
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Body, Request
 from fastapi.responses import StreamingResponse
 
 from core.schemas import RunRequestSchema
+from api.error_handling import internal_http_error
 from api.workspace_context import assert_matching_legacy_path
-
-logger = logging.getLogger(__name__)
 
 
 def _service_unavailable(name):
@@ -29,8 +27,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'启动任务失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'启动任务失败: {str(e)}') from e
+            raise internal_http_error('启动任务失败', e) from e
 
     @router.get('/api/execution/{execution_id}')
     async def get_execution_status(execution_id: str):
@@ -41,7 +38,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'获取执行状态失败: {str(e)}') from e
+            raise internal_http_error('获取执行状态失败', e) from e
 
     @router.post('/api/execution/{execution_id}/stop')
     async def stop_execution(execution_id: str):
@@ -53,7 +50,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'停止执行失败: {str(e)}') from e
+            raise internal_http_error('停止执行失败', e) from e
 
     @router.get('/api/execution/{execution_id}/stream')
     async def stream_execution(execution_id: str):
@@ -77,8 +74,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'暂停失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'暂停失败: {str(e)}') from e
+            raise internal_http_error('暂停失败', e) from e
 
     @router.post('/api/execution/{execution_id}/resume')
     async def resume_execution(execution_id: str):
@@ -90,8 +86,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'恢复失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'恢复失败: {str(e)}') from e
+            raise internal_http_error('恢复失败', e) from e
 
     @router.post('/api/execution/{execution_id}/step')
     async def step_execution(execution_id: str, body: dict = Body(default_factory=dict)):
@@ -107,8 +102,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f'单步失败: {e}', exc_info=True)
-            raise HTTPException(status_code=500, detail=f'单步失败: {str(e)}') from e
+            raise internal_http_error('单步失败', e) from e
 
     @router.get('/api/execution/{execution_id}/debug')
     async def get_debug_state(execution_id: str):
@@ -132,7 +126,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'获取调试状态失败: {str(e)}') from e
+            raise internal_http_error('获取调试状态失败', e) from e
 
     @router.get('/api/execution/{execution_id}/variables')
     async def get_execution_variables(execution_id: str, level: int | None = 0):
@@ -145,7 +139,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'获取变量失败: {str(e)}') from e
+            raise internal_http_error('获取变量失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints')
     async def set_breakpoints(execution_id: str, body: dict = Body(default_factory=dict)):
@@ -158,7 +152,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'设置断点失败: {str(e)}') from e
+            raise internal_http_error('设置断点失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints/add')
     async def add_breakpoint(execution_id: str, body: dict = Body(default_factory=dict)):
@@ -173,7 +167,7 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'新增断点失败: {str(e)}') from e
+            raise internal_http_error('新增断点失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints/remove')
     async def remove_breakpoint(execution_id: str, body: dict = Body(default_factory=dict)):
@@ -188,6 +182,6 @@ def create_execution_router(execution_service, debug_service):
         except HTTPException:
             raise
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f'删除断点失败: {str(e)}') from e
+            raise internal_http_error('删除断点失败', e) from e
 
     return router

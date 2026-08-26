@@ -15,7 +15,6 @@ def _write_project(path, workflow, topology=None):
         documents['workflow.json']['main_graph'].update({
             'nodes': nodes,
             'edges': workflow.get('edges') or [],
-            'blocks': workflow.get('blocks') or [],
         })
     else:
         documents['workflow.json'].update(workflow)
@@ -77,7 +76,7 @@ def test_preflight_accepts_braced_function_output_target(tmp_path):
                     'output_bindings': [{'output_id': 'output_result', 'target': '$var{run_count}'}],
                 },
             }],
-            'edges': [], 'blocks': [],
+            'edges': [],
         },
         'functions': [function],
         'function_folders': [],
@@ -232,7 +231,6 @@ def test_preflight_accepts_nested_page_feature_player_binding(tmp_path):
             },
         }],
         'edges': [],
-        'blocks': [],
     }
     _write_project(tmp_path, {
         'tasks': [{'task_id': 'main', 'task_name': '主流程', 'nodes': [{

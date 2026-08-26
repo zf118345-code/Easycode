@@ -15,7 +15,7 @@
 | Axios | 1.7+ | HTTP 请求库 |
 | splitpanes | 4.1+ | IDE 分栏面板拖拽 |
 | vuedraggable | 4.1+ | 列表拖拽排序 |
-| pathfinding | 0.4.18 | 网格 A* 寻路（画布连线避障） |
+| 自研网格路由 | 仓库内实现 | 画布连线 A* 避障；拖动时使用轻量正交预览 |
 
 ## 2. 目录结构说明
 
@@ -37,9 +37,8 @@ frontend/src/
 │
 ├── components/                   # 组件目录（按功能域分文件夹）
 │   ├── canvas/                   # 统一流程/拓扑画布组件
-│   │   ├── CanvasView.vue        # 画布视口、选择、缩放与区块交互
+│   │   ├── CanvasView.vue        # 画布视口、选择、缩放与连线交互
 │   │   ├── CanvasNodeCard.vue    # 节点卡片
-│   │   ├── CanvasBlock.vue       # 几何区块（所有画布共用）
 │   │   ├── CanvasEdgeLayer.vue   # SVG 连线层
 │   │   ├── CanvasContextMenu.vue # 对象感知右键菜单
 │   │   └── CanvasLogPanel.vue    # 分类、自动跟随与虚拟化运行日志
@@ -58,10 +57,11 @@ frontend/src/
 │   │   ├── InspectorPanel.vue    # 依据选择状态路由检查器
 │   │   └── panels/
 │   │       ├── NodeInspectorPanel.vue    # 单节点参数编辑
-│   │       └── BatchInspectorPanel.vue   # 批量节点属性编辑
+│   │       ├── BatchInspectorPanel.vue   # 批量节点属性编辑
+│   │       └── FunctionInspectorPanel.vue # 函数契约与测试
 │   ├── panels/                   # IDE 常驻面板与中心工作台内容
-│   │   ├── ProjectExplorerPanel.vue  # 主流程大纲与区块
-│   │   ├── FunctionLibraryPanel.vue  # 函数目录、契约与测试
+│   │   ├── ProjectExplorerPanel.vue  # 可搜索的主流程大纲
+│   │   ├── FunctionLibraryPanel.vue  # 函数目录与函数列表
 │   │   ├── PageMapPanel.vue          # 唯一页面地图大纲
 │   │   ├── ResourceLibraryPanel.vue  # 稳定视觉资源
 │   │   ├── GlobalVariablesPanel.vue  # 全局变量管理
@@ -150,9 +150,9 @@ frontend/src/
 | `currentProjectId` | 项目内稳定 ID，与显示名和物理路径分离 |
 | `workspaceId / workspaceGeneration` | 绑定每个项目请求；项目切换后旧请求立即失效 |
 | `currentProjectName` | 项目名称 |
-| `blueprint` | 内存合并视图：`project_name / tasks / variables / ui_state / edges / topology`（由 project.json + workflow.json + topology.json 三份文件 GET 合并） |
+| `blueprint` | 内存合并视图：`project_name / main_graph / functions / function_folders / page_map / variables / ui_state / settings`（由严格 v3 文档合并） |
 | `paramsDefinitions` | 节点参数 Schema 定义（从后端拉取） |
-| `currentTaskId` | 当前画布 ID；默认是内部稳定主画布，可切换到流程库中的可复用流程 |
+| `currentTaskId` | 当前图 ID；默认 `main`，打开函数时切换为稳定 `function_id` |
 | `recentProjects` | 后端 `%LOCALAPPDATA%/EasyCode/recent-projects.json` 提供的最近项目 |
 | `uiState` | UI 布局状态（面板展开/折叠、宽度等，持久化到蓝图） |
 
@@ -162,8 +162,9 @@ frontend/src/
 - `saveProjectMeta()` / `saveProjectMetaDebounced()` — 保存项目元数据（POST /api/blueprint/save）
 - `saveWorkflowImmediately()` — 保存流程画布（POST /api/workflow/save）
 - `saveTopologyData()` / `saveTopologyDebounced()` — 保存拓扑地图（POST /api/topology/save）
-- `saveBlueprintDebounced()` — 防抖 400ms 三路保存（日常编辑用）
-- `saveBlueprintImmediately()` — 立即三路保存（运行任务前、手动保存用）
+- `saveProjectMetaDebounced()` / `saveWorkflowDebounced()` / `saveTopologyDebounced()` — 按数据域排队保存，后到请求不会覆盖先前未完成请求
+- `saveBlueprintDebounced()` — 仅供确实横跨全部文档的操作使用；普通编辑禁止扩大保存域
+- `saveBlueprintImmediately()` — 刷新待保存表单后执行权威完整保存（运行前、显式保存用）
 - `loadParams()` — 加载节点参数定义 Schema
 - `createFunction(name, folderId)` / `duplicateFunction(functionId)` — 创建或复制独立函数
 - `saveFunctionData(functionData)` — 保存函数契约和独立画布
@@ -180,6 +181,7 @@ frontend/src/
 | `selectedNodeId` / `selectedNodeIds` | 当前选中的节点（单选 / 多选批量） |
 | `selectedEdgeIds` | 当前路径选择包含的连线 ID |
 | `canvasMode` | `'workflow'` \| `'function'` \| `'topology'` — 三种画布模式 |
+| `functionWorkspaceEmpty` | 进入函数库但尚未选中函数时为 `true`，中央显示空工作区 |
 | `selectionAnchorId` / `primaryNodeId` | Shift 路径选择起点与主选节点 |
 | `breakpoints` | `Set<node_id>` — 调试断点集合（会话级） |
 | `focusTarget` | 画布镜头聚焦目标（跨组件通信：ProjectExplorer → Canvas） |
@@ -207,16 +209,15 @@ frontend/src/
 | `executionVariables` | 当前调试变量快照 `[{name, type, value, level}]` |
 | `executionCallstack` | 调用栈 `[{function, node_id, task_id}]` |
 | `currentActiveNodeId` | 当前命中的节点（画布高亮） |
-| `_pollTimer` | 调试状态轮询定时器 |
 
 **关键方法**:
 - `runTask(taskId, startNodeId)` — 启动任务，建立 SSE 连接，同步下发断点
 - `stopExecution()` — 发送停止信号
 - `pauseExecution() / resumeExecution()` — 暂停/恢复
 - `stepOverExecution() / stepIntoExecution() / stepOutExecution()` — 单步控制
-- `pollDebugState()` — 拉取调试状态
+- `pollDebugState()` — 暂停或单步后执行一次状态同步
 - `getExecutionVariables(level)` — 拉取变量快照
-- `startDebugPolling(intervalMs) / stopDebugPolling()` — 调试轮询控制
+- `startDebugPolling()` — 兼容名称；当前只进行一次同步，常驻调试状态由 SSE 推送
 
 **数据流**:
 ```
@@ -230,7 +231,7 @@ frontend/src/
 
 ### 3.4 拓扑数据
 
-拓扑与业务流程均由 `projectStore` 持有当前版 `{tasks, edges}` 文件形态。拓扑中的 `tasks[]` 只用于整理页面与跳转动作；弹窗语义由 `page_state.params.is_random_popup` 明确声明，不再依赖集合名称或 `role=popup_handler`。加载旧数据时前端会把旧弹窗集合中的页面状态转换为页面级标记。前端不再维护独立的扁平 topologyStore，也不做加载/保存形态转换。
+拓扑与业务流程均由 `projectStore` 持有严格 v3 图结构。主流程位于 `main_graph`，函数位于 `functions[].graph`，页面地图位于扁平 `page_map.nodes / edges`。弹窗语义由 `page_state.params.is_random_popup` 明确声明，不依赖集合名称或任务角色；前端不迁移或猜测旧格式。
 
 ### 3.5 contextStore — 工作区上下文
 
@@ -260,10 +261,9 @@ EasyCode 由 `CanvasPage + CanvasView` 复用同一套画布交互；模式只�
 
 **核心能力**:
 - **节点卡片**：节点头部带类型图标和颜色，支持拖拽移动、选中高亮、断点红点标记
-- **项目主画布**：直接编辑 `workflow.main_graph`；创建节点不会隐式创建函数或区块
+- **项目主画布**：直接编辑 `workflow.main_graph`；创建节点不会隐式创建函数
 - **函数画布**：函数从函数库显式创建，拥有独立参数、局部变量、输出、结果出口、测试用例和画布
 - **函数调用**：“调用函数”按稳定契约 ID 绑定参数、输出与结果出口；删除被引用函数会被阻止
-- **几何区块**：区块不参与执行；完全位于区块内的节点随区块移动，删除默认只删除区块
 - **SVG 连线层**：使用网格 A* 寻路（`canvasRouter.js`），自动避开节点碰撞
 - **成功/失败双出口**：绿色箭头（成功流）+ 红色箭头（失败流），方向感知的箭头标记
 - **流光动画**：`edge-flow-path` 配合 CSS stroke-dashoffset 动画表达执行流向
@@ -281,7 +281,7 @@ EasyCode 由 `CanvasPage + CanvasView` 复用同一套画布交互；模式只�
 **与 WorkflowCanvas 的区别**:
 | 维度 | WorkflowCanvas | TopologyCanvas |
 |------|---------------|----------------|
-| 数据来源 | `blueprint.main_graph` 或当前 `functions[].graph` | `blueprint.page_map.nodes / edges / blocks`；项目唯一页面地图 |
+| 数据来源 | `blueprint.main_graph` 或当前 `functions[].graph` | `blueprint.page_map.nodes / edges`；项目唯一页面地图 |
 | 节点语义 | 动作节点（点击/OCR/脚本...） | 页面状态（page_state）或跳转动作 |
 | 连线语义 | 执行流向：成功/失败端口 | 页面跳转：带条件 + 跳转动作 |
 | 节点特性 | delay_before / timeout 等参数 | features（页面特征列表）/ feature_mode（and/or）/ is_random_popup（页面级弹窗标记） |

@@ -59,9 +59,9 @@ const blueprint = (name = 'A') => ({
     revision: 0,
     project_name: name,
     variables: {}, ui_state: {}, settings: {},
-    main_graph: { graph_id: 'main', nodes: [], edges: [], blocks: [] },
+    main_graph: { graph_id: 'main', nodes: [], edges: [] },
     functions: [], function_folders: [],
-    page_map: { schema_version: 3, nodes: [], edges: [], blocks: [] }
+    page_map: { schema_version: 3, nodes: [], edges: [] }
 })
 
 describe('项目切换与延迟保存隔离', () => {
@@ -124,7 +124,7 @@ describe('项目切换与延迟保存隔离', () => {
             project_name: 'B', variables: {}, ui_state: {}, settings: {}
         })
         blueprintApi.getWorkflow.mockResolvedValue({ schema_version: 3, main_graph: blueprint('B').main_graph, functions: [], function_folders: [] })
-        blueprintApi.getTopology.mockResolvedValue({ schema_version: 3, nodes: [], edges: [], blocks: [] })
+        blueprintApi.getTopology.mockResolvedValue({ schema_version: 3, nodes: [], edges: [] })
 
         await store.loadProjectByPath('D:/B')
 
@@ -162,5 +162,71 @@ describe('项目切换与延迟保存隔离', () => {
         expect(blueprintApi.saveWorkflow.mock.calls[1][1].main_graph.nodes[0].node_name).toBe('second')
         expect(store.saveState).toBe('saved')
         vi.useRealTimers()
+    })
+
+    it('元数据、工作流与完整保存共享一条写入队列，不会跨文档并发覆盖', async () => {
+        vi.useFakeTimers()
+        let releaseMeta
+        blueprintApi.saveBlueprint
+            .mockImplementationOnce(() => new Promise(resolve => { releaseMeta = resolve }))
+            .mockResolvedValueOnce({ status: 'success' })
+
+        const store = useProjectStore()
+        store._applyWorkspace(identity('A', 12))
+        store.blueprint = blueprint('A')
+        store.saveProjectMetaDebounced()
+        await vi.advanceTimersByTimeAsync(450)
+        expect(blueprintApi.saveBlueprint).toHaveBeenCalledTimes(1)
+
+        store.blueprint.main_graph.nodes.push({ node_id: 'after_meta', node_name: 'newer', node_type: 'log', params: {} })
+        const fullSave = store.saveBlueprintImmediately()
+        await Promise.resolve()
+        expect(blueprintApi.saveBlueprint).toHaveBeenCalledTimes(1)
+
+        releaseMeta({ status: 'success' })
+        await fullSave
+        expect(blueprintApi.saveBlueprint).toHaveBeenCalledTimes(2)
+        expect(blueprintApi.saveBlueprint.mock.calls[1][1].main_graph.nodes[0].node_id).toBe('after_meta')
+        vi.useRealTimers()
+    })
+
+    it('立即重试成功后清除同一文档域的旧保存错误', async () => {
+        const store = useProjectStore()
+        store._applyWorkspace(identity('A', 9))
+        store.blueprint = blueprint('A')
+        store._saveErrors = { workflow: '磁盘暂时不可写' }
+        store._lastSaveError = new Error('磁盘暂时不可写')
+
+        await store.saveWorkflowImmediately()
+
+        expect(store.saveState).toBe('saved')
+        expect(store._lastSaveError).toBeNull()
+        expect(store._lastSavedAt).toBeGreaterThan(0)
+    })
+
+    it('全量保存成功会恢复所有文档域的错误状态', async () => {
+        const store = useProjectStore()
+        store._applyWorkspace(identity('A', 10))
+        store.blueprint = blueprint('A')
+        store._saveErrors = { meta: 'meta failed', topology: 'topology failed' }
+        store._lastSaveError = new Error('meta failed')
+
+        await store.saveBlueprintImmediately()
+
+        expect(store._saveErrors).toEqual({})
+        expect(store.saveState).toBe('saved')
+    })
+
+    it('立即保存再次失败时保留可重试错误并恢复计数', async () => {
+        blueprintApi.saveWorkflow.mockRejectedValueOnce(new Error('磁盘空间不足'))
+        const store = useProjectStore()
+        store._applyWorkspace(identity('A', 11))
+        store.blueprint = blueprint('A')
+
+        await expect(store.saveWorkflowImmediately()).rejects.toThrow('磁盘空间不足')
+
+        expect(store.saveState).toBe('error')
+        expect(store._savePendingCount).toBe(0)
+        expect(store._lastSaveError?.message).toBe('磁盘空间不足')
     })
 })

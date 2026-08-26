@@ -6,11 +6,9 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
 import uuid
 import zipfile
 from copy import deepcopy
-from pathlib import Path
 from typing import Any
 
 from core.project_schema import PROJECT_SCHEMA_VERSION, SYSTEM_EXCEPTION_OUTCOME_ID, validate_document, WORKFLOW_FILE
@@ -73,7 +71,6 @@ def clone_function_with_new_ids(
     graph['graph_id'] = next_function_id
 
     node_ids = {str(node.get('node_id')): _id('node') for node in graph.get('nodes', []) if isinstance(node, dict)}
-    block_ids = {str(block.get('block_id')): _id('block') for block in graph.get('blocks', []) if isinstance(block, dict)}
     own_contract = (contract_id_maps or {}).get(old_function_id, {})
     parameter_ids = own_contract.get('parameters') or {str(item.get('parameter_id')): _id('parameter') for item in value.get('parameters', []) if isinstance(item, dict)}
     local_ids = {str(item.get('local_id')): _id('local') for item in value.get('local_variables', []) if isinstance(item, dict)}
@@ -135,8 +132,6 @@ def clone_function_with_new_ids(
         call_contract = call_contract_by_source.get(old_source_id, {})
         call_outcomes = call_contract.get('outcomes') or {}
         edge['source_port_id'] = call_outcomes.get(str(edge.get('source_port_id')), edge.get('source_port_id'))
-    for block in graph.get('blocks', []):
-        block['block_id'] = block_ids[str(block.get('block_id'))]
     return value
 
 
