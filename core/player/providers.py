@@ -3,6 +3,7 @@
 import contextlib
 
 import win32gui
+import win32process
 
 
 class SystemDataProvider:
@@ -13,28 +14,28 @@ class SystemDataProvider:
 
     @classmethod
     def get_window_list(cls) -> list[dict[str, str]]:
-        """获取当前系统已打开且可见的窗口列表"""
+        """获取可见窗口实例；value 使用句柄令同名多开可被精确选择。"""
         windows = []
 
         def enum_windows_callback(hwnd, extra):
             if win32gui.IsWindowVisible(hwnd):
                 title = win32gui.GetWindowText(hwnd).strip()
                 if title:
-                    windows.append({'label': title, 'value': title})
+                    _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                    windows.append({
+                        'label': f'{title} · PID {pid} · HWND {hwnd}',
+                        'value': f'window:{int(hwnd)}',
+                        'title': title,
+                        'hwnd': int(hwnd),
+                        'process_id': int(pid),
+                        'class_name': win32gui.GetClassName(hwnd),
+                    })
             return True
 
         with contextlib.suppress(Exception):
             win32gui.EnumWindows(enum_windows_callback, None)
 
-        # 去重并按字母排序
-        seen = set()
-        unique_windows = []
-        for w in windows:
-            if w['value'] not in seen:
-                seen.add(w['value'])
-                unique_windows.append(w)
-
-        return unique_windows
+        return sorted(windows, key=lambda item: (item['title'].lower(), item['process_id'], item['hwnd']))
 
     @classmethod
     def get_monitors_list(cls) -> list[dict[str, str]]:

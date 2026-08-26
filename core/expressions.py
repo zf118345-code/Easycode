@@ -1,7 +1,8 @@
 # core/expressions.py
 # ⚡ 全局变量自由表达式求值器
 # 用于 variable_op 的「最新赋值」字段：支持算术/比较/逻辑/三元/函数/下标。
-# 变量引用必须严格前缀：$var{name} / $ctx{name} / $env{name} / $sys{name}
+# 变量引用必须严格前缀。函数作用域同时支持更易读的
+# ``$param.name`` / ``$local.name``（花括号写法也兼容）。
 # （裸变量名一律不识别；$var{} 有值则用值，无值则视为 None，可用 or 兜底）。
 
 import re
@@ -95,7 +96,7 @@ _TOKEN_RE = re.compile(r'''
     (?P<WS>\s+)
   | (?P<NUMBER>(?:\d+\.\d*|\.\d+|\d+)(?:[eE][+-]?\d+)?)
   | (?P<STRING>'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*")
-  | (?P<VAR>\$(?:var|ctx|env|sys)\{[^{}]*\})
+  | (?P<VAR>\$(?:var|ctx|env|sys|param|local)\{[^{}]*\}|\$(?:param|local)\.[A-Za-z_][A-Za-z0-9_]*)
   | (?P<IDENT>[A-Za-z_][A-Za-z0-9_]*)
   | (?P<OP2>>=|<=|==|!=|\/\/|\*\*)
   | (?P<OP>[+\-*/%()\[\],?:<>])
@@ -146,7 +147,11 @@ def tokenize(text: str) -> list:
             tokens.append(Token('STRING', _unescape_string(raw)))
         elif kind == 'VAR':
             m2 = re.match(r'\$([a-z]+)\{([^{}]*)\}', raw)
-            tokens.append(Token('VAR', (m2.group(1), m2.group(2).strip())))
+            if m2:
+                tokens.append(Token('VAR', (m2.group(1), m2.group(2).strip())))
+            else:
+                namespace, key = raw[1:].split('.', 1)
+                tokens.append(Token('VAR', (namespace, key.strip())))
         elif kind == 'IDENT':
             if raw in _KEYWORDS:
                 tokens.append(Token(raw.upper(), raw))
@@ -369,6 +374,10 @@ def _resolve_var(ns: str, key: str, ctx) -> Any:
         if ctx is None or not hasattr(ctx, 'variables') or not isinstance(ctx.variables, dict):
             return None
         return ctx.variables.get(key)
+    if ns in ('param', 'local'):
+        if ctx is None or not hasattr(ctx, 'variables') or not isinstance(ctx.variables, dict):
+            return None
+        return ctx.variables.get(f'__{ns}__:{key}')
     return _resolve_env_var(key, ctx, f'${ns}{{{key}}}')
 
 

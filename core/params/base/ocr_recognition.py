@@ -42,6 +42,8 @@ PARAM_DEFINITIONS = {
                 'label': '识别区域坐标 [X, Y, W, H]',
                 'visible_if': {'field': 'region_type', 'operator': 'in', 'value': ['recorded', 'custom']},
             },
+            'region_reference_size': {'type': 'list_int2', 'default': [0, 0], 'hidden': True},
+            'coordinate_space': {'type': 'str', 'default': 'workspace_px', 'hidden': True},
             'timeout': {
                 'type': 'int',
                 'default': 3000,

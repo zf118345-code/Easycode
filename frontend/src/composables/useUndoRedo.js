@@ -3,6 +3,7 @@
 import { ref, computed } from 'vue'
 import { logger } from '@/utils/logger'
 import { useProjectStore } from '@/stores/projectStore'
+import { getGraph, MAIN_GRAPH_ID } from '@/utils/flowModel'
 
 const MAX_HISTORY = 50
 
@@ -19,16 +20,6 @@ export function useUndoRedo(options = {}) {
 
     const canUndo = computed(() => undoStack.value.length > 0)
     const canRedo = computed(() => redoStack.value.length > 0)
-
-    /**
-     * 深拷贝（使用 structuredClone 降级到 JSON）
-     */
-    function deepClone(obj) {
-        if (typeof structuredClone === 'function') {
-            return structuredClone(obj)
-        }
-        return JSON.parse(JSON.stringify(obj))
-    }
 
     /**
      * 获取当前状态快照
@@ -147,8 +138,8 @@ export function useUndoRedo(options = {}) {
 
 /**
  * 创建按画布数据源集成 Pinia 的 Undo/Redo 实例
- *   mode='workflow'：快照 projectStore.blueprint（顶层 tasks + edges）
- *   mode='topology'：快照 projectStore.blueprint.topology（tasks + edges，与 workflow 同构）
+ *   mode='workflow'：快照当前主流程或函数图
+ *   mode='topology'：快照项目唯一页面地图
  * 使用方式：
  *   const undoRedo = createCanvasUndoRedo('workflow')
  *   undoRedo.commit()  // 修改前调用
@@ -160,24 +151,26 @@ export function createCanvasUndoRedo(mode = 'workflow') {
 
     function getState() {
         const store = useProjectStore()
-        const data = isTopology
-            ? (store.blueprint.topology || { tasks: [], edges: [] })
-            : store.blueprint
-        return JSON.parse(JSON.stringify({ tasks: data.tasks || [], edges: data.edges || [] }))
+        const graphId = isTopology ? 'page_map' : (store.currentTaskId || MAIN_GRAPH_ID)
+        const graph = isTopology
+            ? store.blueprint.page_map
+            : getGraph(store.blueprint, graphId, 'workflow')
+        return JSON.parse(JSON.stringify({ graphId, graph: graph || { nodes: [], edges: [], blocks: [] } }))
     }
 
     function setState(snapshot) {
         const store = useProjectStore()
-        const restored = {
-            tasks: JSON.parse(JSON.stringify(snapshot?.tasks || [])),
-            edges: JSON.parse(JSON.stringify(snapshot?.edges || []))
-        }
+        const restored = JSON.parse(JSON.stringify(snapshot?.graph || { nodes: [], edges: [], blocks: [] }))
         if (isTopology) {
-            store.blueprint.topology = restored
+            store.blueprint.page_map = restored
             store.saveTopologyDebounced()
+        } else if (snapshot?.graphId === MAIN_GRAPH_ID) {
+            store.blueprint.main_graph = restored
+            store.saveWorkflowImmediately()
         } else {
-            store.blueprint.tasks = restored.tasks
-            store.blueprint.edges = restored.edges
+            const fn = (store.blueprint.functions || []).find(item => item.function_id === snapshot?.graphId)
+            if (!fn) return
+            fn.graph = restored
             store.saveWorkflowImmediately()
         }
     }

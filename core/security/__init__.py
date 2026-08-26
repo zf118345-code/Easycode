@@ -1,6 +1,7 @@
 # core/security/__init__.py
 import json
 import os
+import uuid
 
 from core.security.crypto import SecureAssetCrypto
 from core.security.licensing import LicenseManager
@@ -10,7 +11,8 @@ def atomic_write_json(file_path: str, data: dict) -> None:
     """
     工业级原子文件写入工具
     先写入临时文件，再通过系统原子的 replace 操作覆盖目标文件，防止并发读写或中断导致 JSON 文件损坏
-    同时过滤掉所有以 '_' 开头的瞬态私有字段（如 _memory_templates 运行时内存矩阵），防止 ndarray 序列化崩溃
+    同时过滤以 '_' 开头的瞬态私有字段（如 _memory_templates 运行时内存矩阵），
+    但保留公开文件协议中的 ``__meta__`` 元数据段。
     """
     dir_name = os.path.dirname(file_path)
     if dir_name:
@@ -19,7 +21,9 @@ def atomic_write_json(file_path: str, data: dict) -> None:
     def clean_transient_fields(obj):
         if isinstance(obj, dict):
             return {
-                k: clean_transient_fields(v) for k, v in obj.items() if not (isinstance(k, str) and k.startswith('_'))
+                k: clean_transient_fields(v)
+                for k, v in obj.items()
+                if not (isinstance(k, str) and k.startswith('_') and k != '__meta__')
             }
         elif isinstance(obj, list):
             return [clean_transient_fields(item) for item in obj]
@@ -27,14 +31,27 @@ def atomic_write_json(file_path: str, data: dict) -> None:
 
     cleaned_data = clean_transient_fields(data)
 
-    temp_path = f'{file_path}.tmp'
-    with open(temp_path, 'w', encoding='utf-8') as f:
-        json.dump(cleaned_data, f, ensure_ascii=False, indent=2)
-
-    if os.path.exists(file_path):
+    # ``tempfile.NamedTemporaryFile`` can spin through thousands of candidate
+    # names on Windows when the directory exists but the current security
+    # token cannot create files in it.  Besides wasting CPU, that makes an API
+    # request look permanently hung.  A UUID name gives us the same-dir atomic
+    # replace guarantee and fails immediately with the real permission error.
+    temp_path = os.path.join(
+        dir_name or '.',
+        f'.{os.path.basename(file_path)}.{uuid.uuid4().hex}.tmp',
+    )
+    try:
+        with open(temp_path, 'x', encoding='utf-8') as stream:
+            json.dump(cleaned_data, stream, ensure_ascii=False, indent=2)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.replace(temp_path, file_path)
-    else:
-        os.rename(temp_path, file_path)
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                pass
 
 
 def assert_safe_path(base_dir: str, target_path: str) -> str:
@@ -48,8 +65,10 @@ def assert_safe_path(base_dir: str, target_path: str) -> str:
     if not base_dir or not target_path:
         return target_path
 
-    norm_base = os.path.normcase(os.path.abspath(base_dir))
-    norm_target = os.path.normcase(os.path.abspath(target_path))
+    # realpath 同时解析 Windows junction/symlink，不能让逻辑上位于项目内的
+    # 链接把递归移动或删除逃逸到项目外。
+    norm_base = os.path.normcase(os.path.realpath(os.path.abspath(base_dir)))
+    norm_target = os.path.normcase(os.path.realpath(os.path.abspath(target_path)))
 
     # 确保 base 路径结尾带分隔符，防止 /demo 与 /demo_evil 的前缀碰撞
     base_prefix = norm_base if norm_base.endswith(os.sep) else norm_base + os.sep

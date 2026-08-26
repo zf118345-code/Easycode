@@ -42,6 +42,7 @@ class DebugSession:
         # 状态
         self._is_paused = False
         self._is_running = False
+        self._previous_node_id = None
         self._current_node_id = None
         self._current_task_id = None
         self._pause_reason = None  # 'breakpoint' | 'step' | 'manual'
@@ -101,8 +102,11 @@ class DebugSession:
 
     def on_node_enter(self, node_id: str, task_id: str):
         """节点执行前回调（由 executor 调用）"""
-        self._current_node_id = node_id
-        self._current_task_id = task_id
+        with self._lock:
+            if node_id != self._current_node_id:
+                self._previous_node_id = self._current_node_id
+                self._current_node_id = node_id
+            self._current_task_id = task_id
 
         if self.should_pause(node_id):
             self._do_pause()
@@ -149,6 +153,7 @@ class DebugSession:
                 'session_id': self.session_id,
                 'is_paused': self._is_paused,
                 'is_running': self._is_running,
+                'previous_node_id': self._previous_node_id,
                 'current_node_id': self._current_node_id,
                 'current_task_id': self._current_task_id,
                 'pause_reason': self._pause_reason,

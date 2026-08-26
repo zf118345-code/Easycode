@@ -1,7 +1,7 @@
 <!-- frontend/src/components/canvas/CanvasView.vue
   统一画布组件（Step 3）：workflow 与 topology 两种模式共享全部交互。
   数据只读（props.tasks / props.edges），所有数据变更通过 emit 事件回传包装器执行；
-  交互状态（选中/断点/运行高亮/聚焦）经 useMainStore 读取。
+    交互状态（选中/断点/运行高亮/聚焦）经 useIdeStore 读取。
 -->
 <template>
     <div
@@ -12,39 +12,32 @@
         @contextmenu="onContextMenu">
         <!-- 视口变换层（网格由统一世界图层矢量绘制，不再用 CSS 背景） -->
         <div class="canvas-viewport" :style="viewportStyle">
+            <CanvasBlock
+                v-for="block in renderBlocks"
+                :key="block.block_id"
+                :block="block"
+                :selected="selectedBlockId === block.block_id"
+                :invalid="blockInteraction.invalid && blockInteraction.blockId === block.block_id"
+                :contained-count="blockNodeCounts.get(block.block_id) || 0"
+                @select="selectBlock"
+                @drag-start="startBlockDrag"
+                @resize-start="startBlockResize"
+                @delete="requestBlockDelete"
+                @contextmenu="openBlockContextMenu" />
             <!-- SVG 世界图层（矢量网格 + 连线，共享子组件） -->
             <CanvasEdgeLayer
-                :edges="computedEdges"
+                :edges="visibleComputedEdges"
                 :drawing-connection="drawingConnection"
                 :viewport="viewport"
                 :container-size="containerSize"
                 :hovered-port="hoveredPort"
-                @edge-click="onEdgeClick" />
-
-            <!-- 任务组包围框（仅 workflow） -->
-            <div
-                v-for="group in dynamicGroups"
-                :key="group.groupId"
-                :data-group-id="group.groupId"
-                :class="['canvas-group-box', { 'is-focused': activeFocusedGroupId === group.groupId }]"
-                :style="{
-                    left: group.box.x + 'px',
-                    top: group.box.y + 'px',
-                    width: group.box.w + 'px',
-                    height: group.box.h + 'px'
-                }">
-                <div
-                    class="group-title-badge"
-                    :data-group-id="group.groupId"
-                    @mousedown.stop="startGroupDrag($event, group.groupId)"
-                    @dblclick.stop="openGroupInspector($event, group)">
-                    <div class="group-name-text">📁 {{ group.groupName }}</div>
-                    <div class="group-sub-info">
-                        <span>间隔: {{ group.loopInterval || 0 }}s</span>
-                        <span>循环: {{ group.loopCount }}次</span>
-                    </div>
-                </div>
-            </div>
+                :editing-edge-id="editingEdgeId"
+                @edge-click="onEdgeClick"
+                @edge-hover="onEdgeHover"
+                @edge-double-click="addWaypointFromEdgeEvent"
+                @edge-contextmenu="openEdgeContextMenu"
+                @waypoint-focus="focusWaypoint"
+                @waypoint-mousedown="startWaypointDrag" />
 
             <!-- 节点拖拽预览框 -->
             <div
@@ -58,20 +51,22 @@
                     height: dragPreviewBox.h + 'px'
                 }">
                 <div class="preview-inner-tag">
-                    {{ dragPreviewBox.hasCollision ? '⚠️ 将自动推挤周围节点' : '✔️ 空间充足' }}
+                    <AlertTriangle v-if="dragPreviewBox.hasCollision" :size="13" />
+                    <CheckCircle2 v-else :size="13" />
+                    {{ dragPreviewBox.hasCollision ? '将自动推挤周围节点' : '空间充足' }}
                 </div>
             </div>
 
             <!-- 节点卡片层（共享子组件） -->
             <CanvasNodeCard
-                v-for="node in renderNodes"
+                v-for="node in visibleRenderNodes"
                 :key="node.node_id"
                 :node="node"
                 :selected="node.selected"
-                :is-active-debug="store.currentActiveNodeId === node.node_id && uiStore.hasBreakpoint(node.node_id)"
+                :is-active-debug="store.currentActiveNodeId === node.node_id"
                 :has-breakpoint="hasBreakpoints ? uiStore.hasBreakpoint(node.node_id) : false"
                 :current-project-path="store.currentProjectPath"
-                :blueprint-version="store.blueprint?.version || 0"
+                :asset-revision="store.assetPreviewVersion"
                 :mode="mode"
                 :hovered-port="hoveredPort"
                 @node-mousedown="onNodeMouseDown"
@@ -81,6 +76,7 @@
                 @toggle-breakpoint="handleToggleBreakpoint"
                 @start-connection="startConnection"
                 @row-hover="onRowHover"
+                @node-hover="onNodeHover"
                 @image-loaded="(data) => onImageLoaded(data)" />
         </div>
 
@@ -103,6 +99,13 @@
             <button class="toolbar-btn" @click="resetView" title="重置视图">
                 <Maximize :size="16" />
             </button>
+            <span class="toolbar-separator" aria-hidden="true" />
+            <button class="toolbar-btn" @click="createNodeAtViewportCenter" title="新建节点">
+                <CirclePlus :size="16" />
+            </button>
+            <button class="toolbar-btn" @click="createBlockAtViewportCenter" title="新建区块">
+                <PanelsTopLeft :size="16" />
+            </button>
             <span class="zoom-display">{{ Math.round(viewport.zoom * 100) }}%</span>
         </div>
 
@@ -116,37 +119,59 @@
             :is-paused="store.isPaused"
             :session-active="store.isRunning || store.isPaused"
             :show-debug-items="hasBreakpoints"
-            :has-groups="hasGroups"
+            :has-clipboard="hasSnapshotContent(clipboardSubgraph)"
+            :run-disabled="!canRunSelected"
             @create-and-connect="createAndConnectNode"
             @run-from-node="handleRunFromNode"
             @toggle-breakpoint="handleToggleBreakpoint"
-            @add-breakpoint-and-run="handleAddBreakpointAndRun"
             @resume-execution="store.resumeExecution"
             @step-over="store.stepOverExecution"
             @stop-execution="store.stopExecution"
             @delete-node="handleDeleteNode"
-            @delete-group="handleDeleteGroup"
+            @delete-block="requestSelectedBlockDelete"
+            @add-waypoint="addWaypointFromContextMenu"
+            @reset-edge-routing="resetSelectedEdgeRouting"
             @canvas-new-node="handleCanvasNewNode"
+            @canvas-new-block="handleCanvasNewBlock"
             @copy-node="handleCopyNode"
-            @paste-node="handlePasteNode" />
+            @paste-node="handlePasteNode"
+            @dismiss="dismissCanvasMenus" />
     </div>
 </template>
 
 <script setup>
     import { ref, computed, onMounted, onUnmounted, reactive, nextTick, watch } from 'vue'
-    import { useMainStore, useUiStore } from '@/stores'
+    import { useIdeStore, useUiStore } from '@/stores'
     import { ElMessage } from 'element-plus'
-    import { Plus, Minus, Maximize } from 'lucide-vue-next'
-    import { computeEdgePath, getSimpleOrthoPath } from '@/utils/canvasRouter'
+    import { Plus, Minus, Maximize, AlertTriangle, CheckCircle2, PanelsTopLeft, CirclePlus } from 'lucide-vue-next'
+    import {
+        computeEdgePath,
+        getSimpleOrthoPath,
+        getSimpleOrthoPoints,
+        registerRouteUsage
+    } from '@/utils/canvasRouter'
     import {
         normalizePortType, normalizeNodeList,
         getPortPosition, getArrowDirection
     } from '@/utils/nodeModel'
-    import { NODE_WIDTH, computeCanvasNodeHeight } from '@/utils/canvasShared'
+    import { NODE_WIDTH, computeCanvasNodeHeight, filterEdgesToViewport, filterNodesToViewport } from '@/utils/canvasShared'
     import { getNodeContentSpec, estimateNodeContentHeight } from '@/config/nodeRegistry'
     import { getNextZIndex } from '@/utils/zIndexManager'
-    import { deriveEdges, normalizePort } from '@/utils/workflowEdgeModel'
-    import { buildNodePorts } from '@/utils/portModel'
+    import { deriveEdges } from '@/utils/workflowEdgeModel'
+    import { buildNodePorts, getPrimarySourcePort, getSourcePortDescriptors } from '@/utils/portModel'
+    import { useRunFromSelection } from '@/composables/useRunFromSelection'
+    import { buildSubgraphSnapshot, findSelectionPath, hasSnapshotContent } from '@/utils/graphSelection'
+    import {
+        applyEdgeVisualStates,
+        applyLineJumps,
+        applyMicroLanes,
+        findNearestFreeWaypoint,
+        normalizeEdgeRouting
+    } from '@/utils/edgePresentation'
+    import {
+        normalizeBlock, containedNodeIds, canPlaceBlock, resizeBlockFromHandle,
+        findFreeBlockPosition, snapBlockValue
+    } from '@/utils/canvasBlocks'
 
     import { useCanvasKeyboard } from '@/composables/useCanvasKeyboard'
     import { useViewport } from '@/composables/useViewport'
@@ -158,6 +183,7 @@
     import CanvasNodeCard from '@/components/canvas/CanvasNodeCard.vue'
     import CanvasEdgeLayer from '@/components/canvas/CanvasEdgeLayer.vue'
     import CanvasContextMenu from '@/components/canvas/CanvasContextMenu.vue'
+    import CanvasBlock from '@/components/canvas/CanvasBlock.vue'
 
     useCanvasSharedStyle()
 
@@ -165,8 +191,8 @@
         mode: { type: String, default: 'workflow' },   // 'workflow' | 'topology'
         tasks: { type: Array, default: () => [] },
         edges: { type: Array, default: () => [] },
+        blocks: { type: Array, default: () => [] },
         availableNodeTypes: { type: Object, default: () => ({}) },
-        hasGroups: { type: Boolean, default: false },
         hasBreakpoints: { type: Boolean, default: false },
         // 快捷键回调（由包装器注入）
         onSave: { type: Function, default: null },
@@ -177,16 +203,21 @@
     })
 
     const emit = defineEmits([
-        'update-tasks',            // (tasks) 节点/组拖拽结算后的完整任务组数组（两 Tab 同构）
+        'update-tasks',            // (tasks) 节点拖拽结算后的完整流程数组（两 Tab 同构）
+        'update-blocks',
+        'update-geometry',
         'add-edge',                // ({source, target, source_port})
-        'remove-edge',             // ({sourceNodeId, legacyPort, candIndex, edge_id, targetNodeId})
+        'remove-edge',             // ({sourceNodeId, sourcePort, candIndex, edge_id, targetNodeId})
+        'update-edge-routing',     // ({edgeId, routing}) editor-only waypoints
         'create-node',             // ({nodeId, type, position, groupId, sourceNodeId, portType, params?, nodeName?})
+        'paste-subgraph',          // ({snapshot, position, groupId, sourceNodeId, sourcePort, sourcePortId})
         'delete-node',             // ({nodeId, taskId})
-        'delete-group'             // ({taskId})
+        'request-delete-block'
     ])
 
-    const store = useMainStore()
+    const store = useIdeStore()
     const uiStore = useUiStore()
+    const { canRun: canRunSelected, runSelectedNode } = useRunFromSelection()
 
     const containerRef = ref(null)
     const minimapCanvasRef = ref(null)
@@ -202,7 +233,7 @@
     // ===== 快捷键：Ctrl+S / Ctrl+A（Delete 由 globalKeydownHandler 统一处理以优先删边） =====
     useCanvasKeyboard({
         onSave: props.onSave || (async () => { await store.saveBlueprintImmediately(); ElMessage.success('蓝图已保存') }),
-        onDelete: () => {},
+        onDelete: false,
         onSelectAll: props.onSelectAll || (() => uiStore.selectAllNodes())
     })
 
@@ -212,55 +243,64 @@
     const dragComposable = useNodeDrag({
         viewport,
         getRenderNodes: () => renderNodes.value,
-        getDynamicGroups: () => dynamicGroups.value,
         GRID_SIZE,
         NODE_GRID_W
     })
     const {
         draggingNodeId, hasMoved, isCtrlHeldRef, dragPreviewBox,
-        localDraftPositions, draggedSourceGroupSnapshot, ghostPlaceholder,
-        selectionBox, resolveCollisionsAndPushOthers, calculateOverlapRatio,
-        resolveGroupCollisionsAndPushOthers
+        localDraftPositions, selectionBox, resolveCollisionsAndPushOthers
     } = dragComposable
 
     const { drawingConnection } = useConnection()
     const { customContextMenu, spawnMenu } = useContextMenu()
+    const dismissCanvasMenus = () => {
+        customContextMenu.visible = false
+        spawnMenu.value.visible = false
+    }
 
     const menuZIndex = ref(3000)
     const dynamicImageHeights = reactive({})
     const tallImageFlags = reactive({})
-    const selectedEdgeId = ref(null)
+    const selectedEdgeId = computed({
+        get: () => store.selectedEdgeIds?.[0] || null,
+        set: value => value ? store.selectEdge(value) : store.clearEdgeSelection()
+    })
     const hoveredPort = ref('')   // 行 ↔ 端口 ↔ 连线 悬停联动（存端口名，如 branch_1 / exit_0）
-    const localSelectedNodeIds = ref([])
+    const hoveredNodeId = ref('')
+    const hoveredEdgeId = ref('')
+    const editingEdgeId = ref('')
+    const waypointDrafts = reactive({})
+    const waypointDrag = reactive({ active: false, edgeId: '', waypointId: '', index: -1 })
+    const selectedWaypoint = reactive({ edgeId: '', waypointId: '' })
+    const selectedBlockId = ref(null)
+    const localBlocksOverride = ref(null)
+    const renderBlocks = computed(() => (localBlocksOverride.value || props.blocks || []).map(normalizeBlock))
+    const blockInteraction = reactive({ active: false, type: '', blockId: '', handle: '', startX: 0, startY: 0, initialBlock: null, nodeIds: [], initialNodePositions: new Map(), invalid: false })
+    watch(() => props.blocks, () => { if (!blockInteraction.active) localBlocksOverride.value = null }, { deep: true })
+    const localSelectedNodeIds = computed(() => store.selectedNodeIds || [])
     // 边路径缓存：key = 两端点(id/坐标/高度)+端口+选项+障碍签名（排除被拖节点）
     const routeCache = new Map()
 
     // ===== 选中状态（两 Tab 共用 uiStore 同一套选中） =====
     const syncSelectionToStore = () => {
-        store.selectNodes([...localSelectedNodeIds.value])
         store.setSelectedGroup(null)
     }
 
     const clearSelection = () => {
-        localSelectedNodeIds.value = []
         store.clearSelection()
         store.setSelectedGroup(null)
+        selectedBlockId.value = null
     }
 
     // 拖拽辅助状态
     const dragStartMouse = ref({ x: 0, y: 0 })
     const nodeInitialPos = ref({ x: 0, y: 0 })
+    const dragInitialPositions = ref(new Map())
 
-    // 拖拽结算期间用本地克隆覆盖数据源（保持 dynamicGroups 等 computed 响应式重算），
-    // 包装器完成保存后 props 更新、override 自动清空
+    // 拖拽结算期间用本地克隆覆盖数据源；包装器保存后 props 更新并清空 override。
     const localTasksOverride = ref(null)
     const dataTasks = computed(() => localTasksOverride.value || props.tasks)
     watch(() => props.tasks, () => { localTasksOverride.value = null })
-
-    const getNodeShortLabel = (nodeType) => {
-        const label = props.availableNodeTypes[nodeType] || nodeType
-        return label.replace(/^[^\u4e00-\u9fa5]+/, '').trim()
-    }
 
     const selectionBoxStyle = computed(() => {
         if (!containerRef.value) return {}
@@ -277,30 +317,9 @@
         }
     })
 
-    const activeFocusedGroupId = computed(() => {
-        if (draggingNodeId.value) {
-            const tasks = dataTasks.value || []
-            for (let i = 0; i < tasks.length; i++) {
-                if ((tasks[i].nodes || []).some(n => n.node_id === draggingNodeId.value)) {
-                    return `group_${tasks[i].task_id || i}`
-                }
-            }
-        }
-        if (localSelectedNodeIds.value.length > 0) {
-            const firstSelId = localSelectedNodeIds.value[0]
-            const tasks = dataTasks.value || []
-            for (let i = 0; i < tasks.length; i++) {
-                if ((tasks[i].nodes || []).some(n => n.node_id === firstSelId)) {
-                    return `group_${tasks[i].task_id || i}`
-                }
-            }
-        }
-        return null
-    })
+    // ===== 统一扁平图适配（主流程、函数、页面地图共用渲染/交互层） =====
 
-    // ===== 统一扁平数据流（两数据源同构 {tasks, edges}，渲染/交互层完全共用） =====
-
-    // 扁平节点：展开任务组为扁平数组（workflow 与 topology 结构一致）
+    // CanvasPage 将当前唯一活动图包装为单元素 tasks，供既有渲染层消费。
     const flatNodes = computed(() => {
         const tasks = dataTasks.value || []
         const list = []
@@ -316,14 +335,21 @@
         return list
     })
 
-    // 扁平边：统一结构 { sourceNodeId, targetNodeId, legacyPort, isFailFlag, edgeId?, extra }
+    // 扁平边：统一结构 { sourceNodeId, targetNodeId, sourcePort, isFailFlag, edgeId?, extra }
     const flatEdges = computed(() => deriveEdges(props.edges))
+    const selectedNodeIdSet = computed(() => new Set(localSelectedNodeIds.value))
 
     const FAILURE_PORT_TYPES = ['image_recognition', 'ocr_recognition', 'branch', 'logic_check']
 
     // 行/端口悬停联动：候选行、出口行、端口悬停时高亮对应端口与其出边（EdgeLayer 消费 hoveredPort）
     const onRowHover = (portName) => {
         hoveredPort.value = portName || ''
+    }
+    const onNodeHover = nodeId => {
+        hoveredNodeId.value = nodeId || ''
+    }
+    const onEdgeHover = edge => {
+        hoveredEdgeId.value = edge?.id || ''
     }
 
     // 内容区高度（注册表驱动，两模式同一套估算；图片节点用加载后的实际宽高比二次修正；
@@ -341,14 +367,18 @@
     // 渲染节点（两模式单一实现：统一遍历扁平节点流，尺寸/端口/选中逻辑完全共用）
     const renderNodes = computed(() => {
         const raw = flatNodes.value.map(n => {
-            const ports = buildNodePorts(n, props.edges, FAILURE_PORT_TYPES)
+            const targetFunction = (n.node_type || n.type) === 'call_function'
+                ? (store.blueprint?.functions || []).find(item => item.function_id === n.params?.function_id)
+                : null
+            const portNode = targetFunction ? { ...n, _functionOutcomes: targetFunction.outcomes || [] } : n
+            const ports = buildNodePorts(portNode, props.edges, FAILURE_PORT_TYPES)
             const rawPos = localDraftPositions[n.node_id] || n.position || n._fallbackPos || { x: 0, y: 0 }
             const gridX = Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE
             const gridY = Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
             const w = NODE_WIDTH
             const h = computeCanvasNodeHeight(resolveContentHeight(n, ports.dynamic.length), ports.dynamic.length)
             return {
-                ...n,
+                ...portNode,
                 node_type: n.node_type || n.type,
                 node_name: n.node_name || n.label || n.page_id || '未命名',
                 position: { x: gridX, y: gridY },
@@ -356,12 +386,26 @@
                 h,
                 size: { w, h },
                 ports,
-                selected: localSelectedNodeIds.value.includes(n.node_id)
+                selected: selectedNodeIdSet.value.has(n.node_id)
             }
         })
         return normalizeNodeList(raw)
     })
 
+    const renderNodeById = computed(() => new Map(renderNodes.value.map(node => [node.node_id, node])))
+    const blockNodeCounts = computed(() => new Map(
+        renderBlocks.value.map(block => [block.block_id, containedNodeIds(block, renderNodes.value).length])
+    ))
+    const visibleRenderNodes = computed(() => {
+        // Keep full geometry for routing/minimap, but mount only nearby cards.
+        return filterNodesToViewport(
+            renderNodes.value,
+            viewport.value,
+            containerSize,
+            selectedNodeIdSet.value,
+            draggingNodeId.value
+        )
+    })
     const onImageLoaded = (data) => {
         const { nodeId, width: naturalW, height: naturalH, cardInnerWidth } = data
         const ratio = naturalH / naturalW
@@ -399,81 +443,105 @@
             viewport.value.x = containerW / 2 - centerX * viewport.value.zoom
             viewport.value.y = containerH / 2 - centerY * viewport.value.zoom
 
-            drawMinimap()
+            scheduleMinimapDraw()
         })
     }
 
-    const dynamicGroups = computed(() => {
-        if (!props.hasGroups) return []
-        const tasks = dataTasks.value || []
-        let groups = []
-        const PADDING_GRIDS = 3
-        const PADDING_PX = PADDING_GRIDS * GRID_SIZE
+    const uniqueBlockName = () => {
+        const names = new Set(renderBlocks.value.map(block => block.name))
+        if (!names.has('新区块')) return '新区块'
+        let suffix = 1
+        while (names.has(`新区块${suffix}`)) suffix += 1
+        return `新区块${suffix}`
+    }
 
-        const allRenderedNodes = renderNodes.value
+    const clientToWorld = (clientX, clientY) => {
+        const rect = containerRef.value?.getBoundingClientRect?.() || { left: 0, top: 0 }
+        return {
+            x: (clientX - rect.left - viewport.value.x) / viewport.value.zoom,
+            y: (clientY - rect.top - viewport.value.y) / viewport.value.zoom
+        }
+    }
 
-        tasks.forEach((task, tIndex) => {
-            const groupId = `group_${task.task_id || tIndex}`
-            const groupName = task.task_name || `任务组 ${tIndex + 1}`
-
-            const taskNodeIds = (task.nodes || []).map(n => n.node_id)
-            const groupNodes = allRenderedNodes.filter(n => {
-                if (!taskNodeIds.includes(n.node_id)) return false
-                if (n.node_id === draggingNodeId.value && isCtrlHeldRef.value) {
-                    return false
-                }
-                return true
-            })
-
-            let effectiveNodes = [...groupNodes]
-            if (ghostPlaceholder.value && draggingNodeId.value && isCtrlHeldRef.value) {
-                const isNodeInThisGroup = taskNodeIds.includes(draggingNodeId.value)
-                if (isNodeInThisGroup) {
-                    effectiveNodes.push(ghostPlaceholder.value)
-                }
-            }
-
-            let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-
-            if (effectiveNodes.length > 0) {
-                effectiveNodes.forEach((node) => {
-                    minX = Math.min(minX, node.position.x)
-                    minY = Math.min(minY, node.position.y)
-                    maxX = Math.max(maxX, node.position.x + node.w)
-                    maxY = Math.max(maxY, node.position.y + node.h)
-                })
-
-                const rawBoxX = minX - PADDING_PX
-                const rawBoxY = minY - PADDING_PX - 24
-                const rawBoxW = (maxX - minX) + PADDING_PX * 2
-                const rawBoxH = (maxY - minY) + PADDING_PX * 2 + 24
-
-                const boxX = Math.round(rawBoxX / GRID_SIZE) * GRID_SIZE
-                const boxY = Math.round(rawBoxY / GRID_SIZE) * GRID_SIZE
-                const boxW = Math.max(Math.round(rawBoxW / GRID_SIZE) * GRID_SIZE, 220)
-                const boxH = Math.max(Math.round(rawBoxH / GRID_SIZE) * GRID_SIZE, 120)
-
-                groups.push({
-                    groupId,
-                    groupName,
-                    taskId: task.task_id,
-                    loopCount: task.loop_count || 1,
-                    loopInterval: task.loop_interval || 0,
-                    box: { x: boxX, y: boxY, w: boxW, h: boxH }
-                })
-            } else {
-                groups.push({
-                    groupId,
-                    groupName,
-                    taskId: task.task_id,
-                    loopCount: task.loop_count || 1,
-                    loopInterval: task.loop_interval || 0,
-                    box: { x: 60, y: 60, w: 240, h: 140 }
-                })
-            }
+    const createBlock = (origin) => {
+        const position = findFreeBlockPosition(renderBlocks.value, origin)
+        const block = normalizeBlock({
+            block_id: `block_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+            name: uniqueBlockName(),
+            description: '',
+            color: 'orange',
+            ...position,
+            width: 400,
+            height: 260
         })
-        return groups
+        selectedBlockId.value = block.block_id
+        store.clearSelection()
+        emit('update-blocks', [...renderBlocks.value, block])
+        ElMessage.success(`已创建区块“${block.name}”`)
+    }
+
+    const createBlockAtViewportCenter = () => {
+        const center = {
+            x: ((containerRef.value?.clientWidth || 0) / 2 - viewport.value.x) / viewport.value.zoom - 200,
+            y: ((containerRef.value?.clientHeight || 0) / 2 - viewport.value.y) / viewport.value.zoom - 130
+        }
+        createBlock(center)
+    }
+
+    const handleCanvasNewBlock = () => {
+        const origin = clientToWorld(customContextMenu.clientX, customContextMenu.clientY)
+        customContextMenu.visible = false
+        createBlock({ x: origin.x - 200, y: origin.y - 24 })
+    }
+
+    const selectBlock = blockId => {
+        selectedBlockId.value = blockId
+        store.clearSelection()
+        selectedEdgeId.value = null
+    }
+
+    const startBlockInteraction = (event, block, type, handle = '') => {
+        selectBlock(block.block_id)
+        const nodeIds = type === 'drag' ? containedNodeIds(block, renderNodes.value) : []
+        Object.assign(blockInteraction, {
+            active: true,
+            type,
+            blockId: block.block_id,
+            handle,
+            startX: event.clientX,
+            startY: event.clientY,
+            initialBlock: normalizeBlock(block),
+            nodeIds,
+            initialNodePositions: new Map(nodeIds.map(id => [id, { ...(renderNodeById.value.get(id)?.position || { x: 0, y: 0 }) }])),
+            invalid: false
+        })
+        localBlocksOverride.value = renderBlocks.value.map(item => ({ ...item }))
+    }
+
+    const startBlockDrag = (event, block) => startBlockInteraction(event, block, 'drag')
+    const startBlockResize = (event, block, handle) => startBlockInteraction(event, block, 'resize', handle)
+
+    const requestBlockDelete = block => emit('request-delete-block', {
+        block: normalizeBlock(block),
+        containedNodeIds: containedNodeIds(block, renderNodes.value)
     })
+    const requestSelectedBlockDelete = () => {
+        customContextMenu.visible = false
+        const block = renderBlocks.value.find(item => item.block_id === selectedBlockId.value)
+        if (block) requestBlockDelete(block)
+    }
+    const openBlockContextMenu = (event, block) => {
+        selectBlock(block.block_id)
+        customContextMenu.visible = true
+        customContextMenu.targetType = 'block'
+        customContextMenu.targetId = block.block_id
+        customContextMenu.targetName = block.name
+        customContextMenu.clientX = event.clientX
+        customContextMenu.clientY = event.clientY
+        customContextMenu.x = event.clientX + 8
+        customContextMenu.y = event.clientY + 8
+        menuZIndex.value = getNextZIndex()
+    }
 
     const onContextMenu = (e) => {
         e.preventDefault()
@@ -485,6 +553,9 @@
             const nodeId = nodeCard.getAttribute('data-node-id')
             const nodeObj = renderNodes.value.find(n => n.node_id === nodeId)
             if (nodeObj) {
+                if (!localSelectedNodeIds.value.includes(nodeObj.node_id)) {
+                    store.selectNode(nodeObj.node_id)
+                }
                 customContextMenu.visible = true
                 customContextMenu.x = e.clientX
                 customContextMenu.y = e.clientY
@@ -497,58 +568,14 @@
             }
         }
 
-        if (props.hasGroups) {
-            const groupBox = e.target.closest('.canvas-group-box') || e.target.closest('.group-title-badge')
-            if (groupBox) {
-                const groupId = groupBox.getAttribute('data-group-id')
-                const groupObj = dynamicGroups.value.find(g => g.groupId === groupId)
-                if (groupObj) {
-                    customContextMenu.visible = true
-                    customContextMenu.x = e.clientX
-                    customContextMenu.y = e.clientY
-                    customContextMenu.targetType = 'group'
-                    customContextMenu.targetId = groupObj.taskId
-                    customContextMenu.targetName = groupObj.groupName
-                    customContextMenu.clientX = e.clientX
-                    customContextMenu.clientY = e.clientY
-                    return
-                }
-            }
-        }
-
-        if (!containerRef.value) return
-        const rect = containerRef.value.getBoundingClientRect()
-        const clientX = e.clientX - rect.left
-        const clientY = e.clientY - rect.top
-        const worldX = (clientX - viewport.value.x) / viewport.value.zoom
-        const worldY = (clientY - viewport.value.y) / viewport.value.zoom
-
-        let hitGroup = null
-        if (props.hasGroups) {
-            for (const g of dynamicGroups.value) {
-                const box = g.box
-                if (worldX >= box.x && worldX <= box.x + box.w && worldY >= box.y && worldY <= box.y + box.h) {
-                    hitGroup = g
-                    break
-                }
-            }
-        }
-
         customContextMenu.visible = true
         customContextMenu.x = e.clientX
         customContextMenu.y = e.clientY
         customContextMenu.clientX = e.clientX
         customContextMenu.clientY = e.clientY
-
-        if (hitGroup) {
-            customContextMenu.targetType = 'canvas_in_group'
-            customContextMenu.targetId = hitGroup.taskId
-            customContextMenu.targetName = hitGroup.groupName
-        } else {
-            customContextMenu.targetType = 'canvas_public'
-            customContextMenu.targetId = null
-            customContextMenu.targetName = ''
-        }
+        customContextMenu.targetType = 'canvas_public'
+        customContextMenu.targetId = null
+        customContextMenu.targetName = ''
     }
 
     // ===== 调试相关（仅 workflow） =====
@@ -563,40 +590,22 @@
     }
 
     const handleRunFromNode = async () => {
-        if (!props.hasGroups) return
-        const nodeId = customContextMenu.targetId
         customContextMenu.visible = false
-        if (!nodeId) return
-
-        const targetTaskId = findTargetTaskId(nodeId)
-        if (!targetTaskId) {
-            ElMessage.error('未找到该节点所属的任务组')
-            return
-        }
-
-        try {
-            ElMessage.info('正在从当前节点启动任务...')
-            const result = await store.runTask(targetTaskId, nodeId)
-            if (result && result.status === 'started') {
-                ElMessage.success('任务已成功从当前节点启动！')
-            } else {
-                ElMessage.error('执行失败')
-            }
-        } catch (err) {
-            ElMessage.error('执行请求失败: ' + err.message)
-        }
+        await runSelectedNode()
     }
 
     function openNodeContextMenu(e, node) {
+        if (!localSelectedNodeIds.value.includes(node.node_id)) {
+            store.selectNode(node.node_id)
+        }
         customContextMenu.visible = true
         customContextMenu.targetType = 'node'
         customContextMenu.targetId = node.node_id
         customContextMenu.targetName = node.node_name
         customContextMenu.clientX = e.clientX
         customContextMenu.clientY = e.clientY
-        const rect = containerRef.value?.getBoundingClientRect?.()
-        customContextMenu.x = rect ? (e.clientX - rect.left) + 8 : e.offsetX
-        customContextMenu.y = rect ? (e.clientY - rect.top) + 8 : e.offsetY
+        customContextMenu.x = e.clientX + 8
+        customContextMenu.y = e.clientY + 8
         menuZIndex.value = getNextZIndex()
         spawnMenu.value.visible = false
     }
@@ -606,30 +615,8 @@
         const added = uiStore.toggleBreakpoint(nodeId)
         customContextMenu.visible = false
         ElMessage.info(
-            added ? `🔴 已设置断点：${nodeId}` : `⚪ 已移除断点：${nodeId}`
+            added ? `已设置断点：${nodeId}` : `已移除断点：${nodeId}`
         )
-    }
-
-    async function handleAddBreakpointAndRun(nodeId) {
-        if (!props.hasBreakpoints || !nodeId) return
-        uiStore.enableBreakpoint(nodeId)
-        customContextMenu.visible = false
-
-        const targetTaskId = findTargetTaskId(nodeId)
-        if (!targetTaskId) {
-            ElMessage.error('未找到该节点所属任务组')
-            return
-        }
-        try {
-            const result = await store.runTask(targetTaskId)
-            if (result?.status === 'started') {
-                ElMessage.success('任务已启动，将在设置的断点处暂停')
-            } else {
-                ElMessage.error('启动失败')
-            }
-        } catch (err) {
-            ElMessage.error('启动失败：' + err.message)
-        }
     }
 
     const handleDeleteNode = () => {
@@ -639,17 +626,6 @@
 
         const taskId = findTargetTaskId(nodeId)
         emit('delete-node', { nodeId, taskId })
-        clearSelection()
-        ElMessage.success('节点已删除')
-    }
-
-    const handleDeleteGroup = () => {
-        if (!props.hasGroups) return
-        const taskId = customContextMenu.targetId
-        customContextMenu.visible = false
-        if (!taskId) return
-        emit('delete-group', { taskId })
-        ElMessage.success('任务组已删除')
     }
 
     const handleCanvasNewNode = () => {
@@ -659,56 +635,73 @@
             x: customContextMenu.x,
             y: customContextMenu.y,
             sourceNodeId: null,
-            portType: 'succ',
+            portType: 'success',
             clientX: customContextMenu.clientX,
             clientY: customContextMenu.clientY
         }
     }
 
-    // ===== 节点复制 / 粘贴（Ctrl+C / Ctrl+V 与右键菜单） =====
-    const clipboardNode = ref(null)   // 剪贴板：节点快照 {node_type, node_name, params, delay_before, loop_count}
+    const createNodeAtViewportCenter = () => {
+        const rect = containerRef.value?.getBoundingClientRect?.()
+        if (!rect) return
+        customContextMenu.visible = false
+        const clientX = rect.left + rect.width / 2
+        const clientY = rect.top + rect.height / 2
+        spawnMenu.value = {
+            visible: true,
+            x: clientX,
+            y: clientY,
+            sourceNodeId: null,
+            portType: 'success',
+            sourcePortId: 'success',
+            clientX,
+            clientY
+        }
+    }
+
+    // ===== 子图复制 / 粘贴（Ctrl+C / Ctrl+V 与右键菜单） =====
+    const clipboardSubgraph = ref(null)
     const lastMousePos = ref({ x: 0, y: 0 })   // 最近鼠标位置（世界坐标），Ctrl+V 落点兜底
 
     const handleCopyNode = () => {
         const targetId = customContextMenu.targetId || localSelectedNodeIds.value[0]
-        const node = renderNodes.value.find(n => n.node_id === targetId)
-        if (!node) {
+        const selectedIds = localSelectedNodeIds.value.includes(targetId)
+            ? [...localSelectedNodeIds.value]
+            : (targetId ? [targetId] : [])
+        const snapshot = buildSubgraphSnapshot(dataTasks.value, props.edges, selectedIds)
+        if (!hasSnapshotContent(snapshot)) {
             ElMessage.warning('请先选中要复制的节点')
             return
         }
-        clipboardNode.value = {
-            node_type: node.node_type,
-            node_name: node.node_name,
-            params: JSON.parse(JSON.stringify(node.params || {})),
-            delay_before: node.delay_before,
-            loop_count: node.loop_count
-        }
+        clipboardSubgraph.value = snapshot
         customContextMenu.visible = false
-        ElMessage.success(`已复制节点 [${node.node_name}]，Ctrl+V 或右键粘贴`)
+        ElMessage.success(`已复制 ${snapshot.nodes.length} 个节点及 ${snapshot.edges.length} 条内部连线`)
     }
 
     const handlePasteNode = () => {
         customContextMenu.visible = false
-        if (!clipboardNode.value) {
-            ElMessage.warning('剪贴板为空，请先复制节点 (Ctrl+C)')
+        if (!hasSnapshotContent(clipboardSubgraph.value)) {
+            ElMessage.warning('剪贴板为空，请先复制节点或子图 (Ctrl+C)')
             return
         }
         pasteClipboardNode()
     }
 
     const pasteClipboardNode = () => {
-        if (!clipboardNode.value) return
-        const snap = clipboardNode.value
-        const nodeId = `node_${Date.now()}${Math.random().toString(36).slice(2, 5)}`
+        if (!hasSnapshotContent(clipboardSubgraph.value)) return
         let position
         let sourceNodeId = null
-        let portType = 'succ'
+        let sourcePort = 'success'
+        let sourcePortId = 'success'
 
         if (localSelectedNodeIds.value.length === 1) {
-            // 选中一个节点：粘贴到其成功线后面（右侧 + 自动连线 success）
+            // 选中一个节点：把复制子图的首节点插入其主出口。
             const sel = renderNodes.value.find(n => n.node_id === localSelectedNodeIds.value[0])
             if (sel) {
                 sourceNodeId = sel.node_id
+                const primaryPort = getPrimarySourcePort(sel, props.edges)
+                sourcePort = primaryPort.key
+                sourcePortId = primaryPort.stableId || primaryPort.key
                 position = {
                     x: Math.round((sel.position.x + sel.w + 40) / GRID_SIZE) * GRID_SIZE,
                     y: sel.position.y
@@ -726,69 +719,80 @@
             }
         }
 
-        const groupId = customContextMenu.targetType === 'canvas_in_group' ? customContextMenu.targetId : null
-        emit('create-node', {
-            nodeId,
-            type: snap.node_type,
+        emit('paste-subgraph', {
+            snapshot: JSON.parse(JSON.stringify(clipboardSubgraph.value)),
             position,
-            groupId,
             sourceNodeId,
-            portType,
-            params: snap.params,
-            nodeName: snap.node_name,
-            delayBefore: snap.delay_before,
-            loopCount: snap.loop_count
+            sourcePort,
+            sourcePortId
         })
-        localSelectedNodeIds.value = [nodeId]
-        syncSelectionToStore()
-        ElMessage.success(`已粘贴节点 [${snap.node_name}]`)
     }
 
-    // ===== 连线计算 =====
-    const computedEdges = computed(() => {
+    // ===== 连线计算：几何与视觉状态分离，选择/执行变化不再触发 A* =====
+    const routedEdges = computed(() => {
         const allNodes = renderNodes.value
         const activeDraggingId = draggingNodeId.value
         const isActuallyMoving = hasMoved.value
+        const movingIds = activeDraggingId && isActuallyMoving && localSelectedNodeIds.value.includes(activeDraggingId)
+            ? new Set(localSelectedNodeIds.value)
+            : new Set(activeDraggingId ? [activeDraggingId] : [])
 
-        let edges = []
         const routerNodes = normalizeNodeList(allNodes)
+        const segmentCosts = new Map()
+        const crossingCosts = new Map()
+        const edges = []
 
         // 障碍签名：排除正在拖拽的节点（拖拽期间其他边形状稳定，落定后签名变化全量重算）
         let obstacleSig = ''
         for (const n of allNodes) {
-            if (activeDraggingId && isActuallyMoving && n.node_id === activeDraggingId) continue
+            if (activeDraggingId && isActuallyMoving && movingIds.has(n.node_id)) continue
             obstacleSig += `${n.node_id}:${n.position.x},${n.position.y},${n.w},${n.h}|`
         }
 
-        const pushEdge = ({ sourceNode, targetNode, legacyPort, edgeIdBase, isFailFlag, extra = {}, edgeId, candIndex }) => {
-            const standardPort = normalizePortType(legacyPort)
+        const stableRoutingSig = (props.edges || []).map(edge => {
+            const routing = normalizeEdgeRouting(edge.routing)
+            return `${edge.edge_id}:${routing.waypoints.map(point => `${point.id}@${point.x},${point.y}`).join(';')}`
+        }).join('|')
+        const edgeSetSig = flatEdges.value.map(edge => `${edge.edgeId}:${edge.sourceNodeId}>${edge.targetNodeId}:${edge.sourcePort}`).join('|')
+
+        const pushEdge = ({ sourceNode, targetNode, sourcePort, edgeIdBase, isFailFlag, extra = {}, edgeId, candIndex }) => {
+            const standardPort = normalizePortType(sourcePort)
             const isThisEdgeDragging = activeDraggingId && isActuallyMoving &&
-                (sourceNode.node_id === activeDraggingId || targetNode.node_id === activeDraggingId)
+                (movingIds.has(sourceNode.node_id) || movingIds.has(targetNode.node_id))
+            const routing = normalizeEdgeRouting(
+                waypointDrafts[edgeIdBase]
+                    ? { mode: 'manual', waypoints: waypointDrafts[edgeIdBase] }
+                    : extra?.routing
+            )
 
             let path = ''
             let arrowDir = 'down'
-            let startPt = null
-            let endPt = null
             let rawPixelPoints = []
 
             const computeRoute = () => {
-                const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort)
+                const result = computeEdgePath(sourceNode, targetNode, routerNodes, standardPort, {
+                    waypoints: routing.waypoints,
+                    segmentCosts,
+                    crossingCosts
+                })
                 path = result.pathD
                 arrowDir = result.arrowDir
                 rawPixelPoints = result.points || []
-                if (rawPixelPoints.length) {
-                    startPt = rawPixelPoints[0]
-                    endPt = rawPixelPoints[rawPixelPoints.length - 1]
-                }
             }
 
             try {
                 if (isThisEdgeDragging) {
-                    // 拖拽中：被拖节点相关边每帧全量绕障重算（A* 网格小，亚毫秒级）
-                    computeRoute()
+                    // 拖拽热路径只画轻量正交预览，松手后再恢复完整 A*。
+                    const start = getPortPosition(sourceNode, standardPort)
+                    const end = getPortPosition(targetNode, 'entry')
+                    rawPixelPoints = getSimpleOrthoPoints(start, end, standardPort)
+                    path = getSimpleOrthoPath(start, end, standardPort)
+                    arrowDir = getArrowDirection(rawPixelPoints)
                 } else {
-                    // 静态：端点+障碍签名缓存，拖拽其他节点时命中缓存零重算
+                    // 静态：几何、边集合和持久转接点共同作为缓存签名。
                     const key = [
+                        edgeSetSig, stableRoutingSig,
+                        routing.waypoints.map(point => `${point.id}@${point.x},${point.y}`).join(';'),
                         sourceNode.node_id, sourceNode.position.x, sourceNode.position.y, sourceNode.h,
                         targetNode.node_id, targetNode.position.x, targetNode.position.y, targetNode.h,
                         standardPort, obstacleSig
@@ -798,24 +802,22 @@
                         path = cached.path
                         arrowDir = cached.arrowDir
                         rawPixelPoints = cached.rawPixelPoints
-                        startPt = rawPixelPoints[0] || null
-                        endPt = rawPixelPoints[rawPixelPoints.length - 1] || null
                     } else {
                         computeRoute()
-                        if (routeCache.size > 2000) routeCache.clear()
+                        if (routeCache.size > 1500) routeCache.clear()
                         routeCache.set(key, { path, arrowDir, rawPixelPoints })
                     }
                 }
             } catch (e) {
                 console.warn('[CanvasView] computeEdgePath 失败，使用兜底路径:', e)
-                const sPt = getPortPosition(sourceNode, legacyPort)
+                const sPt = getPortPosition(sourceNode, sourcePort)
                 const ePt = getPortPosition(targetNode, 'entry')
-                startPt = sPt
-                endPt = ePt
                 path = getSimpleOrthoPath(sPt, ePt, standardPort)
                 rawPixelPoints = [sPt, ePt]
                 arrowDir = getArrowDirection(rawPixelPoints)
             }
+
+            registerRouteUsage(segmentCosts, crossingCosts, rawPixelPoints)
 
             const isFail = !!isFailFlag
             const markerPrefix = isFail ? 'fail' : 'succ'
@@ -824,25 +826,31 @@
                 id: edgeIdBase,
                 sourceNodeId: sourceNode.node_id,
                 targetNodeId: targetNode.node_id,
-                typeFlag: legacyPort === 'succ' ? 'succ' : (legacyPort === 'fail' ? 'fail' : 'branch'),
-                legacyPort,
+                typeFlag: sourcePort === 'success' ? 'success' : (sourcePort === 'failure' ? 'failure' : 'branch'),
+                sourcePort,
                 candIndex: candIndex ?? extra?.candIndex,
                 edgeId,
                 ...extra,
                 path,
                 isFail,
                 markerUrl: `url(#arrow-${markerPrefix}-${arrowDir})`,
-                selected: selectedEdgeId.value === edgeIdBase,
-                rawPixelPoints
+                selected: false,
+                rawPixelPoints,
+                waypoints: routing.waypoints
             })
         }
 
-        // 统一扁平边流：同走廊多边用边序号做 edgeIdBase 去重后缀（不再做平行偏移）
+        // 稳定顺序保证通道成本、动态端口和微车道不会因数组渲染顺序抖动。
         const corridorCount = {}
-        const flatEdgeList = flatEdges.value
+        const flatEdgeList = [...flatEdges.value].sort((a, b) => {
+            const sourceCompare = String(a.sourceNodeId).localeCompare(String(b.sourceNodeId), 'zh-CN', { numeric: true })
+            const portCompare = String(a.sourcePort).localeCompare(String(b.sourcePort), 'zh-CN', { numeric: true })
+            const targetCompare = String(a.targetNodeId).localeCompare(String(b.targetNodeId), 'zh-CN', { numeric: true })
+            return sourceCompare || portCompare || targetCompare || String(a.edgeId).localeCompare(String(b.edgeId))
+        })
         for (const derived of flatEdgeList) {
-            const sourceNode = allNodes.find(n => n.node_id === derived.sourceNodeId)
-            const targetNode = allNodes.find(n => n.node_id === derived.targetNodeId)
+            const sourceNode = renderNodeById.value.get(derived.sourceNodeId)
+            const targetNode = renderNodeById.value.get(derived.targetNodeId)
             if (!sourceNode || !targetNode) continue
 
             const key = `${derived.sourceNodeId}-${derived.targetNodeId}`
@@ -851,7 +859,7 @@
             pushEdge({
                 sourceNode,
                 targetNode,
-                legacyPort: derived.legacyPort,
+                sourcePort: derived.sourcePort,
                 edgeIdBase: derived.edgeIdBase || `e_${derived.sourceNodeId}_${derived.targetNodeId}_${corridorCount[key]}`,
                 isFailFlag: derived.isFailFlag,
                 edgeId: derived.edgeId,
@@ -860,9 +868,24 @@
             })
         }
 
+        return applyLineJumps(applyMicroLanes(edges))
+    })
+
+    const computedEdges = computed(() => {
+        const edges = applyEdgeVisualStates(routedEdges.value, {
+            selectedNodeIds: localSelectedNodeIds.value,
+            hoveredNodeId: hoveredNodeId.value,
+            selectedEdgeIds: selectedEdgeId.value
+                ? [selectedEdgeId.value]
+                : (hoveredEdgeId.value ? [hoveredEdgeId.value] : (store.selectedEdgeIds || [])),
+            previousActiveNodeId: store.previousActiveNodeId,
+            currentActiveNodeId: store.currentActiveNodeId,
+            executionRunning: store.isRunning
+        })
+
         // 用户实时拉线预览：无箭头（终点用发光球，由 CanvasEdgeLayer 渲染）
         if (drawingConnection.value.active) {
-            const sourceNode = allNodes.find(n => n.node_id === drawingConnection.value.sourceNodeId)
+            const sourceNode = renderNodeById.value.get(drawingConnection.value.sourceNodeId)
             if (sourceNode) {
                 const portType = drawingConnection.value.portType
                 const startPt = getPortPosition(sourceNode, portType)
@@ -873,7 +896,7 @@
                 edges.push({
                     id: 'temp_drawing',
                     path: pathStr,
-                    isFail: portType === 'fail' || portType === 'failure',
+                    isFail: portType === 'failure',
                     markerUrl: '',
                     selected: false,
                     gridPoints: [],
@@ -881,11 +904,24 @@
                 })
             }
         }
-
         return edges
     })
 
+    const visibleComputedEdges = computed(() => filterEdgesToViewport(
+        computedEdges.value,
+        viewport.value,
+        containerSize,
+        renderNodes.value.length > 250 ? 250 : Number.MAX_SAFE_INTEGER
+    ))
+
     // ===== 小地图 =====
+    let minimapFrame = 0
+    const readCanvasToken = (name, fallback) => {
+        const host = containerRef.value
+        if (!host || typeof globalThis.getComputedStyle !== 'function') return fallback
+        return globalThis.getComputedStyle(host).getPropertyValue(name).trim() || fallback
+    }
+
     const drawMinimap = () => {
         const canvas = minimapCanvasRef.value
         if (!canvas || !containerRef.value) return
@@ -894,12 +930,11 @@
         const mapH = canvas.height
 
         ctx.clearRect(0, 0, mapW, mapH)
-        ctx.fillStyle = '#1e1f29'
+        ctx.fillStyle = readCanvasToken('--app-bg-panel', '#1a1a18')
         ctx.fillRect(0, 0, mapW, mapH)
 
         const nodes = renderNodes.value
-        const groups = dynamicGroups.value
-        if (!nodes.length && !groups.length) return
+        if (!nodes.length) return
 
         let minX = -1000, minY = -1000, maxX = 3000, maxY = 3000
         nodes.forEach(n => {
@@ -920,16 +955,11 @@
             y: (wy - minY) * mapScale + (mapH - worldH * mapScale) / 2
         })
 
-        ctx.strokeStyle = '#4ed19c33'
-        ctx.lineWidth = 1
-        groups.forEach(g => {
-            const p = toMapCoord(g.box.x, g.box.y)
-            ctx.strokeRect(p.x, p.y, g.box.w * mapScale, g.box.h * mapScale)
-        })
-
         nodes.forEach(n => {
             const p = toMapCoord(n.position.x, n.position.y)
-            ctx.fillStyle = n.selected ? '#409EFF' : '#4ed19c'
+            ctx.fillStyle = n.selected
+                ? readCanvasToken('--app-color-primary', '#d95417')
+                : readCanvasToken('--app-text-placeholder', '#6d6d66')
             ctx.fillRect(p.x, p.y, Math.max(4, n.w * mapScale), Math.max(3, n.h * mapScale))
         })
 
@@ -941,11 +971,20 @@
         const viewH = containerH / viewport.value.zoom
 
         const vpCoord = toMapCoord(viewLeft, viewTop)
-        ctx.strokeStyle = '#409EFF'
+        ctx.strokeStyle = readCanvasToken('--app-color-primary', '#d95417')
         ctx.lineWidth = 1.5
         ctx.strokeRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
-        ctx.fillStyle = 'rgba(64, 158, 255, 0.1)'
+        ctx.fillStyle = readCanvasToken('--app-color-primary-dim', 'rgba(217, 84, 23, 0.14)')
         ctx.fillRect(vpCoord.x, vpCoord.y, viewW * mapScale, viewH * mapScale)
+    }
+
+    const scheduleMinimapDraw = () => {
+        if (!store.uiState.minimapExpanded || minimapFrame) return
+        const requestFrame = globalThis.requestAnimationFrame || (callback => globalThis.setTimeout(callback, 16))
+        minimapFrame = requestFrame(() => {
+            minimapFrame = 0
+            drawMinimap()
+        })
     }
 
     const onMinimapClick = (e) => {
@@ -976,20 +1015,67 @@
 
         viewport.value.x = -(targetWorldX - containerW / (2 * viewport.value.zoom)) * viewport.value.zoom
         viewport.value.y = -(targetWorldY - containerH / (2 * viewport.value.zoom)) * viewport.value.zoom
-        drawMinimap()
+        scheduleMinimapDraw()
     }
 
-    watch([renderNodes, dynamicGroups, viewport], () => {
-        nextTick(drawMinimap)
-    }, { deep: true })
+    watch([renderNodes, viewport], () => {
+        scheduleMinimapDraw()
+    }, { deep: true, flush: 'post' })
 
     watch(() => store.uiState.minimapExpanded, (val) => {
         if (val) {
-            nextTick(drawMinimap)
+            nextTick(scheduleMinimapDraw)
         }
     })
 
     // ===== 鼠标事件 =====
+    const selectNodeFromPointer = (e, node) => {
+        if (e.shiftKey) {
+            const anchorId = store.selectionAnchorId || store.primaryNodeId || store.selectedNodeId
+            const path = anchorId ? findSelectionPath(props.edges, anchorId, node.node_id) : null
+            if (path) {
+                store.selectPath(path.nodeIds, path.edgeIds, anchorId, node.node_id)
+            } else {
+                store.selectNode(node.node_id)
+            }
+            return 'selection-only'
+        }
+        if (e.ctrlKey || e.metaKey) {
+            store.toggleNodeSelection(node.node_id)
+            return 'selection-only'
+        }
+        if (!localSelectedNodeIds.value.includes(node.node_id) || localSelectedNodeIds.value.length <= 1) {
+            store.selectNode(node.node_id)
+        }
+        return 'drag'
+    }
+
+    const completeRectangleSelection = () => {
+        if (!selectionBox.value.visible || !containerRef.value) return
+        const rect = containerRef.value.getBoundingClientRect()
+        const toWorld = (clientX, clientY) => ({
+            x: (clientX - rect.left - viewport.value.x) / viewport.value.zoom,
+            y: (clientY - rect.top - viewport.value.y) / viewport.value.zoom
+        })
+        const start = toWorld(selectionBox.value.startX, selectionBox.value.startY)
+        const end = toWorld(selectionBox.value.endX, selectionBox.value.endY)
+        const box = {
+            minX: Math.min(start.x, end.x),
+            maxX: Math.max(start.x, end.x),
+            minY: Math.min(start.y, end.y),
+            maxY: Math.max(start.y, end.y)
+        }
+        const selectedIds = renderNodes.value.filter(node => {
+            const position = node.position || { x: 0, y: 0 }
+            return position.x < box.maxX && position.x + node.w > box.minX &&
+                position.y < box.maxY && position.y + node.h > box.minY
+        }).map(node => node.node_id)
+        store.selectNodes(selectedIds, {
+            primaryId: selectedIds[0] || null,
+            anchorId: selectedIds[0] || null
+        })
+    }
+
     const onCanvasMouseDown = (e) => {
         // 工具栏/菜单内点击不触发画布平移
         if (e.target.closest('.canvas-toolbar') || e.target.closest('.canvas-context-menu') || e.target.closest('.spawn-menu')) return
@@ -1001,22 +1087,11 @@
             e.target.classList.contains('canvas-edges-layer')
 
         if (isBlankArea) {
-            if (e.shiftKey && e.button === 0) {
-                spawnMenu.value = {
-                    visible: true,
-                    x: e.clientX,
-                    y: e.clientY,
-                    sourceNodeId: null,
-                    portType: 'succ',
-                    clientX: e.clientX,
-                    clientY: e.clientY
-                }
-                e.stopPropagation()
-                return
-            }
-
             clearSelection()
             selectedEdgeId.value = null
+            editingEdgeId.value = ''
+            selectedWaypoint.edgeId = ''
+            selectedWaypoint.waypointId = ''
         }
 
         if (e.altKey) {
@@ -1031,51 +1106,31 @@
     const onNodeMouseDown = (e, node) => {
         isCtrlHeldRef.value = e.ctrlKey
 
-        draggedSourceGroupSnapshot.value = null
-        ghostPlaceholder.value = null
+        if (selectNodeFromPointer(e, node) === 'selection-only') {
+            e.stopPropagation()
+            return
+        }
 
         selectedEdgeId.value = null
-
-        ghostPlaceholder.value = {
-            node_id: `ghost_${node.node_id}`,
-            position: { ...node.position },
-            w: NODE_GRID_W * GRID_SIZE,
-            h: node.h || 120
-        }
-
-        if (props.hasGroups) {
-            const tasks = dataTasks.value || []
-            tasks.forEach((t, tIdx) => {
-                const found = (t.nodes || []).find(n => n.node_id === node.node_id)
-                if (found) {
-                    const groupInfo = dynamicGroups.value[tIdx]
-                    if (groupInfo && groupInfo.box) {
-                        draggedSourceGroupSnapshot.value = { ...groupInfo.box }
-                    }
-                }
-            })
-        }
-
-        if (e.ctrlKey) {
-            if (localSelectedNodeIds.value.includes(node.node_id)) {
-                localSelectedNodeIds.value = localSelectedNodeIds.value.filter(id => id !== node.node_id)
-            } else {
-                localSelectedNodeIds.value.push(node.node_id)
-            }
-        } else {
-            localSelectedNodeIds.value = [node.node_id]
-        }
+        editingEdgeId.value = ''
+        selectedWaypoint.edgeId = ''
+        selectedWaypoint.waypointId = ''
 
         syncSelectionToStore()
 
         draggingNodeId.value = node.node_id
         dragStartMouse.value = { x: e.clientX, y: e.clientY }
         nodeInitialPos.value = node.position ? { ...node.position } : { x: 0, y: 0 }
+        dragInitialPositions.value = new Map(
+            renderNodes.value
+                .filter(item => localSelectedNodeIds.value.includes(item.node_id))
+                .map(item => [item.node_id, { ...(item.position || { x: 0, y: 0 }) }])
+        )
         hasMoved.value = false
         e.stopPropagation()
     }
 
-    const onGlobalMouseMove = (e) => {
+    const processGlobalMouseMove = (e) => {
         isCtrlHeldRef.value = e.ctrlKey
 
         // 记录最近鼠标位置（世界坐标），供 Ctrl+V 粘贴定位
@@ -1087,7 +1142,40 @@
             }
         }
 
-        if (isPanning.value) {
+        if (waypointDrag.active) {
+            const draft = waypointDrafts[waypointDrag.edgeId]
+            if (!Array.isArray(draft) || !draft[waypointDrag.index]) return
+            const point = clientToWorld(e.clientX, e.clientY)
+            draft[waypointDrag.index] = {
+                ...draft[waypointDrag.index],
+                x: Math.round(point.x / GRID_SIZE) * GRID_SIZE,
+                y: Math.round(point.y / GRID_SIZE) * GRID_SIZE
+            }
+            return
+        }
+
+        if (blockInteraction.active) {
+            const dx = (e.clientX - blockInteraction.startX) / viewport.value.zoom
+            const dy = (e.clientY - blockInteraction.startY) / viewport.value.zoom
+            const currentBlocks = localBlocksOverride.value || renderBlocks.value
+            const initial = blockInteraction.initialBlock
+            const candidate = blockInteraction.type === 'resize'
+                ? resizeBlockFromHandle(initial, blockInteraction.handle, dx, dy)
+                : normalizeBlock({ ...initial, x: snapBlockValue(initial.x + dx), y: snapBlockValue(initial.y + dy) })
+            const valid = canPlaceBlock(candidate, currentBlocks, blockInteraction.blockId)
+            blockInteraction.invalid = !valid
+            if (valid) {
+                localBlocksOverride.value = currentBlocks.map(block => block.block_id === candidate.block_id ? candidate : block)
+                if (blockInteraction.type === 'drag') {
+                    const delta = { x: candidate.x - initial.x, y: candidate.y - initial.y }
+                    for (const nodeId of blockInteraction.nodeIds) {
+                        const position = blockInteraction.initialNodePositions.get(nodeId)
+                        if (!position) continue
+                        localDraftPositions[nodeId] = { x: position.x + delta.x, y: position.y + delta.y }
+                    }
+                }
+            }
+        } else if (isPanning.value) {
             viewport.value.x = e.clientX - panStart.value.x
             viewport.value.y = e.clientY - panStart.value.y
         } else if (selectionBox.value.visible) {
@@ -1106,7 +1194,19 @@
                 const rawX = nodeInitialPos.value.x + dx
                 const rawY = nodeInitialPos.value.y + dy
 
-                localDraftPositions[draggingNodeId.value] = { x: rawX, y: rawY }
+                const movingIds = localSelectedNodeIds.value.includes(draggingNodeId.value)
+                    ? new Set(localSelectedNodeIds.value)
+                    : new Set([draggingNodeId.value])
+                const primaryInitial = dragInitialPositions.value.get(draggingNodeId.value) || nodeInitialPos.value
+                const movement = { x: rawX - primaryInitial.x, y: rawY - primaryInitial.y }
+                for (const movingId of movingIds) {
+                    const initial = dragInitialPositions.value.get(movingId)
+                    if (!initial) continue
+                    localDraftPositions[movingId] = {
+                        x: initial.x + movement.x,
+                        y: initial.y + movement.y
+                    }
+                }
 
                 const MIN_GAP = 2 * GRID_SIZE
 
@@ -1128,7 +1228,7 @@
                 }
 
                 for (const otherNode of renderNodes.value) {
-                    if (otherNode.node_id === draggingNodeId.value) continue
+                    if (movingIds.has(otherNode.node_id)) continue
                     const otherPos = localDraftPositions[otherNode.node_id] || otherNode.position || { x: 0, y: 0 }
                     const otherSize = { w: otherNode.w || nodeW, h: otherNode.h || 120 }
 
@@ -1172,95 +1272,136 @@
         }
     }
 
-    const settleWorkflowDrag = async (nodeId, isCtrlHeld) => {
+    // Windows 高采样率鼠标可能在一帧内产生数十次 move。画布只消费
+    // 当前显示帧的最后一个位置，避免未选节点、连线和碰撞预览重复计算。
+    let pointerMoveFrame = 0
+    let queuedPointerEvent = null
+    const requestPointerFrame = globalThis.requestAnimationFrame || (callback => globalThis.setTimeout(callback, 16))
+    const cancelPointerFrame = globalThis.cancelAnimationFrame || globalThis.clearTimeout
+    const flushPointerMove = () => {
+        if (pointerMoveFrame) {
+            cancelPointerFrame(pointerMoveFrame)
+            pointerMoveFrame = 0
+        }
+        const event = queuedPointerEvent
+        queuedPointerEvent = null
+        if (event) processGlobalMouseMove(event)
+    }
+    const onGlobalMouseMove = (e) => {
+        queuedPointerEvent = e
+        isCtrlHeldRef.value = e.ctrlKey
+        if (pointerMoveFrame) return
+        pointerMoveFrame = requestPointerFrame(() => {
+            pointerMoveFrame = 0
+            const event = queuedPointerEvent
+            queuedPointerEvent = null
+            if (event) processGlobalMouseMove(event)
+        })
+    }
+
+    const settleMultiNodeDrag = async (primaryNodeId) => {
+        const selectedIds = new Set(localSelectedNodeIds.value)
+        const primaryInitial = dragInitialPositions.value.get(primaryNodeId) || nodeInitialPos.value
+        const primaryDraft = localDraftPositions[primaryNodeId] || primaryInitial
+        const delta = {
+            x: Math.round((primaryDraft.x - primaryInitial.x) / GRID_SIZE) * GRID_SIZE,
+            y: Math.round((primaryDraft.y - primaryInitial.y) / GRID_SIZE) * GRID_SIZE
+        }
+        const sizeById = new Map(renderNodes.value.map(node => [node.node_id, {
+            w: node.w || NODE_GRID_W * GRID_SIZE,
+            h: node.h || 120
+        }]))
+        const externalNodes = renderNodes.value.filter(node => !selectedIds.has(node.node_id))
+        const GAP = GRID_SIZE
+        const candidates = new Map()
+        for (const nodeId of selectedIds) {
+            const initial = dragInitialPositions.value.get(nodeId)
+            if (!initial) continue
+            candidates.set(nodeId, { x: initial.x + delta.x, y: initial.y + delta.y })
+        }
+        const fits = (offsetX, offsetY) => {
+            for (const [nodeId, position] of candidates) {
+                const size = sizeById.get(nodeId) || { w: NODE_GRID_W * GRID_SIZE, h: 120 }
+                for (const other of externalNodes) {
+                    const otherPosition = other.position || { x: 0, y: 0 }
+                    const otherSize = sizeById.get(other.node_id) || { w: NODE_GRID_W * GRID_SIZE, h: 120 }
+                    if (!(
+                        position.x + offsetX + size.w + GAP <= otherPosition.x ||
+                        position.x + offsetX >= otherPosition.x + otherSize.w + GAP ||
+                        position.y + offsetY + size.h + GAP <= otherPosition.y ||
+                        position.y + offsetY >= otherPosition.y + otherSize.h + GAP
+                    )) return false
+                }
+            }
+            return true
+        }
+        let correction = { x: 0, y: 0 }
+        if (!fits(0, 0)) {
+            outer: for (let radius = 1; radius <= 30; radius += 1) {
+                for (let x = -radius; x <= radius; x += 1) {
+                    for (const y of [-radius, radius]) {
+                        const offsetX = x * GRID_SIZE
+                        const offsetY = y * GRID_SIZE
+                        if (fits(offsetX, offsetY)) {
+                            correction = { x: offsetX, y: offsetY }
+                            break outer
+                        }
+                    }
+                }
+                for (let y = -radius + 1; y < radius; y += 1) {
+                    for (const x of [-radius, radius]) {
+                        const offsetX = x * GRID_SIZE
+                        const offsetY = y * GRID_SIZE
+                        if (fits(offsetX, offsetY)) {
+                            correction = { x: offsetX, y: offsetY }
+                            break outer
+                        }
+                    }
+                }
+            }
+        }
+
+        const tasks = JSON.parse(JSON.stringify(dataTasks.value))
+        for (const task of tasks) {
+            for (const node of task.nodes || []) {
+                const position = candidates.get(node.node_id)
+                if (!position) continue
+                node.position = {
+                    x: position.x + correction.x,
+                    y: position.y + correction.y
+                }
+            }
+        }
+        for (const nodeId of selectedIds) delete localDraftPositions[nodeId]
+        dragInitialPositions.value = new Map()
+        emit('update-geometry', {
+            tasks,
+            blocks: renderBlocks.value,
+            movedNodeIds: [...selectedIds],
+            delta: { x: delta.x + correction.x, y: delta.y + correction.y }
+        })
+        ElMessage.success(`已整体移动 ${selectedIds.size} 个节点`)
+    }
+
+    const settleWorkflowDrag = async (nodeId) => {
         const rawPos = localDraftPositions[nodeId] || nodeInitialPos.value
         const finalPos = {
             x: Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE,
             y: Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
         }
 
-        // 在深拷贝上计算（localTasksOverride 让 dynamicGroups 等 computed 随克隆重算）
+        // 画布只负责当前流程内排版；跨流程整理由左侧资源树显式完成。
         const tasks = JSON.parse(JSON.stringify(dataTasks.value))
         localTasksOverride.value = tasks
 
         const targetNodeObj = renderNodes.value.find(n => n.node_id === nodeId)
         const currentNodeSize = { w: targetNodeObj?.w || (NODE_GRID_W * GRID_SIZE), h: targetNodeObj?.h || 120 }
-
-        let targetTaskIndex = -1
-        let isCreatingNewGroup = false
-
-        if (isCtrlHeld && draggedSourceGroupSnapshot.value) {
-            const nodeRectBeforePush = { x: finalPos.x, y: finalPos.y, w: currentNodeSize.w, h: currentNodeSize.h }
-            const overlapWithSnapshot = calculateOverlapRatio(nodeRectBeforePush, draggedSourceGroupSnapshot.value)
-
-            if (overlapWithSnapshot === 0) {
-                dynamicGroups.value.forEach((g, gIdx) => {
-                    let currentSourceTIdx = -1
-                    tasks.forEach((t, tI) => {
-                        if ((t.nodes || []).some(n => n.node_id === nodeId)) currentSourceTIdx = tI
-                    })
-                    if (gIdx === currentSourceTIdx) return
-
-                    const ratio = calculateOverlapRatio(nodeRectBeforePush, g.box)
-                    if (ratio >= 1.0) {
-                        targetTaskIndex = gIdx
-                    }
-                })
-
-                if (targetTaskIndex === -1) {
-                    isCreatingNewGroup = true
-                }
-            }
-        }
-
         const safePos = resolveCollisionsAndPushOthers(nodeId, finalPos, renderNodes.value, currentNodeSize)
-
-        let sourceTaskIndex = -1
-        let sourceNodeObj = null
-        tasks.forEach((t, tIdx) => {
-            const found = (t.nodes || []).find(n => n.node_id === nodeId)
+        for (const task of tasks) {
+            const found = (task.nodes || []).find(n => n.node_id === nodeId)
             if (found) {
-                sourceTaskIndex = tIdx
-                sourceNodeObj = found
-            }
-        })
-
-        if (sourceTaskIndex !== -1 && isCtrlHeld && draggedSourceGroupSnapshot.value) {
-            const originalTask = tasks[sourceTaskIndex]
-            const nodeRectAfterPush = { x: safePos.x, y: safePos.y, w: currentNodeSize.w, h: currentNodeSize.h }
-            const overlapWithSnapshot = calculateOverlapRatio(nodeRectAfterPush, draggedSourceGroupSnapshot.value)
-
-            if (overlapWithSnapshot === 0) {
-                originalTask.nodes = (originalTask.nodes || []).filter(n => n.node_id !== nodeId)
-                sourceNodeObj.position = safePos
-
-                if (targetTaskIndex !== -1) {
-                    const targetTask = tasks[targetTaskIndex]
-                    if (!targetTask.nodes) targetTask.nodes = []
-                    targetTask.nodes.push(sourceNodeObj)
-                    ElMessage.success(`节点已被纳入组 [${targetTask.task_name}]`)
-                } else if (isCreatingNewGroup) {
-                    const newTaskId = `task_${Date.now()}`
-                    const newTask = {
-                        task_id: newTaskId,
-                        task_name: '新建组',
-                        loop_count: 1,
-                        loop_interval: 0,
-                        nodes: [sourceNodeObj]
-                    }
-                    tasks.push(newTask)
-                    ElMessage.success('节点已成功脱离，并自动创建放入【新建组】')
-                }
-            } else {
-                sourceNodeObj.position = safePos
-            }
-        } else {
-            for (const task of tasks) {
-                const found = (task.nodes || []).find(n => n.node_id === nodeId)
-                if (found) {
-                    found.position = safePos
-                    break
-                }
+                found.position = safePos
+                break
             }
         }
 
@@ -1273,54 +1414,72 @@
             })
         })
 
-        await nextTick()
-        const currentGroupsForCheck = dynamicGroups.value.map(g => ({
-            taskId: g.taskId,
-            box: { x: g.box.x, y: g.box.y, w: g.box.w, h: g.box.h }
-        }))
-
-        let globalAdjustedBoxes = {}
-        let activeTaskObj = tasks[sourceTaskIndex] || tasks[tasks.length - 1]
-        if (activeTaskObj) {
-            const activeGroupId = activeTaskObj.task_id
-            const activeGroupInfo = currentGroupsForCheck.find(x => x.taskId === activeGroupId)
-
-            if (activeGroupInfo) {
-                const others = currentGroupsForCheck.filter(x => x.taskId !== activeGroupId)
-                globalAdjustedBoxes = resolveGroupCollisionsAndPushOthers(activeGroupId, activeGroupInfo.box, others)
-            }
-        }
-
-        tasks.forEach(t => {
-            const newBox = globalAdjustedBoxes[t.task_id]
-            const oldGroup = currentGroupsForCheck.find(x => x.taskId === t.task_id)
-            if (newBox && oldGroup && oldGroup.box) {
-                const shiftX = (Number(newBox.x) || 0) - (Number(oldGroup.box.x) || 0)
-                const shiftY = (Number(newBox.y) || 0) - (Number(oldGroup.box.y) || 0)
-
-                if (shiftX !== 0 || shiftY !== 0) {
-                    (t.nodes || []).forEach(n => {
-                        n.position.x = Math.round((n.position.x + shiftX) / GRID_SIZE) * GRID_SIZE
-                        n.position.y = Math.round((n.position.y + shiftY) / GRID_SIZE) * GRID_SIZE
-                    })
-                }
-            }
-        })
-
-        const finalTasks = tasks.filter(t => (t.nodes || []).length > 0)
-        emit('update-tasks', finalTasks)
-
-        draggedSourceGroupSnapshot.value = null
-        ghostPlaceholder.value = null
+        emit('update-geometry', { tasks, blocks: renderBlocks.value, movedNodeIds: [nodeId], delta: null })
         delete localDraftPositions[nodeId]
-
-        ElMessage.success('节点排版及组归属更新成功')
+        ElMessage.success('节点位置已更新')
     }
 
     const onGlobalMouseUp = async (e) => {
+        flushPointerMove()
         isPanning.value = false
 
+        if (waypointDrag.active) {
+            const { edgeId, index } = waypointDrag
+            const draft = Array.isArray(waypointDrafts[edgeId])
+                ? waypointDrafts[edgeId].map(point => ({ ...point }))
+                : []
+            const current = draft[index]
+            if (current) {
+                const resolved = findNearestFreeWaypoint(current, renderNodes.value)
+                if (resolved) {
+                    const moved = resolved.x !== current.x || resolved.y !== current.y
+                    draft[index] = { ...current, ...resolved }
+                    saveEdgeWaypoints(edgeId, draft)
+                    if (moved) ElMessage.info('转接点已自动避让节点')
+                } else {
+                    draft.splice(index, 1)
+                    saveEdgeWaypoints(edgeId, draft)
+                    ElMessage.warning('转接点附近无可用位置，已恢复该段自动路由')
+                }
+            }
+            delete waypointDrafts[edgeId]
+            Object.assign(waypointDrag, { active: false, edgeId: '', waypointId: '', index: -1 })
+            return
+        }
+
+        if (blockInteraction.active) {
+            const nextBlocks = (localBlocksOverride.value || renderBlocks.value).map(normalizeBlock)
+            const movedNodeIds = new Set(blockInteraction.nodeIds)
+            let tasks = null
+            if (blockInteraction.type === 'drag' && movedNodeIds.size) {
+                tasks = JSON.parse(JSON.stringify(dataTasks.value))
+                for (const task of tasks) {
+                    for (const node of task.nodes || []) {
+                        if (!movedNodeIds.has(node.node_id) || !localDraftPositions[node.node_id]) continue
+                        node.position = { ...localDraftPositions[node.node_id] }
+                        delete localDraftPositions[node.node_id]
+                    }
+                }
+            }
+            const movedDelta = blockInteraction.type === 'drag' && blockInteraction.initialBlock
+                ? {
+                    x: Number(nextBlocks.find(block => block.block_id === blockInteraction.blockId)?.x || 0) - Number(blockInteraction.initialBlock.x || 0),
+                    y: Number(nextBlocks.find(block => block.block_id === blockInteraction.blockId)?.y || 0) - Number(blockInteraction.initialBlock.y || 0)
+                }
+                : null
+            emit('update-geometry', {
+                tasks,
+                blocks: nextBlocks,
+                movedNodeIds: [...movedNodeIds],
+                delta: movedDelta
+            })
+            Object.assign(blockInteraction, { active: false, type: '', blockId: '', handle: '', initialBlock: null, nodeIds: [], initialNodePositions: new Map(), invalid: false })
+            localBlocksOverride.value = null
+            return
+        }
+
         if (selectionBox.value.visible) {
+            completeRectangleSelection()
             selectionBox.value.visible = false
         }
 
@@ -1329,36 +1488,35 @@
         const wasDrawing = drawingConnection.value.active
         const sourceId = drawingConnection.value.sourceNodeId
         const portType = drawingConnection.value.portType
+        const sourcePortId = drawingConnection.value.sourcePortId
         drawingConnection.value.active = false
 
         if (draggingNodeId.value) {
             const nodeId = draggingNodeId.value
-            const isCtrlHeld = isCtrlHeldRef.value || e.ctrlKey
             draggingNodeId.value = false
             isCtrlHeldRef.value = false
 
             if (hasMoved.value) {
-                const rawPos = localDraftPositions[nodeId] || nodeInitialPos.value
-                const finalPos = {
-                    x: Math.round(rawPos.x / GRID_SIZE) * GRID_SIZE,
-                    y: Math.round(rawPos.y / GRID_SIZE) * GRID_SIZE
+                // 两个画布模式共享节点网格吸附、批量移动与碰撞推挤。
+                if (localSelectedNodeIds.value.length > 1 && localSelectedNodeIds.value.includes(nodeId)) {
+                    await settleMultiNodeDrag(nodeId)
+                } else {
+                    await settleWorkflowDrag(nodeId)
                 }
-                const targetNodeObj = renderNodes.value.find(n => n.node_id === nodeId)
-                const currentNodeSize = { w: targetNodeObj?.w || (NODE_GRID_W * GRID_SIZE), h: targetNodeObj?.h || 120 }
-
-                // 统一结算：两 Tab 同一套拖拽逻辑（碰撞推挤 + 组归属/组推挤，任务组两 Tab 启用）
-                await settleWorkflowDrag(nodeId, isCtrlHeld)
             }
             hasMoved.value = false
         }
 
-        // 拖拽空放断开原有连线 / 弹 spawn 菜单
+        // 已连出口拖到空白处表示断开；空出口拖到空白处才打开新建节点菜单。
+        // 两条路径都以稳定端口 ID 判断，避免动态端口重排后误断或漏连。
         if (wasDrawing) {
-            const hasExisting = flatEdges.value.some(ed =>
-                ed.sourceNodeId === sourceId && ed.legacyPort === normalizePort(portType))
-
-            if (hasExisting) {
-                emit('remove-edge', { sourceNodeId: sourceId, legacyPort: portType })
+            const existing = flatEdges.value.find(edge =>
+                edge.sourceNodeId === sourceId && (
+                    edge.extra?.sourcePortId === sourcePortId
+                    || (!edge.extra?.sourcePortId && edge.sourcePort === portType)
+                ))
+            if (existing) {
+                emit('remove-edge', { ...existing, sourceNodeId: sourceId, sourcePort: portType })
                 ElMessage.success('已成功断开连线')
                 return
             }
@@ -1369,6 +1527,7 @@
                 y: e.clientY,
                 sourceNodeId: sourceId,
                 portType,
+                sourcePortId,
                 clientX: e.clientX,
                 clientY: e.clientY
             }
@@ -1377,7 +1536,7 @@
 
     const onCanvasWheel = (e) => {
         viewportWheel(e)
-        drawMinimap()
+        scheduleMinimapDraw()
     }
 
     watch(() => store.focusTarget, (target) => {
@@ -1393,18 +1552,19 @@
                 targetX = node.position.x + node.w / 2
                 targetY = node.position.y + node.h / 2
             }
-        } else if (target.type === 'group') {
-            const group = dynamicGroups.value.find(g => g.groupId === target.id || g.taskId === target.id)
-            if (group) {
-                targetX = group.box.x + group.box.w / 2
-                targetY = group.box.y + group.box.h / 2
+        } else if (target.type === 'block') {
+            const block = renderBlocks.value.find(item => item.block_id === target.id)
+            if (block) {
+                selectedBlockId.value = block.block_id
+                targetX = block.x + block.width / 2
+                targetY = block.y + block.height / 2
             }
         }
 
         if (targetX !== 0 || targetY !== 0) {
             viewport.value.x = containerW / 2 - targetX * viewport.value.zoom
             viewport.value.y = containerH / 2 - targetY * viewport.value.zoom
-            if (typeof drawMinimap === 'function') drawMinimap()
+            scheduleMinimapDraw()
         }
     }, { deep: true })
 
@@ -1413,11 +1573,17 @@
         if (drawingConnection.value.active) {
             const sourceId = drawingConnection.value.sourceNodeId
             const portType = drawingConnection.value.portType
+            const sourcePortId = drawingConnection.value.sourcePortId
 
             drawingConnection.value.active = false
 
             if (sourceId && sourceId !== targetNode.node_id) {
-                emit('add-edge', { source: sourceId, target: targetNode.node_id, source_port: portType })
+                emit('add-edge', {
+                    source: sourceId,
+                    target: targetNode.node_id,
+                    source_port: portType,
+                    source_port_id: sourcePortId
+                })
                 ElMessage.success(`连线指向 ➔ [${targetNode.node_name}]`)
             }
             e.stopPropagation()
@@ -1425,135 +1591,8 @@
     }
 
     const onNodeDoubleClick = (e, node) => {
-        localSelectedNodeIds.value = [node.node_id]
-        syncSelectionToStore()
+        store.selectNode(node.node_id)
         e.stopPropagation()
-    }
-
-    const openGroupInspector = (e, group) => {
-        if (!props.hasGroups) return
-        store.setSelectedGroup(group.groupId)
-        store.clearSelection()
-        localSelectedNodeIds.value = []
-        e.stopPropagation()
-    }
-
-    const startGroupDrag = (e, groupId) => {
-        if (!props.hasGroups) return
-        e.stopPropagation()
-        const startX = e.clientX
-        const startY = e.clientY
-        let hasGroupMoved = false
-
-        const tasks = JSON.parse(JSON.stringify(dataTasks.value))
-        localTasksOverride.value = tasks
-        const taskIndex = tasks.findIndex((t, idx) => `group_${t.task_id || idx}` === groupId)
-        if (taskIndex === -1) return
-
-        const activeTask = tasks[taskIndex]
-        const taskNodes = activeTask.nodes || []
-
-        const initialNodePositions = {}
-        tasks.forEach(t => {
-            (t.nodes || []).forEach(n => {
-                initialNodePositions[n.node_id] = { x: n.position?.x || 0, y: n.position?.y || 0 }
-            })
-        })
-
-        const currentGroupInfo = dynamicGroups.value.find(g => g.groupId === groupId)
-        if (!currentGroupInfo) return
-        const initialBox = { ...currentGroupInfo.box }
-
-        const onMouseMove = (moveEvent) => {
-            const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY)
-            if (dist > 6) {
-                hasGroupMoved = true
-            }
-
-            if (hasGroupMoved) {
-                const dx = (moveEvent.clientX - startX) / viewport.value.zoom
-                const dy = (moveEvent.clientY - startY) / viewport.value.zoom
-
-                taskNodes.forEach((n) => {
-                    localDraftPositions[n.node_id] = {
-                        x: initialNodePositions[n.node_id].x + dx,
-                        y: initialNodePositions[n.node_id].y + dy
-                    }
-                })
-            }
-        }
-
-        const onMouseUp = async () => {
-            window.removeEventListener('mousemove', onMouseMove)
-            window.removeEventListener('mouseup', onMouseUp)
-
-            if (!hasGroupMoved) {
-                localTasksOverride.value = null
-                return
-            }
-
-            const finalDraftNode = taskNodes[0] ? (localDraftPositions[taskNodes[0].node_id] || taskNodes[0].position) : { x: 0, y: 0 }
-            const initDraftNode = taskNodes[0] ? initialNodePositions[taskNodes[0].node_id] : { x: 0, y: 0 }
-            const groupDx = (finalDraftNode.x - initDraftNode.x)
-            const groupDy = (finalDraftNode.y - initDraftNode.y)
-
-            const rawFinalBox = {
-                x: initialBox.x + groupDx,
-                y: initialBox.y + groupDy,
-                w: initialBox.w,
-                h: initialBox.h
-            }
-            const snappedFinalBox = {
-                x: Math.round(rawFinalBox.x / GRID_SIZE) * GRID_SIZE,
-                y: Math.round(rawFinalBox.y / GRID_SIZE) * GRID_SIZE,
-                w: rawFinalBox.w,
-                h: rawFinalBox.h
-            }
-
-            const allOtherGroups = dynamicGroups.value.map(g => ({
-                taskId: g.taskId,
-                box: g.box
-            }))
-
-            const adjustedBoxes = resolveGroupCollisionsAndPushOthers(activeTask.task_id, snappedFinalBox, allOtherGroups)
-
-            tasks.forEach(t => {
-                const targetBox = adjustedBoxes[t.task_id]
-                const origGroup = dynamicGroups.value.find(g => g.taskId === t.task_id)
-                if (targetBox && origGroup && origGroup.box) {
-                    let taskDeltaX = 0
-                    let taskDeltaY = 0
-
-                    if (t.task_id === activeTask.task_id) {
-                        taskDeltaX = targetBox.x - initialBox.x
-                        taskDeltaY = targetBox.y - initialBox.y
-                    } else {
-                        const origBox = origGroup.box
-                        taskDeltaX = targetBox.x - origBox.x
-                        taskDeltaY = targetBox.y - origBox.y
-                    }
-
-                    (t.nodes || []).forEach(n => {
-                        const initPos = initialNodePositions[n.node_id]
-                        if (initPos) {
-                            const finalX = Math.round((initPos.x + taskDeltaX) / GRID_SIZE) * GRID_SIZE
-                            const finalY = Math.round((initPos.y + taskDeltaY) / GRID_SIZE) * GRID_SIZE
-                            n.position = { x: finalX, y: finalY }
-                        }
-                    })
-                }
-                (t.nodes || []).forEach(n => {
-                    delete localDraftPositions[n.node_id]
-                })
-            })
-
-            const finalTasks = tasks.filter(t => (t.nodes || []).length > 0)
-            emit('update-tasks', finalTasks)
-            ElMessage.success('任务组移动及互斥排版保存成功')
-        }
-
-        window.addEventListener('mousemove', onMouseMove)
-        window.addEventListener('mouseup', onMouseUp)
     }
 
     const startConnection = (e, nodeId, portType) => {
@@ -1564,11 +1603,16 @@
 
         const sourceNode = renderNodes.value.find(n => n.node_id === nodeId)
         const sourcePt = sourceNode ? getPortPosition(sourceNode, portType) : null
+        const descriptor = sourceNode
+            ? getSourcePortDescriptors(sourceNode, props.edges, FAILURE_PORT_TYPES)
+                .find(port => port.key === portType)
+            : null
 
         drawingConnection.value = {
             active: true,
             sourceNodeId: nodeId,
             portType,
+            sourcePortId: descriptor?.stableId || portType,
             sourceX: sourcePt?.x ?? 0,
             sourceY: sourcePt?.y ?? 0,
             currentX: (clientX - viewport.value.x) / viewport.value.zoom,
@@ -1579,8 +1623,122 @@
     }
 
     const onEdgeClick = (edge) => {
+        store.clearSelection()
         selectedEdgeId.value = edge.id
-        ElMessage.info('已选中连线')
+        editingEdgeId.value = edge.id
+    }
+
+    const persistedEdge = edgeId => (props.edges || []).find(edge => edge.edge_id === edgeId) || null
+
+    const progressOnPath = (points, point) => {
+        let travelled = 0
+        let best = { distance: Infinity, progress: 0 }
+        const list = points || []
+        for (let index = 0; index < list.length - 1; index += 1) {
+            const start = list[index]
+            const end = list[index + 1]
+            const horizontal = start.y === end.y
+            const length = horizontal ? Math.abs(end.x - start.x) : Math.abs(end.y - start.y)
+            if (!length) continue
+            const ratio = horizontal
+                ? Math.max(0, Math.min(1, (point.x - start.x) / (end.x - start.x || 1)))
+                : Math.max(0, Math.min(1, (point.y - start.y) / (end.y - start.y || 1)))
+            const projection = horizontal
+                ? { x: start.x + (end.x - start.x) * ratio, y: start.y }
+                : { x: start.x, y: start.y + (end.y - start.y) * ratio }
+            const distance = Math.hypot(point.x - projection.x, point.y - projection.y)
+            if (distance < best.distance) best = { distance, progress: travelled + length * ratio }
+            travelled += length
+        }
+        return best.progress
+    }
+
+    const saveEdgeWaypoints = (edgeId, waypoints) => {
+        const normalized = normalizeEdgeRouting({ mode: 'manual', waypoints })
+        emit('update-edge-routing', { edgeId, routing: normalized })
+    }
+
+    const addWaypointAt = (edge, point) => {
+        if (!edge?.id) return
+        const resolved = findNearestFreeWaypoint(point, renderNodes.value)
+        if (!resolved) {
+            ElMessage.warning('附近没有可用的网格位置，未添加转接点')
+            return
+        }
+        const source = persistedEdge(edge.id)
+        const routing = normalizeEdgeRouting(source?.routing)
+        const waypoint = {
+            id: `waypoint_${globalThis.crypto?.randomUUID?.().replaceAll('-', '') || `${Date.now()}${Math.random().toString(36).slice(2, 7)}`}`,
+            ...resolved
+        }
+        const path = edge.renderPoints || edge.rawPixelPoints || []
+        const ordered = [...routing.waypoints, waypoint]
+            .sort((a, b) => progressOnPath(path, a) - progressOnPath(path, b))
+        editingEdgeId.value = edge.id
+        selectedWaypoint.edgeId = edge.id
+        selectedWaypoint.waypointId = waypoint.id
+        saveEdgeWaypoints(edge.id, ordered)
+    }
+
+    const addWaypointFromEdgeEvent = (event, edge) => {
+        event?.preventDefault?.()
+        event?.stopPropagation?.()
+        addWaypointAt(edge, clientToWorld(event.clientX, event.clientY))
+    }
+
+    const openEdgeContextMenu = (event, edge) => {
+        event.preventDefault()
+        event.stopPropagation()
+        editingEdgeId.value = edge.id
+        selectedEdgeId.value = edge.id
+        customContextMenu.visible = true
+        customContextMenu.targetType = 'edge'
+        customContextMenu.targetId = edge.id
+        customContextMenu.targetName = `${edge.sourceNodeId} → ${edge.targetNodeId}`
+        customContextMenu.clientX = event.clientX
+        customContextMenu.clientY = event.clientY
+        customContextMenu.x = event.clientX + 8
+        customContextMenu.y = event.clientY + 8
+        customContextMenu.worldPoint = clientToWorld(event.clientX, event.clientY)
+        menuZIndex.value = getNextZIndex()
+        spawnMenu.value.visible = false
+    }
+
+    const addWaypointFromContextMenu = () => {
+        const edge = routedEdges.value.find(item => item.id === customContextMenu.targetId)
+        const point = customContextMenu.worldPoint
+        customContextMenu.visible = false
+        if (edge && point) addWaypointAt(edge, point)
+    }
+
+    const resetSelectedEdgeRouting = () => {
+        const edgeId = customContextMenu.targetId || editingEdgeId.value
+        customContextMenu.visible = false
+        if (!edgeId) return
+        delete waypointDrafts[edgeId]
+        selectedWaypoint.edgeId = ''
+        selectedWaypoint.waypointId = ''
+        emit('update-edge-routing', { edgeId, routing: { mode: 'auto', waypoints: [] } })
+        ElMessage.success('已恢复自动路由')
+    }
+
+    const startWaypointDrag = (event, edge, waypoint, index) => {
+        event.preventDefault()
+        event.stopPropagation()
+        const routing = normalizeEdgeRouting(persistedEdge(edge.id)?.routing)
+        waypointDrafts[edge.id] = routing.waypoints.map(point => ({ ...point }))
+        Object.assign(waypointDrag, { active: true, edgeId: edge.id, waypointId: waypoint.id, index })
+        selectedWaypoint.edgeId = edge.id
+        selectedWaypoint.waypointId = waypoint.id
+        editingEdgeId.value = edge.id
+    }
+
+    const focusWaypoint = (edge, waypoint) => {
+        if (!edge?.id || !waypoint?.id) return
+        editingEdgeId.value = edge.id
+        selectedEdgeId.value = edge.id
+        selectedWaypoint.edgeId = edge.id
+        selectedWaypoint.waypointId = waypoint.id
     }
 
     // ===== 快捷键删除选中连线（Delete/Backspace 优先删边，否则回退批量删除节点） =====
@@ -1610,14 +1768,51 @@
             return
         }
 
+        if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)
+            && selectedWaypoint.edgeId && !checkInputFocus()) {
+            const edge = persistedEdge(selectedWaypoint.edgeId)
+            const routing = normalizeEdgeRouting(edge?.routing)
+            const index = routing.waypoints.findIndex(point => point.id === selectedWaypoint.waypointId)
+            if (index >= 0) {
+                e.preventDefault()
+                const delta = {
+                    ArrowLeft: [-GRID_SIZE, 0],
+                    ArrowRight: [GRID_SIZE, 0],
+                    ArrowUp: [0, -GRID_SIZE],
+                    ArrowDown: [0, GRID_SIZE]
+                }[e.key]
+                routing.waypoints[index] = {
+                    ...routing.waypoints[index],
+                    x: routing.waypoints[index].x + delta[0],
+                    y: routing.waypoints[index].y + delta[1]
+                }
+                saveEdgeWaypoints(edge.edge_id, routing.waypoints)
+            }
+            return
+        }
+
         if ((e.key === 'Delete' || e.key === 'Backspace') && !checkInputFocus()) {
-            if (selectedEdgeId.value) {
+            if (selectedWaypoint.edgeId) {
+                const edge = persistedEdge(selectedWaypoint.edgeId)
+                const routing = normalizeEdgeRouting(edge?.routing)
+                const next = routing.waypoints.filter(point => point.id !== selectedWaypoint.waypointId)
+                saveEdgeWaypoints(selectedWaypoint.edgeId, next)
+                selectedWaypoint.edgeId = ''
+                selectedWaypoint.waypointId = ''
+                e.preventDefault()
+                return
+            }
+            if (selectedBlockId.value && localSelectedNodeIds.value.length === 0 && !selectedEdgeId.value) {
+                requestSelectedBlockDelete()
+                return
+            }
+            if (selectedEdgeId.value && localSelectedNodeIds.value.length === 0) {
                 const edge = computedEdges.value.find(item => item.id === selectedEdgeId.value)
                 if (edge) {
                     emit('remove-edge', {
                         sourceNodeId: edge.sourceNodeId,
                         targetNodeId: edge.targetNodeId,
-                        legacyPort: edge.legacyPort,
+                        sourcePort: edge.sourcePort,
                         candIndex: edge.candIndex,
                         edge_id: edge.edgeId
                     })
@@ -1642,6 +1837,7 @@
         if (!nodeType) return
         const sourceId = spawnMenu.value.sourceNodeId
         const portType = spawnMenu.value.portType
+        const sourcePortId = spawnMenu.value.sourcePortId
 
         const targetClientX = spawnMenu.value.clientX || customContextMenu.clientX || window.innerWidth / 2
         const targetClientY = spawnMenu.value.clientY || customContextMenu.clientY || window.innerHeight / 2
@@ -1663,16 +1859,16 @@
             y: Math.round(rawSpawnY / GRID_SIZE) * GRID_SIZE
         }
 
-        const nodeId = `node_${Date.now()}`
-        const groupId = customContextMenu.targetType === 'canvas_in_group' ? customContextMenu.targetId : null
-
-        emit('create-node', { nodeId, type: nodeType, position, groupId, sourceNodeId: sourceId, portType })
-
-        localSelectedNodeIds.value = [nodeId]
-        syncSelectionToStore()
-
-        const chineseLabel = getNodeShortLabel(nodeType)
-        ElMessage.success(`成功创建节点: [${chineseLabel}]`)
+        const nodeId = `node_${globalThis.crypto?.randomUUID?.().replaceAll('-', '') || `${Date.now()}${Math.random().toString(36).slice(2, 8)}`}`
+        emit('create-node', {
+            nodeId,
+            type: nodeType,
+            position,
+            sourceNodeId: sourceId,
+            portType,
+            sourcePortId,
+            announce: true
+        })
     }
 
     // ===== Undo/Redo 快捷键 =====
@@ -1707,10 +1903,20 @@
         }
 
         fitViewToNodes()
-        nextTick(drawMinimap)
+        nextTick(scheduleMinimapDraw)
     })
 
     onUnmounted(() => {
+        queuedPointerEvent = null
+        if (pointerMoveFrame) {
+            cancelPointerFrame(pointerMoveFrame)
+            pointerMoveFrame = 0
+        }
+        if (minimapFrame) {
+            const cancelFrame = globalThis.cancelAnimationFrame || globalThis.clearTimeout
+            cancelFrame(minimapFrame)
+            minimapFrame = 0
+        }
         window.removeEventListener('mousemove', onGlobalMouseMove)
         window.removeEventListener('mouseup', onGlobalMouseUp)
         window.removeEventListener('keydown', globalKeydownHandler)
@@ -1718,4 +1924,24 @@
         window.removeEventListener('keydown', _onUndoHotkey, true)
         containerResizeObserver?.disconnect()
     })
+
+    const getViewportCenter = () => {
+        const width = containerRef.value?.clientWidth || 0
+        const height = containerRef.value?.clientHeight || 0
+        return {
+            x: Math.round((width / 2 - viewport.value.x) / viewport.value.zoom),
+            y: Math.round((height / 2 - viewport.value.y) / viewport.value.zoom)
+        }
+    }
+
+    defineExpose({ getViewportCenter })
 </script>
+
+<style scoped>
+    .toolbar-separator {
+        width: 1px;
+        height: 18px;
+        margin: 0 2px;
+        background: var(--app-border-subtle, rgba(255, 255, 255, .1));
+    }
+</style>

@@ -45,9 +45,9 @@
             </div>
 
             <div v-if="conflictMsg" class="hk-conflict">
-                ⚠️ {{ conflictMsg }}
+                <TriangleAlert :size="14" /> {{ conflictMsg }}
             </div>
-            <div v-if="savedMsg" class="hk-saved">✔ {{ savedMsg }}</div>
+            <div v-if="savedMsg" class="hk-saved"><CircleCheck :size="14" /> {{ savedMsg }}</div>
             <div class="hk-fixed-hint">{{ FIXED_HINT }}</div>
         </div>
 
@@ -60,6 +60,7 @@
 <script setup>
     import { ref, computed, onMounted, onUnmounted } from 'vue'
     import { ElMessage } from 'element-plus'
+    import { TriangleAlert, CircleCheck } from 'lucide-vue-next'
     import { uiControlApi } from '@/api/uiControlApi'
 
     const props = defineProps({
@@ -74,13 +75,19 @@
 
     const FEATURES = [
         { key: 'enter_capture', label: '进入控件捕获模式' },
+        { key: 'enter_screenshot', label: '冻结工作面板截图' },
         { key: 'copy_generate', label: '复制选择器 + 生成控件节点' },
         { key: 'exit_mode', label: '退出捕获模式' }
     ]
     // ⚡ 识别 = 鼠标悬停 250ms 自动识别（无需快捷键）
     const FIXED_HINT = '识别控件：鼠标悬停目标 250ms 自动识别（无需快捷键）'
 
-    const hotkeys = ref({ enter_capture: 'ctrl+shift+c', copy_generate: 'ctrl+shift+enter', exit_mode: 'esc' })
+    const hotkeys = ref({
+        enter_capture: 'ctrl+shift+c',
+        enter_screenshot: 'alt+q',
+        copy_generate: 'ctrl+shift+enter',
+        exit_mode: 'esc'
+    })
     const recordingKey = ref(null)
     const pendingCombo = ref('')
     const conflictMsg = ref('')
@@ -161,7 +168,10 @@
         cancelRecord()
     }
 
-    onMounted(() => window.addEventListener('keydown', onKeydown, true))
+    onMounted(() => {
+        load()
+        window.addEventListener('keydown', onKeydown, true)
+    })
     onUnmounted(() => window.removeEventListener('keydown', onKeydown, true))
 </script>
 
@@ -184,9 +194,9 @@
           color: var(--el-color-primary); }
     kbd.recording { color: #e6a23c; border-color: #e6a23c; animation: pulse 1s infinite; }
     @keyframes pulse { 50% { opacity: .4; } }
-    .hk-conflict { font-size: 12px; color: #f56c6c; padding: 6px 10px; border-radius: 6px;
-                   background: rgba(245,108,108,.1); }
-    .hk-saved { font-size: 12px; color: #4ed19c; padding: 6px 10px; }
+    .hk-conflict { font-size: 12px; color: #ff5f57; padding: 6px 10px; border-radius: 6px;
+                   background: rgba(255,95,87,.1); display:flex; align-items:center; gap:6px; }
+.hk-saved { font-size: 12px; color: var(--app-color-success); padding: 6px 10px; display:flex; align-items:center; gap:6px; }
     .hk-fixed-hint { font-size: 12px; color: var(--el-text-color-secondary); padding: 6px 10px;
-                     border-radius: 6px; background: rgba(78,209,156,.08); border: 1px solid rgba(78,209,156,.25); }
+border-radius: 6px; background: rgba(59,166,107,.08); border: 1px solid rgba(59,166,107,.25); }
 </style>

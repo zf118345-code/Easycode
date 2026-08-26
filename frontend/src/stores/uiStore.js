@@ -3,8 +3,14 @@ import { useProjectStore } from './projectStore'
 
 export const useUiStore = defineStore('ui', {
     state: () => ({
+        // selectedNodeId is retained as a compatibility alias for the
+        // primary/inspected node. selectedNodeIds is the only collection
+        // used by the canvas, explorer and inspector.
         selectedNodeId: null,
         selectedNodeIds: [],
+        primaryNodeId: null,
+        selectionAnchorId: null,
+        selectedEdgeIds: [],
         selectedGroupId: null,
         canvasMode: 'workflow',
         // ===== 节点列表批量操作模式 =====
@@ -15,6 +21,10 @@ export const useUiStore = defineStore('ui', {
         focusTarget: null,  // { type: 'node' | 'group', id, timestamp }
         // ===== 控件捕获填充（节点表单/条件对话框「捕获控件」按钮注册的填充回调） =====
         captureFillHandler: null,  // (info) => void，Ctrl+Shift+Enter 捕获成功后调用
+        // 属性面板的一次性原生截图回填。它不持久化，只在当前编辑会话内存活。
+        fieldCaptureRequestId: null,
+        fieldCaptureHandler: null,
+        fieldCaptureCancelHandler: null,
         // ===== 属性检查器外部刷新（捕获填充后强制检查器重新同步当前节点） =====
         inspectorSyncTick: 0
     }),
@@ -23,11 +33,13 @@ export const useUiStore = defineStore('ui', {
         selectedNode() {
             const projectStore = useProjectStore()
             const selectedNodeId = this.selectedNodeId
-            for (const task of (projectStore.blueprint.tasks || [])) {
-                const node = (task.nodes || []).find(n => n.node_id === selectedNodeId)
-                if (node) return node
+            if (this.canvasMode === 'topology') {
+                return (projectStore.blueprint?.page_map?.nodes || []).find(node => node.node_id === selectedNodeId) || null
             }
-            return null
+            const graph = this.canvasMode === 'function'
+                ? projectStore.currentFunction?.graph
+                : projectStore.blueprint?.main_graph
+            return (graph?.nodes || []).find(node => node.node_id === selectedNodeId) || null
         },
         hasBreakpoints(state) {
             return state.breakpoints.size > 0
@@ -36,12 +48,15 @@ export const useUiStore = defineStore('ui', {
 
     actions: {
         setCanvasMode(mode) {
-            if (mode !== 'workflow' && mode !== 'topology') return
+            if (!['workflow', 'function', 'topology'].includes(mode)) return
             if (this.canvasMode === mode) return
             this.canvasMode = mode
             // 切换 Tab 时清空选中状态（同一套选中状态，两 Tab 共用）
             this.selectedNodeId = null
             this.selectedNodeIds = []
+            this.primaryNodeId = null
+            this.selectionAnchorId = null
+            this.selectedEdgeIds = []
             this.selectedGroupId = null
             useProjectStore().updateUiState('canvasMode', mode)
         },
@@ -49,20 +64,66 @@ export const useUiStore = defineStore('ui', {
         selectNode(nodeId) {
             this.selectedNodeId = nodeId || null
             this.selectedNodeIds = nodeId ? [nodeId] : []
+            this.primaryNodeId = nodeId || null
+            this.selectionAnchorId = nodeId || null
+            this.selectedEdgeIds = []
+            this.selectedGroupId = null
         },
 
-        selectNodes(nodeIds) {
-            this.selectedNodeIds = Array.isArray(nodeIds) ? [...nodeIds] : []
-            this.selectedNodeId = this.selectedNodeIds[0] || null
+        selectNodes(nodeIds, options = {}) {
+            const uniqueIds = Array.from(new Set((Array.isArray(nodeIds) ? nodeIds : []).filter(Boolean)))
+            this.selectedNodeIds = uniqueIds
+            const requestedPrimary = options.primaryId
+            this.primaryNodeId = uniqueIds.includes(requestedPrimary)
+                ? requestedPrimary
+                : (uniqueIds[0] || null)
+            this.selectedNodeId = this.primaryNodeId
+            if (options.preserveAnchor !== true) {
+                const requestedAnchor = options.anchorId
+                this.selectionAnchorId = uniqueIds.includes(requestedAnchor)
+                    ? requestedAnchor
+                    : this.primaryNodeId
+            }
+            this.selectedEdgeIds = Array.from(new Set((options.edgeIds || []).filter(Boolean)))
+            if (this.selectedNodeIds.length) this.selectedGroupId = null
+        },
+
+        selectPath(nodeIds, edgeIds = [], anchorId = null, primaryId = null) {
+            this.selectNodes(nodeIds, {
+                edgeIds,
+                anchorId: anchorId || nodeIds?.[0] || null,
+                primaryId: primaryId || nodeIds?.at?.(-1) || null
+            })
+        },
+
+        selectEdge(edgeId, additive = false) {
+            if (!edgeId) return
+            this.selectedEdgeIds = additive
+                ? Array.from(new Set([...this.selectedEdgeIds, edgeId]))
+                : [edgeId]
+        },
+
+        clearEdgeSelection() {
+            this.selectedEdgeIds = []
         },
 
         clearSelection() {
             this.selectedNodeId = null
             this.selectedNodeIds = []
+            this.primaryNodeId = null
+            this.selectionAnchorId = null
+            this.selectedEdgeIds = []
         },
 
         setSelectedGroup(groupId) {
             this.selectedGroupId = groupId || null
+            if (this.selectedGroupId) {
+                this.selectedNodeId = null
+                this.selectedNodeIds = []
+                this.primaryNodeId = null
+                this.selectionAnchorId = null
+                this.selectedEdgeIds = []
+            }
         },
 
         // ===== 批量模式 =====
@@ -85,15 +146,17 @@ export const useUiStore = defineStore('ui', {
             if (!nodeId) return
             const idx = this.selectedNodeIds.indexOf(nodeId)
             if (idx >= 0) {
-                this.selectedNodeIds.splice(idx, 1)
+                this.selectedNodeIds = this.selectedNodeIds.filter(id => id !== nodeId)
             } else {
-                this.selectedNodeIds.push(nodeId)
+                this.selectedNodeIds = [...this.selectedNodeIds, nodeId]
             }
-            if (this.selectedNodeIds.length === 1) {
-                this.selectedNodeId = this.selectedNodeIds[0]
-            } else if (!this.selectedNodeIds.includes(this.selectedNodeId || '')) {
-                this.selectedNodeId = this.selectedNodeIds[0] || null
-            }
+            this.primaryNodeId = this.selectedNodeIds.includes(nodeId)
+                ? nodeId
+                : (this.selectedNodeIds.at(-1) || null)
+            this.selectedNodeId = this.primaryNodeId
+            this.selectionAnchorId = this.primaryNodeId
+            this.selectedEdgeIds = []
+            if (this.selectedNodeIds.length) this.selectedGroupId = null
         },
 
         // ===== 全选当前任务的节点 =====
@@ -115,18 +178,22 @@ export const useUiStore = defineStore('ui', {
         async batchDeleteNodes() {
             if (!this.selectedNodeIds.length) return
             const projectStore = useProjectStore()
-            const task = projectStore.currentTask
-            if (!task || !task.nodes) return
             const idsToDelete = new Set(this.selectedNodeIds)
-            task.nodes = task.nodes.filter(n => !idsToDelete.has(n.node_id))
-            // 同时移除相关的边
-            if (projectStore.blueprint.edges) {
-                projectStore.blueprint.edges = projectStore.blueprint.edges.filter(
-                    e => !idsToDelete.has(e.source_node) && !idsToDelete.has(e.target_node)
-                )
-            }
+            const isTopology = this.canvasMode === 'topology'
+            const graph = isTopology
+                ? projectStore.blueprint.page_map
+                : (this.canvasMode === 'function' ? projectStore.currentFunction?.graph : projectStore.blueprint.main_graph)
+            if (!graph) return
+            const fixedIds = new Set((graph.nodes || []).filter(node => node.fixed).map(node => node.node_id))
+            const removable = new Set([...idsToDelete].filter(id => !fixedIds.has(id)))
+            graph.nodes = (graph.nodes || []).filter(node => !removable.has(node.node_id))
+            const nextEdges = (graph.edges || []).filter(edge =>
+                !removable.has(edge.source_node) && !removable.has(edge.target_node)
+            )
+            graph.edges = nextEdges
+            if (isTopology) await projectStore.saveTopologyData()
+            else await projectStore.saveWorkflowImmediately()
             this.clearSelection()
-            await projectStore.saveBlueprintDebounced()
         },
 
         // ===== 批量设置节点延迟 =====
@@ -228,6 +295,31 @@ export const useUiStore = defineStore('ui', {
         },
         clearCaptureFillHandler() {
             this.captureFillHandler = null
+        },
+        setFieldCaptureHandler(requestId, handler, cancelHandler = null) {
+            this.fieldCaptureRequestId = requestId || null
+            this.fieldCaptureHandler = typeof handler === 'function' ? handler : null
+            this.fieldCaptureCancelHandler = typeof cancelHandler === 'function' ? cancelHandler : null
+        },
+        async completeFieldCapture(payload) {
+            if (!payload || payload.field_request_id !== this.fieldCaptureRequestId || !this.fieldCaptureHandler) {
+                throw new Error('属性捕获请求已失效，请重新点击捕获')
+            }
+            const handler = this.fieldCaptureHandler
+            this.clearFieldCaptureHandler()
+            return await handler(payload)
+        },
+        cancelFieldCapture(requestId = null) {
+            if (requestId && requestId !== this.fieldCaptureRequestId) return false
+            const cancel = this.fieldCaptureCancelHandler
+            this.clearFieldCaptureHandler()
+            if (cancel) cancel()
+            return true
+        },
+        clearFieldCaptureHandler() {
+            this.fieldCaptureRequestId = null
+            this.fieldCaptureHandler = null
+            this.fieldCaptureCancelHandler = null
         },
         bumpInspectorSync() {
             this.inspectorSyncTick += 1

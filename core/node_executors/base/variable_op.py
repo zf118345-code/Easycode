@@ -1,85 +1,59 @@
 # core/node_executors/base/variable_op.py
-# 变量操作执行器：优先「自由表达式赋值」（new_value），旧版 op_action 字段走历史策略兜底。
+# 变量操作执行器：使用自由表达式 new_value 赋值。
 import re
 
 from core.expressions import ExpressionError, evaluate_expression
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
-from core.variables import VariableTypeRegistry
 
 
 @NodeExecutorRegistry.register('variable_op')
 class VariableOpNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
         params = node.params
-        target_var = self._clean_var_name(params.get('target_var', ''))
+        raw_target = str(params.get('target_var', '') or '').strip()
+        target_var = self._clean_var_name(raw_target)
 
         if not target_var:
-            context.log('⚠️ [变量操作] 未配置目标变量名')
-            return self.build_jump_result(True, params.get('on_success', {}))
+            if raw_target:
+                context.log(f' [变量操作] 写入目标只支持 $var、$ctx 或函数内的 $local: {raw_target}')
+                return self.build_result(False)
+            context.log(' [变量操作] 未配置目标变量名')
+            return self.build_result(True)
 
         new_value = params.get('new_value')
 
-        # 新版：自由表达式赋值优先（无表达式时旧节点自动回退历史策略）
         if isinstance(new_value, str) and new_value.strip():
-            return self._execute_expression(target_var, new_value, params, context)
+            return self._execute_expression(target_var, raw_target or f'$var{{{target_var}}}', new_value, context)
 
-        # 旧版兼容：op_action 策略字段
-        if params.get('op_action'):
-            return self._execute_legacy(target_var, params, context)
-
-        context.log(f'⚠️ [变量操作] [{target_var}] 未配置赋值表达式，已跳过')
-        return self.build_jump_result(True, params.get('on_success', {}))
+        context.log(f' [变量操作] [{target_var}] 未配置赋值表达式，已跳过')
+        return self.build_result(True)
 
     @staticmethod
     def _clean_var_name(raw) -> str:
-        """剥离 $var{} / $ctx{} / $env{} / $sys{} 前缀；裸变量名直接用"""
+        """剥离 $var{} 前缀；裸变量名直接使用。"""
         text = (raw or '').strip()
-        m = re.match(r'^\$(?:var|ctx|env|sys)\{([^{}]+)\}$', text)
+        m = re.match(r'^\$(var|ctx|local)\{([^{}]+)\}$', text)
         if m:
-            return m.group(1).strip()
+            namespace, name = m.group(1), m.group(2).strip()
+            return f'__local__:{name}' if namespace == 'local' else name
+        dotted = re.match(r'^\$local\.([A-Za-z_][A-Za-z0-9_]*)$', text)
+        if dotted:
+            return f'__local__:{dotted.group(1)}'
+        if text.startswith(('$param.', '$param{', '$env.', '$env{', '$sys.', '$sys{')):
+            return ''  # parameters and environment/system values are read-only
+        if text.startswith('$'):
+            return ''
         return text
 
-    def _execute_expression(self, target_var, expr, params, context):
+    def _execute_expression(self, target_var, display_target, expr, context):
         old_val = context.variables.get(target_var, None)
         try:
             new_val = evaluate_expression(expr, context)
         except ExpressionError as e:
-            context.log(f'❌ [变量操作] [{target_var}] 表达式求值失败: {e}')
-            return self.build_jump_result(False, params.get('on_failure', {}))
+            context.log(f' [变量操作] [{target_var}] 表达式求值失败: {e}')
+            return self.build_result(False)
 
         context.variables[target_var] = new_val
-        context.log(f'🔢 [变量操作] $var{{{target_var}}}: {old_val} ──(表达式)──> {new_val}')
-        return self.build_jump_result(True, params.get('on_success', {}))
-
-    # ------------------------------------------------------------------ 旧版兼容
-
-    def _execute_legacy(self, target_var, params, context):
-        old_val = context.variables.get(target_var, None)
-        var_type = params.get('var_type', 'number')
-        if old_val is not None:
-            var_type = self._infer_var_type(old_val)
-
-        type_handler = VariableTypeRegistry.get(var_type)
-        if not type_handler:
-            context.log(f'❌ [变量操作] 不支持的数据类型: {var_type}')
-            return self.build_jump_result(False, params.get('on_failure', {}))
-
-        new_val = type_handler.execute(var_type, old_val, params, context)
-
-        context.variables[target_var] = new_val
-        context.log(f'🔢 [变量操作] [{target_var}]: {old_val} ──({var_type})──> {new_val}')
-        return self.build_jump_result(True, params.get('on_success', {}))
-
-    @staticmethod
-    def _infer_var_type(value) -> str:
-        """按实际值推断变量类型（与全局变量面板类型对应）"""
-        if isinstance(value, bool):
-            return 'boolean'
-        if isinstance(value, (int, float)):
-            return 'number'
-        if isinstance(value, list):
-            return 'list'
-        if isinstance(value, dict):
-            return 'dict'
-        return 'string'
+        context.log(f' [变量操作] {display_target}: {old_val} -> {new_val}')
+        return self.build_result(True)

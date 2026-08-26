@@ -8,26 +8,14 @@ class LogNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
         params = node.params
         msg = str(params.get('message', ''))
-        formatted_msg = msg
+        # 变量插值只接受统一表达式（$var{name} / $ctx{name} / $env{name}）。
+        formatted_msg = str(context.parse_expr(msg))
 
-        # 1. 变量插值解析（支持 {var_name} 占位符或直接变量名引用）
-        if context.variables:
-            for var_key, var_val in context.variables.items():
-                placeholder = f'{{{var_key}}}'
-                if placeholder in formatted_msg:
-                    formatted_msg = formatted_msg.replace(placeholder, str(var_val))
+        full_log_text = f' [LOG] {formatted_msg}'
 
-            # 如果日志内容填写的直接是某个已存在的变量名，直接输出该变量值
-            if msg in context.variables and msg == formatted_msg:
-                formatted_msg = str(context.variables[msg])
-
-        full_log_text = f'📝 [LOG] {formatted_msg}'
-
-        # 2. 强行刷新打印到标准控制台（终端/IDE 调试能直接看到）
-        print(full_log_text, flush=True)
-
-        # 3. 推送到 ExecutionContext，供前端 SSE 日志面板实时推送
+        # 统一由 ExecutionContext 输出和转发。控制台只是观测副本，不能因为
+        # Windows GBK/失效句柄无法编码 Emoji 而让一个日志节点执行失败。
         context.log(full_log_text)
 
-        # 4. 返回标准跳转元数据，保证图执行器能推导走向下一个节点
-        return self.build_jump_result(True, params.get('on_success', {}))
+        # 返回标准结果，图执行器根据实体边决定下一节点。
+        return self.build_result(True)

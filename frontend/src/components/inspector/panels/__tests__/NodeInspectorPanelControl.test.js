@@ -2,16 +2,15 @@
 // C 环节：NodeInspectorPanel 遍历渲染 control 节点 schema
 //   - 每个参数（action/by/target/window_title/index/text_input/save_to_var/timeout）都渲染出对应 ParamRenderer
 //   - config 透传正确（type/label/default）
-//   - on_success/on_failure 不渲染（网关排除）
 //   - 参数更新 → emit save
-import { describe, it, expect } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { mount, flushPromises } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import ElementPlus from 'element-plus'
 import NodeInspectorPanel from '../NodeInspectorPanel.vue'
 import { useProjectStore } from '@/stores'
 import { CONTROL_SCHEMA } from '@/testFixtures/controlSchema'
 import { buildNodeDefaultParams } from '@/utils/nodeDefaults'
+import { visionApi } from '@/api/visionApi'
 
 globalThis.ResizeObserver = globalThis.ResizeObserver || class { observe() {} unobserve() {} disconnect() {} }
 
@@ -56,6 +55,10 @@ describe('NodeInspectorPanel × control 节点', () => {
         useProjectStore().paramsDefinitions = { control: CONTROL_SCHEMA }
     })
 
+    afterEach(() => {
+        vi.restoreAllMocks()
+    })
+
     it('遍历渲染全部 8 个参数（含 visible_if 依赖的 text_input/save_to_var）', () => {
         const wrapper = mountPanel()
         const stubs = wrapper.findAll('.pr-stub').map(w => w.text())
@@ -63,17 +66,6 @@ describe('NodeInspectorPanel × control 节点', () => {
         for (const label of ['操作方式', '查找方式', '控件标识', '目标窗口标题', '匹配序号', '输入内容', '保存结果到变量', '查找超时时长']) {
             expect(stubs.some(t => t.startsWith(label))).toBe(true)
         }
-        wrapper.unmount()
-    })
-
-    it('on_success/on_failure 不进入渲染列表（网关排除）', () => {
-        const node = makeNode()
-        node.params.on_success = { target_node: 'n2' }
-        node.params.on_failure = { target_node: 'n3' }
-        const wrapper = mountPanel(node)
-        const texts = wrapper.findAll('.pr-stub').map(w => w.text()).join('|')
-        expect(texts).not.toContain('on_success')
-        expect(texts).not.toContain('on_failure')
         wrapper.unmount()
     })
 
@@ -98,6 +90,50 @@ describe('NodeInspectorPanel × control 节点', () => {
         targetStub.vm.$emit('update', '关闭按钮')
 
         expect(node.params.target).toBe('关闭按钮')
+        expect(wrapper.emitted('save')).toBeTruthy()
+        wrapper.unmount()
+    })
+
+    it('录制区域为空时从图片资源元数据回填并保存显示值', async () => {
+        const store = useProjectStore()
+        store.currentProjectPath = 'D:/project'
+        store.paramsDefinitions = {
+            image_recognition: {
+                label: '图像识别',
+                params: {
+                    image_source: { type: 'file', label: '模板图片' },
+                    region_type: { type: 'select', label: '匹配区域' },
+                    region_value: { type: 'list_int4_picker', label: '匹配区域坐标' },
+                    region_reference_size: { type: 'list_int2', hidden: true }
+                }
+            }
+        }
+        vi.spyOn(visionApi, 'resolveTemplate').mockResolvedValue({
+            capture: {
+                region: [16, 266, 58, 79],
+                reference_size: [960, 540],
+                coordinate_space: 'workspace_px'
+            }
+        })
+        const node = {
+            node_id: 'image_1',
+            node_name: '图像识别节点',
+            node_type: 'image_recognition',
+            params: {
+                image_source: 'asset://button',
+                region_type: 'recorded',
+                region_value: [0, 0, 0, 0],
+                region_reference_size: [0, 0]
+            },
+            delay_before: 0,
+            loop_count: 1
+        }
+
+        const wrapper = mountPanel(node)
+        await flushPromises()
+
+        expect(node.params.region_value).toEqual([16, 266, 58, 79])
+        expect(node.params.region_reference_size).toEqual([960, 540])
         expect(wrapper.emitted('save')).toBeTruthy()
         wrapper.unmount()
     })

@@ -4,7 +4,8 @@ export function useConnection() {
     const drawingConnection = ref({
         active: false,
         sourceNodeId: null,
-        portType: 'succ',
+        portType: 'success',
+        sourcePortId: 'success',
         sourceX: 0,
         sourceY: 0,
         currentX: 0,
@@ -12,11 +13,12 @@ export function useConnection() {
         previewMarkerUrl: 'url(#arrow-preview)'
     })
 
-    const startConnection = (e, nodeId, portType, sourceX = 0, sourceY = 0) => {
+    const startConnection = (e, nodeId, portType, sourceX = 0, sourceY = 0, sourcePortId = '') => {
         drawingConnection.value = {
             active: true,
             sourceNodeId: nodeId,
             portType: portType,
+            sourcePortId: sourcePortId || portType,
             sourceX: sourceX,
             sourceY: sourceY,
             currentX: sourceX,
@@ -41,8 +43,9 @@ export function useConnection() {
         const wasDrawing = drawingConnection.value.active
         const sourceId = drawingConnection.value.sourceNodeId
         const portType = drawingConnection.value.portType
+        const sourcePortId = drawingConnection.value.sourcePortId
         drawingConnection.value.active = false
-        return { wasDrawing, sourceId, portType }
+        return { wasDrawing, sourceId, portType, sourcePortId }
     }
 
     const cancelConnection = () => {

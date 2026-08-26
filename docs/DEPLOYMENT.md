@@ -42,16 +42,13 @@ copy .env.example .env
 | 环境变量 | 必填 | 说明 |
 |---------|------|------|
 | `APP_ENV` | 是 | 运行环境，取值 `dev` 或 `prod` |
-| `EASYCODE_SIGN_SECRET` | 生产必填 | 蓝图 HMAC-SHA256 签名密钥，建议 32 字节以上随机字符串 |
 | `EASYCODE_MASTER_SALT` | 生产必填 | 资产加密 PBKDF2 Salt，建议 16 字节以上随机字符串 |
 | `EASYCODE_CORS_ORIGINS` | 按需 | 允许的前端来源，逗号分隔，如 `http://a.com,http://b.com` |
 | `EASYCODE_RATE_LIMIT` | 按需 | 全局速率限制（slowapi 格式），默认 `120/minute` |
+| `EASYCODE_PLAYER_BUNDLE` | 仅 Player 开发调试 | 显式指向待预览的 `assets.ebp`；不允许扫描工作目录 |
 
 > **密钥生成示例**
 > ```bash
-> # 生成 SIGN_SECRET
-> python -c "import secrets; print(secrets.token_urlsafe(48))"
->
 > # 生成 MASTER_SALT
 > python -c "import secrets; print(secrets.token_urlsafe(32))"
 > ```
@@ -60,7 +57,6 @@ copy .env.example .env
 
 | 配置项 | `APP_ENV=dev` | `APP_ENV=prod` |
 |-------|--------------|---------------|
-| SIGN_SECRET 未设置 | 使用内置兜底密钥（仅调试） | **启动失败**，禁止使用兜底 |
 | MASTER_SALT 未设置 | 使用内置兜底 Salt（仅调试） | **启动失败**，禁止使用兜底 |
 | CORS_ORIGINS 未设置 | 允许所有来源 `['*']` | 仅允许本机回环地址 |
 
@@ -69,7 +65,13 @@ copy .env.example .env
 **方式一：直接运行入口脚本**
 
 ```bash
-python main.py
+python api.py --mode dev
+```
+
+`main.py` 是严格的命令行脚本执行器，需要同时传入绝对项目目录和任务 ID：
+
+```bash
+python main.py --project "D:\\Scripts\\MyProject" --task task_xxx
 ```
 
 **方式二：uvicorn 命令（推荐生产）**
@@ -118,13 +120,17 @@ npm run dev
 
 默认监听 `http://localhost:5173`，Vite 会自动代理 `/api` 请求到后端（见 `vite.config.js`）。
 
+开发阶段仍使用 FastAPI 终端 + Vite 终端 + 浏览器页面；发布阶段由 PyInstaller
+组装 FastAPI、原生 WebView2 宿主、前端静态文件和固定 EBP，最终以独立 EXE 交付。
+
 ### 生产构建
 
 ```bash
 npm run build
 ```
 
-构建产物输出到 `frontend/dist/` 目录，可直接部署到任意静态文件服务器。
+构建产物输出到项目根目录的 `release/web/`，并同时生成 IDE、Player、Capture 三个入口：
+`index.html`、`player.html`、`capture.html`。
 
 ### 预览构建结果
 
@@ -144,7 +150,7 @@ server {
     server_name easycode.example.com;
 
     # 前端静态文件
-    root /var/www/easycode/frontend/dist;
+    root /var/www/easycode/release/web;
     index index.html;
 
     # Vue Router history 模式支持
@@ -255,7 +261,7 @@ cd frontend && npm run build
 
 ### 1. 密钥与加密
 
-- **必须**设置 `EASYCODE_SIGN_SECRET` 与 `EASYCODE_MASTER_SALT`，严禁依赖开发兜底值
+- **必须**设置 `EASYCODE_MASTER_SALT`，严禁依赖开发兜底值
 - 密钥应通过部署平台的 Secrets 管理（Docker Secrets、K8s Secrets、云厂商密钥服务），禁止硬编码或写入 `.env` 后提交仓库
 - 建议定期轮换密钥，轮换后需重新导出所有加密蓝图资产
 
@@ -278,7 +284,7 @@ cd frontend && npm run build
 - 示例 Caddyfile：
   ```caddy
   easycode.example.com {
-      root * /var/www/easycode/frontend/dist
+      root * /var/www/easycode/release/web
       try_files {path} /index.html
       file_server
 
@@ -330,3 +336,10 @@ cd frontend && npm run build
 | 9 | 蓝图加密导出 | 在 IDE 中导出受签名保护的蓝图文件 | 文件可正常重新导入，签名校验通过，篡改后导入失败 |
 
 > **注**：第 6~8 项需要真实 Windows 桌面环境，无法在 CI 无头环境中验证。
+
+### 7. 局域网协调服务
+
+- 单机 IDE/Player 的状态、计划、消息和租约无需额外部署，分别保存在项目或 Player 运行目录下的 SQLite WAL 数据库。
+- 跨电脑协作时，选一台机器设置高强度 `EASYCODE_COORDINATOR_TOKEN`，再使用 `python api.py --host 0.0.0.0 --port 8000` 在受信任局域网启动。
+- 客户端通过 `platform.remote.*` 能力发布、领取、确认消息，或获取/续租/释放资源锁。发布失败会进入指数退避的离线队列；领取和租约因时效性要求不会伪装成成功。
+- 不要将协调端口直接暴露到公网。如确有广域网需求，必须再加 TLS、防火墙白名单和定期令牌轮换。

@@ -8,6 +8,12 @@ from core.services.control_service import find_control, perform_action
 from core.utils import resolve_template_string
 
 
+def _context_setting(context, key, default=None):
+    """Support the runtime context plus older/custom executor contexts."""
+    getter = getattr(context, 'get_setting', None)
+    return getter(key, default) if callable(getter) else default
+
+
 @NodeExecutorRegistry.register('control')
 class ControlNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
@@ -16,6 +22,8 @@ class ControlNodeExecutor(BaseNodeExecutor):
         by = params.get('by', 'uia_name')
         target = resolve_template_string(params.get('target', ''), context).strip()
         window_title = resolve_template_string(params.get('window_title', ''), context).strip()
+        if not window_title:
+            window_title = str(getattr(context, 'variables', {}).get('title') or '').strip()
         try:
             index = int(params.get('index', 0) or 0)
         except (TypeError, ValueError):
@@ -39,8 +47,8 @@ class ControlNodeExecutor(BaseNodeExecutor):
                 window_title = wt
 
         if not target:
-            context.log('⚠️ [控件操作] 未配置控件名称（控件名称为空），已跳过', 'warning')
-            return self.build_jump_result(True, params.get('on_success', {}))
+            context.log(' [控件操作] 未配置控件名称（控件名称为空），已跳过', 'warning')
+            return self.build_result(True)
 
         context.log(
             f'🎛️ [控件操作] 查找控件 | 方式: {by} | 标识: {target!r} | '
@@ -55,7 +63,7 @@ class ControlNodeExecutor(BaseNodeExecutor):
             path = (control_info or {}).get('ancestor_path')
             if isinstance(path, list) and path:
                 info = uia_service.find_control_by_path(
-                    window_title=window_title, path=path, timeout_ms=min(timeout_ms, 1500)
+                    window_title=window_title, path=path, timeout_ms=min(timeout_ms, int(_context_setting(context, 'control_timeout_cap_ms', 1500)))
                 )
             # 2) 位置锚点：固定位置控件（任务栏/桌面图标等树遍历不可靠的场景）rect 中心命中 + 身份校验
             if info is None:
@@ -65,7 +73,7 @@ class ControlNodeExecutor(BaseNodeExecutor):
                     expect_aid=(control_info or {}).get('automation_id'),
                     expect_type=(control_info or {}).get('control_type'),
                 )
-            # 3) 主选择器 BFS（旧节点无 path 或 path 失效时）
+        # 3) 主选择器 BFS（祖先链在动态界面失效时的运行时恢复路径）
             if info is None:
                 info = uia_service.find_control(
                     window_title=window_title, by=by, target=target, index=index, timeout_ms=timeout_ms
@@ -76,6 +84,8 @@ class ControlNodeExecutor(BaseNodeExecutor):
                     uia_service, window_title, by, target, index, timeout_ms, control_info
                 )
             if info is not None:
+                if isinstance(path, list) and path:
+                    info['_ancestor_path'] = path
                 hit_note = ''
                 if info.get('matched_by') == 'path':
                     hit_note = '（祖先链定位）'
@@ -84,7 +94,7 @@ class ControlNodeExecutor(BaseNodeExecutor):
                 elif info.get('matched_by'):
                     hit_note = f'（备选 {info["matched_by"]}={info.get("matched_target", "")}）'
                 context.log(
-                    f'🎯 [控件操作] 命中 UIA 元素 | name={info.get("name", "")!r} | '
+                    f' [控件操作] 命中 UIA 元素 | name={info.get("name", "")!r} | '
                     f'type={info.get("control_type", "")} | id={info.get("automation_id", "")} | '
                     f'坐标={info.get("rect", [])}{hit_note}'
                 )
@@ -94,28 +104,36 @@ class ControlNodeExecutor(BaseNodeExecutor):
             )
 
         if info is None:
-            context.log(f'❌ [控件操作] 未找到匹配控件 [{target}]（超时 {timeout_ms}ms）')
-            return self.build_jump_result(False, params.get('on_failure', {}))
+            context.log(f' [控件操作] 未找到匹配控件 [{target}]（超时 {timeout_ms}ms）')
+            return self.build_result(False)
 
         if not by.startswith('uia_'):
             context.log(
-                f'🎯 [控件操作] 命中控件 | class={info.get("class_name", "")} | '
+                f' [控件操作] 命中控件 | class={info.get("class_name", "")} | '
                 f'text={info.get("text", "")!r} | 坐标={info.get("rect", [])}'
             )
 
         if by.startswith('uia_'):
             from core.services import uia_service
 
-            result = uia_service.perform_uia_action(info, action)
+            result = uia_service.perform_uia_action(
+                info,
+                action,
+                allow_physical_fallback=bool(_context_setting(context, 'allow_physical_fallback', False)),
+            )
         else:
-            result = perform_action(info, action)
+            result = perform_action(
+                info,
+                action,
+                allow_physical_fallback=bool(_context_setting(context, 'allow_physical_fallback', False)),
+            )
 
         if not result.get('ok'):
-            context.log(f'❌ [控件操作] {result.get("message", "操作执行失败")}')
-            return self.build_jump_result(False, params.get('on_failure', {}))
+            context.log(f' [控件操作] {result.get("message", "操作执行失败")}')
+            return self.build_result(False)
 
-        context.log(f'✅ [控件操作] {result.get("message", "操作成功")}')
-        return self.build_jump_result(True, params.get('on_success', {}))
+        context.log(f' [控件操作] {result.get("message", "操作成功")}')
+        return self.build_result(True)
 
     @staticmethod
     def _infer_selector(by, target):

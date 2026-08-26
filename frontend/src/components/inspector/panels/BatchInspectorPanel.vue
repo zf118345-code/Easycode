@@ -19,7 +19,7 @@
         <div class="inspector-scrollable-body">
             <div class="params-container">
                 <template v-for="(config, paramName) in commonParams" :key="paramName">
-                    <div v-if="!['region_value', 'gray_threshold', 'on_success', 'on_failure', 'candidates'].includes(paramName)" class="param-item">
+                    <div v-if="!['region_value', 'gray_threshold', 'candidates'].includes(paramName)" class="param-item">
                         <ParamRenderer
 :config="config"
                                        :value="getCommonParamValue(paramName)"
@@ -56,7 +56,7 @@
 
 <script setup>
     import { computed } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { useIdeStore } from '@/stores'
     import ParamRenderer from '@/components/ParamRenderer.vue'
     import { Files } from 'lucide-vue-next'
 
@@ -64,7 +64,7 @@
         nodes: { type: Array, default: () => [] }
     })
     const emit = defineEmits(['save'])
-    const store = useMainStore()
+    const store = useIdeStore()
 
     const commonParams = computed(() => {
         if (!props.nodes || props.nodes.length === 0) return {}
@@ -88,14 +88,9 @@
     }
 
     const handleBatchParamUpdate = (paramName, value) => {
-        const ids = props.nodes.map(n => n.node_id)
-        store.blueprint?.tasks?.forEach(t => {
-            (t.nodes || []).forEach(n => {
-                if (ids.includes(n.node_id)) {
-                    if (!n.params) n.params = {}
-                    n.params[paramName] = value
-                }
-            })
+        props.nodes.forEach(node => {
+            if (!node.params) node.params = {}
+            node.params[paramName] = value
         })
         emit('save')
     }
@@ -109,12 +104,7 @@
         },
         set: (val) => {
             const num = Number(val) || 0
-            const ids = props.nodes.map(n => n.node_id)
-            store.blueprint?.tasks?.forEach(t => {
-                (t.nodes || []).forEach(n => {
-                    if (ids.includes(n.node_id)) n.delay_before = num
-                })
-            })
+            props.nodes.forEach(node => { node.delay_before = num })
             emit('save')
         }
     })
@@ -128,12 +118,7 @@
         },
         set: (val) => {
             const num = Number(val) || 1
-            const ids = props.nodes.map(n => n.node_id)
-            store.blueprint?.tasks?.forEach(t => {
-                (t.nodes || []).forEach(n => {
-                    if (ids.includes(n.node_id)) n.loop_count = num
-                })
-            })
+            props.nodes.forEach(node => { node.loop_count = num })
             emit('save')
         }
     })
@@ -163,8 +148,8 @@
     .node-type-icon-badge {
         width: 32px;
         height: 32px;
-        background: rgba(78, 209, 156, 0.1);
-        border: 1px solid rgba(78, 209, 156, 0.3);
+        background: rgba(217, 84, 23, 0.1);
+        border: 1px solid rgba(217, 84, 23, 0.3);
         border-radius: 8px;
         display: flex;
         align-items: center;

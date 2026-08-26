@@ -19,14 +19,14 @@
             :label="page.page_name"
             :value="page.page_id" />
         <template #empty>
-            <span v-if="!loading" class="page-select-empty">拓扑地图中暂无页面，请先在拓扑画布添加页面状态节点</span>
+            <span v-if="!loading" class="page-select-empty">页面地图中暂无页面，请先添加页面状态节点</span>
         </template>
     </el-select>
 </template>
 
 <script setup>
     import { ref } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { useIdeStore } from '@/stores'
 
     defineProps({
         config: { type: Object, default: () => ({}) },
@@ -34,24 +34,17 @@
     })
     defineEmits(['update:modelValue'])
 
-    const store = useMainStore()
+    const store = useIdeStore()
     const pageList = ref([])
     const loading = ref(false)
 
     const fetchPages = () => {
         loading.value = true
         try {
-            const topology = store.blueprint?.topology || {}
-            const tasks = topology.tasks || []
-            const pages = []
-            for (const task of tasks) {
-                for (const node of task.nodes || []) {
-                    if (node?.node_type !== 'page_state') continue
-                    const pageId = node.params?.page_id
-                    if (!pageId) continue
-                    pages.push({ page_id: pageId, page_name: node.node_name || pageId })
-                }
-            }
+            const pages = (store.blueprint?.page_map?.nodes || []).flatMap(node => {
+                if (node?.node_type !== 'page_state' || !node.params?.page_id) return []
+                return [{ page_id: node.params.page_id, page_name: node.node_name || node.params.page_id }]
+            })
             pageList.value = pages
         } finally {
             loading.value = false

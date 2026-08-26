@@ -6,21 +6,30 @@ current_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
+from core.services.dpi_service import enable_per_monitor_v2  # noqa: E402
+
+enable_per_monitor_v2()
+
 os.environ['FLAGS_use_mkldnn'] = '0'  # noqa: SIM112 - PaddlePaddle 要求小写
 os.environ['FLAGS_enable_pir_api'] = '0'  # noqa: SIM112 - PaddlePaddle 要求小写
 
 import logging  # noqa: E402
+import asyncio  # noqa: E402
+import secrets  # noqa: E402
 import threading  # noqa: E402
+from contextlib import asynccontextmanager  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 import uvicorn  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.requests import Request  # noqa: E402
-from starlette.responses import Response  # noqa: E402
+from starlette.responses import JSONResponse, Response  # noqa: E402
 
 # 安全配置（统一从环境变量读取，避免硬编码密钥/CORS 来源）
 from core.config import SecurityConfig  # noqa: E402
+from core.services.project_workspace_service import project_workspace_manager  # noqa: E402
 
 # 速率限制（slowapi 可选，缺失时降级为无限制）
 try:
@@ -38,6 +47,13 @@ except ImportError:  # pragma: no cover - slowapi 未安装时降级
     )
 
 logger = logging.getLogger(__name__)
+
+
+def _runtime_root() -> Path:
+    """Return the install/source root independent of the process working directory."""
+    if getattr(sys, 'frozen', False):
+        return Path(sys.executable).resolve().parent
+    return Path(current_dir).resolve()
 
 # ====== 条件导入：核心模块（必须存在） ======
 from core.project_loader import load_project  # noqa: E402
@@ -63,6 +79,12 @@ except ImportError:
     logger.warning('WorkspaceService 不可用')
 
 try:
+    from core.services.frame_recording_service import frame_recording_service
+except ImportError:
+    frame_recording_service = None
+    logger.warning('FrameRecordingService 不可用')
+
+try:
     from core.services.vision_service import VisionService
 except ImportError:
     VisionService = None
@@ -79,12 +101,6 @@ try:
 except ImportError:
     DebugService = None
     logger.warning('DebugService 不可用')
-
-try:
-    from core.services.debug_service import DebugService
-except ImportError:
-    DebugService = None
-    logger.warning("DebugService 不可用")
 
 try:
     from core.services.export_service import ExportService
@@ -111,9 +127,26 @@ except ImportError:
     logger.info('pywebview 不可用（开发模式不需要）')
 
 
+@asynccontextmanager
+async def _lifespan(_app: FastAPI):
+    yield
+    if frame_recording_service is not None:
+        # 正常退出时补写 final session.json 并释放全局 Esc；图片从不清理。
+        frame_recording_service.stop('process_shutdown', timeout=3.0)
+
+    # CaptureOverlay 是 IDE 生命周期内常驻的原生子进程；后端退出时明确关闭。
+    from core.services.native_capture_overlay import native_capture_overlay
+
+    native_capture_overlay.shutdown()
+    project_workspace_manager.shutdown()
+    from core.services.platform_runtime_service import platform_runtime_service
+
+    platform_runtime_service.shutdown()
+
+
 def create_app():
     """创建 FastAPI 应用并注册所有路由"""
-    app = FastAPI(title='节点自动化后端', version='2.4')
+    app = FastAPI(title='节点自动化后端', version='2.4', lifespan=_lifespan)
 
     # ====== 速率限制中间件（slowapi 可选） ======
     if _HAS_SLOWAPI:
@@ -128,8 +161,36 @@ def create_app():
     security_headers = SecurityConfig.get_security_headers()
 
     @app.middleware('http')
+    async def protect_remote_lan_requests(request: Request, call_next):
+        """Do not expose the rest of the IDE API when coordinator mode binds to LAN."""
+        client_host = request.client.host if request.client else ''
+        local_hosts = {'127.0.0.1', '::1', 'localhost', 'testclient'}
+        expected = str(os.environ.get('EASYCODE_COORDINATOR_TOKEN') or '')
+        if client_host not in local_hosts:
+            supplied = str(request.headers.get('X-EasyCode-Token') or '')
+            if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+                return JSONResponse(status_code=401, content={'detail': '远程请求缺少有效的协调服务令牌'})
+        return await call_next(request)
+
+    @app.middleware('http')
     async def add_security_headers_middleware(request: Request, call_next):
         response: Response = await call_next(request)
+        if (
+            response.status_code < 400
+            and request.method in {'POST', 'PUT', 'PATCH', 'DELETE'}
+            and request.headers.get('x-workspace-id')
+            and request.url.path not in {'/api/workspaces/close', '/api/workspaces/open'}
+        ):
+            try:
+                await asyncio.to_thread(
+                    project_workspace_manager.acknowledge,
+                    request.headers['x-workspace-id'],
+                    int(request.headers.get('x-workspace-generation') or -1),
+                )
+            except Exception:
+                # A switch may complete while a response is returning; the old
+                # request is already done and must not change the new baseline.
+                pass
         for header, value in security_headers.items():
             response.headers[header] = value
         return response
@@ -144,7 +205,14 @@ def create_app():
         allow_credentials=False,
         # 仅允许实际使用到的 HTTP 方法，避免过度放开
         allow_methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-        allow_headers=['Content-Type', 'Authorization', 'X-Requested-With'],
+        allow_headers=[
+            'Content-Type',
+            'Authorization',
+            'X-Requested-With',
+            'X-Workspace-Id',
+            'X-Workspace-Generation',
+            'X-EasyCode-Token',
+        ],
     )
 
     # ====== 全局异常处理 ======
@@ -166,24 +234,52 @@ def create_app():
     # ====== 注册路由 ======
     from api.routers.blueprint_router import create_blueprint_router
     from api.routers.build_router import create_build_router
+    from api.routers.capture_router import create_capture_router
+    from api.routers.capability_router import create_capability_router
     from api.routers.execution_router import create_execution_router
+    from api.routers.project_workspace_router import create_project_workspace_router
+    from api.routers.platform_router import create_platform_router
     from api.routers.system_router import create_system_router
     from api.routers.ui_control_router import create_ui_control_router
     from api.routers.vision_router import create_vision_router
     from api.routers.workspace_router import create_workspace_router
 
     app.include_router(create_system_router(ALL_PARAMS))
+    app.include_router(create_project_workspace_router(project_workspace_manager))
+    app.include_router(create_platform_router())
     app.include_router(create_blueprint_router(BlueprintService, load_project))
     app.include_router(create_execution_router(ExecutionService, DebugService))
-    app.include_router(create_workspace_router(WorkspaceService))
+    app.include_router(create_workspace_router(WorkspaceService, frame_recording_service))
     app.include_router(create_vision_router(VisionService))
     app.include_router(create_ui_control_router())
+    app.include_router(create_capture_router())
+    app.include_router(create_capability_router())
     app.include_router(create_build_router(ExportService, CompilerService, PlayerService))
 
+    def workspace_blockers():
+        blockers = []
+        if ExecutionService is not None and ExecutionService.has_active_execution():
+            blockers.append('任务正在运行或暂停调试')
+        try:
+            from core.services import capture_mode
+            from core.services.capture_session_service import capture_session_service
+
+            if capture_mode.get_state().get('active'):
+                blockers.append('控件捕获模式正在运行')
+            if capture_session_service.is_capture_active():
+                blockers.append('截图捕获模式正在运行')
+        except Exception:
+            pass
+        if frame_recording_service is not None and frame_recording_service.get_state().get('active'):
+            blockers.append('逐帧录制正在运行')
+        return blockers
+
+    project_workspace_manager.set_activity_probe(workspace_blockers)
+
     # ====== 静态托管 ======
-    web_dir = os.path.join(os.getcwd(), 'release', 'web')
-    if os.path.exists(web_dir):
-        app.mount('/', StaticFiles(directory=web_dir, html=True), name='player_static')
+    web_dir = _runtime_root() / 'release' / 'web'
+    if web_dir.exists():
+        app.mount('/', StaticFiles(directory=str(web_dir), html=True), name='player_static')
 
     return app
 
@@ -191,15 +287,54 @@ def create_app():
 app = create_app()
 
 
-def start_webview():
-    """启动 PyWebView 原生窗口"""
-    if webview is None:
-        logger.error('pywebview 未安装，无法启动原生窗口模式')
+class PlayerWindowApi:
+    """暴露给 Player 前端的最小原生窗口控制桥。"""
+
+    def __init__(self):
+        self.window = None
+        self._maximized = False
+
+    def attach(self, window):
+        self.window = window
+
+    def minimize(self):
+        if self.window:
+            self.window.minimize()
+        return {'success': bool(self.window)}
+
+    def toggle_maximize(self):
+        if not self.window:
+            return {'success': False}
+        if self._maximized:
+            self.window.restore()
+        else:
+            self.window.maximize()
+        self._maximized = not self._maximized
+        return {'success': True, 'maximized': self._maximized}
+
+    def close(self):
+        if self.window:
+            self.window.destroy()
+        return {'success': bool(self.window)}
+
+
+def start_webview(port: int = 8000):
+    """启动原生 WebView2 Player；旧 PyWebView 只作为显式兼容回退。"""
+    from core.services.native_desktop_shell import run_native_desktop_shell
+
+    url = f'http://127.0.0.1:{int(port)}/player.html'
+    if run_native_desktop_shell(url):
         return
-    url = 'http://127.0.0.1:8000/#/player'
-    webview.create_window(
+
+    logger.warning('原生桌面宿主不可用，正在使用 PyWebView 兼容回退')
+    if webview is None:
+        logger.error('PyWebView 兼容回退也不可用，Player 无法显示')
+        return
+    window_api = PlayerWindowApi()
+    window = webview.create_window(
         title='Easycode 自动化运行助手',
         url=url,
+        js_api=window_api,
         width=960,
         height=720,
         resizable=True,
@@ -207,6 +342,7 @@ def start_webview():
         easy_drag=True,
         min_size=(800, 600),
     )
+    window_api.attach(window)
     webview.start()
 
 
@@ -217,16 +353,21 @@ if __name__ == '__main__':
     parser.add_argument(
         '--mode', type=str, default='dev', choices=['dev', 'prod'], help='运行模式: dev(仅后端), prod(带原生客户端窗口)'
     )
+    parser.add_argument('--host', default='127.0.0.1', help='监听地址；局域网协调服务可使用 0.0.0.0')
+    parser.add_argument('--port', type=int, default=8000, help='监听端口')
     args = parser.parse_args()
+
+    if args.host not in {'127.0.0.1', 'localhost', '::1'} and not os.environ.get('EASYCODE_COORDINATOR_TOKEN'):
+        parser.error('监听非本机地址时必须设置 EASYCODE_COORDINATOR_TOKEN')
 
     if args.mode == 'prod':
 
         def run_server():
-            uvicorn.run(app, host='127.0.0.1', port=8000, log_level='error')
+            uvicorn.run(app, host=args.host, port=args.port, log_level='error')
 
         server_thread = threading.Thread(target=run_server, daemon=True)
         server_thread.start()
-        start_webview()
+        start_webview(args.port)
     else:
         print('FastAPI 后端引擎运行中 (开发模式)...')
-        uvicorn.run(app, host='127.0.0.1', port=8000, reload=False)
+        uvicorn.run(app, host=args.host, port=args.port, reload=False)

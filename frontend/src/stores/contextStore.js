@@ -6,7 +6,12 @@ export const useContextStore = defineStore('context', {
         currentContext: {
             workMode: 'window',
             windowTitle: '',
+            windowHwnd: 0,
+            windowProcessId: 0,
+            windowClassName: '',
             isEmulator: false,
+            isAndroid: false,
+            adbDeviceId: '',
             offsetTop: 0,
             offsetBottom: 0,
             offsetLeft: 0,
@@ -25,7 +30,7 @@ export const useContextStore = defineStore('context', {
                 const ctx = await workspaceApi.getContext(projectStore.currentProjectPath)
                 if (ctx) {
                     this.currentContext = {
-                        workMode: ctx.windowTitle ? 'window' : 'desktop',
+                        workMode: ctx.workMode || (ctx.windowTitle ? 'window' : 'desktop'),
                         ...ctx
                     }
                 }

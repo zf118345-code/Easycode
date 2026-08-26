@@ -1,18 +1,23 @@
 # core/node_executors/base/ocr_recognition.py
 import base64
 import os
+import threading
 import time
 
 import cv2
 import numpy as np
-import pyautogui
-from core.services import screenshot_service
+from core.services.input_dispatcher import click_workspace
+from core.services.runtime_target import capture_workspace_region, workspace_rect
+from core.vision.frame_cache import prepared_frame
 
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
 
 _OCR_ENGINE = None
 _ENGINE_TYPE = None
+_OCR_INIT_LOCK = threading.Lock()
+_OCR_INFERENCE_LOCK = threading.Lock()
+_OCR_PROCESS_SEMAPHORE = None  # injected by the Player process supervisor
 
 # ⚡ #2 OCR 引擎升级：RapidOCR（PP-OCRv4，界面/游戏文本准确率高）优先，
 # ddddocr（轻量验证码向）兜底；可用环境变量 EASYCODE_OCR_ENGINE 强制指定
@@ -30,7 +35,7 @@ def _init_rapidocr():
         engine(np.zeros((32, 128, 3), dtype=np.uint8))
         return engine
     except Exception as e:
-        print(f'⚠️ [OCR 引擎] RapidOCR 初始化失败（将回退 ddddocr）: {e}')
+        print(f' [OCR 引擎] RapidOCR 初始化失败（将回退 ddddocr）: {e}')
         return None
 
 
@@ -40,7 +45,7 @@ def _init_ddddocr():
 
         return ddddocr.DdddOcr(show_ad=False)
     except Exception as e:
-        print(f'❌ [OCR 引擎初始化失败] ddddocr 导入异常: {e}')
+        print(f' [OCR 引擎初始化失败] ddddocr 导入异常: {e}')
         return None
 
 
@@ -50,34 +55,38 @@ def get_ocr_engine():
     if _ENGINE_TYPE is not None:
         return _ENGINE_TYPE, _OCR_ENGINE
 
-    forced = (os.environ.get('EASYCODE_OCR_ENGINE') or '').strip().lower()
-    if forced in ('rapidocr', 'ddddocr', 'none'):
-        _ENGINE_TYPE = forced
-        if forced == 'rapidocr':
-            _OCR_ENGINE = _init_rapidocr()
-            if _OCR_ENGINE is None:
-                _ENGINE_TYPE = 'none'
-        elif forced == 'ddddocr':
-            _OCR_ENGINE = _init_ddddocr()
-            if _OCR_ENGINE is None:
-                _ENGINE_TYPE = 'none'
-        if _ENGINE_TYPE != 'none':
-            print(f'✅ [OCR 引擎初始化] {_ENGINE_TYPE} 启动成功（强制指定）')
-        return _ENGINE_TYPE, _OCR_ENGINE
+    with _OCR_INIT_LOCK:
+        if _ENGINE_TYPE is not None:
+            return _ENGINE_TYPE, _OCR_ENGINE
 
-    # 默认链：RapidOCR → ddddocr
-    _OCR_ENGINE = _init_rapidocr()
-    if _OCR_ENGINE is not None:
-        _ENGINE_TYPE = 'rapidocr'
-        print('✅ [OCR 引擎初始化] RapidOCR (PP-OCRv4) 启动成功')
-    else:
-        _OCR_ENGINE = _init_ddddocr()
-        _ENGINE_TYPE = 'ddddocr' if _OCR_ENGINE is not None else 'none'
-        if _ENGINE_TYPE == 'ddddocr':
-            print('✅ [OCR 引擎初始化] ddddocr 启动成功（RapidOCR 不可用回退）')
+        forced = (os.environ.get('EASYCODE_OCR_ENGINE') or '').strip().lower()
+        if forced in ('rapidocr', 'ddddocr', 'none'):
+            _ENGINE_TYPE = forced
+            if forced == 'rapidocr':
+                _OCR_ENGINE = _init_rapidocr()
+                if _OCR_ENGINE is None:
+                    _ENGINE_TYPE = 'none'
+            elif forced == 'ddddocr':
+                _OCR_ENGINE = _init_ddddocr()
+                if _OCR_ENGINE is None:
+                    _ENGINE_TYPE = 'none'
+            if _ENGINE_TYPE != 'none':
+                print(f' [OCR 引擎初始化] {_ENGINE_TYPE} 启动成功（强制指定）')
+            return _ENGINE_TYPE, _OCR_ENGINE
+
+        # 默认链：RapidOCR → ddddocr
+        _OCR_ENGINE = _init_rapidocr()
+        if _OCR_ENGINE is not None:
+            _ENGINE_TYPE = 'rapidocr'
+            print(' [OCR 引擎初始化] RapidOCR (PP-OCRv4) 启动成功')
         else:
-            print('❌ [OCR 引擎] 无可用 OCR 引擎（rapidocr/ddddocr 均未安装），OCR 节点将超时失败')
-    return _ENGINE_TYPE, _OCR_ENGINE
+            _OCR_ENGINE = _init_ddddocr()
+            _ENGINE_TYPE = 'ddddocr' if _OCR_ENGINE is not None else 'none'
+            if _ENGINE_TYPE == 'ddddocr':
+                print(' [OCR 引擎初始化] ddddocr 启动成功（RapidOCR 不可用回退）')
+            else:
+                print(' [OCR 引擎] 无可用 OCR 引擎（rapidocr/ddddocr 均未安装），OCR 节点将超时失败')
+        return _ENGINE_TYPE, _OCR_ENGINE
 
 
 def ocr_engine_recognize(image_bgr) -> str:
@@ -86,19 +95,125 @@ def ocr_engine_recognize(image_bgr) -> str:
     if engine is None:
         return ''
     try:
-        if engine_type == 'rapidocr':
-            # RapidOCR 输入：BGR ndarray（onnxruntime）
-            result, _ = engine(image_bgr)
-            if not result:
-                return ''
-            return ''.join(item[1] for item in result)
-        if engine_type == 'ddddocr':
-            _, img_bytes = cv2.imencode('.png', image_bgr)
-            return str(engine.classification(img_bytes.tobytes()) or '')
+        # The bundled OCR engines are stateful native runtimes. A bounded lock
+        # prevents concurrent executor threads from corrupting one shared engine
+        # or multiplying CPU usage unpredictably. Worker isolation can later
+        # replace this with a small inference pool without changing callers.
+        process_slot = _OCR_PROCESS_SEMAPHORE
+        if process_slot is not None:
+            process_slot.acquire()
+        try:
+            with _OCR_INFERENCE_LOCK:
+                if engine_type == 'rapidocr':
+                    result, _ = engine(image_bgr)
+                    if not result:
+                        return ''
+                    return ''.join(item[1] for item in result)
+                if engine_type == 'ddddocr':
+                    _, img_bytes = cv2.imencode('.png', image_bgr)
+                    return str(engine.classification(img_bytes.tobytes()) or '')
+        finally:
+            if process_slot is not None:
+                process_slot.release()
     except Exception as e:
-        print(f'⚠️ [OCR 引擎] 识别调用失败: {e}')
+        print(f' [OCR 引擎] 识别调用失败: {e}')
         return ''
     return ''
+
+
+def preprocess_ocr_image(image_bgr, gray_scale: bool = True, gray_threshold: int = 127):
+    """Apply the exact same OCR preprocessing for nodes, conditions and previews."""
+    if gray_scale:
+        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+        _, thresh = cv2.threshold(gray, int(gray_threshold), 255, cv2.THRESH_BINARY)
+        return cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
+    return image_bgr
+
+
+def recognize_ocr_region(
+    context,
+    *,
+    region_type: str = 'fullwindow',
+    region_value=None,
+    region_reference_size=None,
+    gray_scale: bool = True,
+    gray_threshold: int = 127,
+    prefer_shared_frame: bool = True,
+):
+    """Recognize one workspace region and reuse results from the shared step frame.
+
+    Page-state and condition evaluation share ``context._step_screen``.  Caching by
+    that frame identity prevents the same region from running OCR repeatedly while
+    the engine evaluates several conditions against one captured frame.
+    """
+    use_region = (
+        str(region_type or 'fullwindow').lower() in {'recorded', 'custom'}
+        and isinstance(region_value, (list, tuple))
+        and len(region_value) == 4
+        and float(region_value[2] or 0) > 0
+        and float(region_value[3] or 0) > 0
+    )
+    requested_region = list(region_value) if use_region else None
+    shared_screen = getattr(context, '_step_screen', None) if prefer_shared_frame else None
+
+    if shared_screen is not None:
+        width, height = shared_screen.size
+        if requested_region is None:
+            actual_region = (0, 0, width, height)
+            screenshot = shared_screen
+        else:
+            actual_region = workspace_rect(
+                context,
+                requested_region,
+                region_reference_size,
+                current_work_area=(0, 0, width, height),
+            )
+            x, y, region_width, region_height = actual_region
+            screenshot = shared_screen.crop((x, y, x + region_width, y + region_height))
+        frame_token = id(shared_screen)
+    else:
+        screenshot, actual_region = capture_workspace_region(
+            context,
+            requested_region,
+            region_reference_size,
+        )
+        frame_token = None
+
+    cache_key = (
+        tuple(actual_region),
+        bool(gray_scale),
+        int(gray_threshold),
+    )
+    cache = getattr(context, '_ocr_frame_cache', None)
+    if frame_token is not None:
+        if not isinstance(cache, dict) or cache.get('frame_token') != frame_token:
+            cache = {'frame_token': frame_token, 'results': {}}
+            setattr(context, '_ocr_frame_cache', cache)
+        cached = cache['results'].get(cache_key)
+        if cached is not None:
+            return cached
+
+    if shared_screen is not None:
+        full_bgr = prepared_frame(context, shared_screen)['bgr']
+        if requested_region is None:
+            frame_bgr = full_bgr
+        else:
+            x, y, region_width, region_height = actual_region
+            frame_bgr = full_bgr[y:y + region_height, x:x + region_width]
+    else:
+        frame_bgr = prepared_frame(context, screenshot)['bgr']
+    processed_img = preprocess_ocr_image(frame_bgr, gray_scale, gray_threshold)
+    engine_type, _ = get_ocr_engine()
+    detected_text = ocr_engine_recognize(processed_img).strip()
+    result = {
+        'text': detected_text,
+        'engine': engine_type,
+        'region': tuple(int(value) for value in actual_region),
+        'processed_image': processed_img,
+    }
+    if frame_token is not None:
+        cache['results'][cache_key] = result
+    return result
 
 
 def image_to_base64(img_np):
@@ -123,23 +238,18 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
 
         engine_type, _ = get_ocr_engine()  # ⚡ 引擎初始化（统一识别入口内部调用）
 
-        # ---------------- 🔍 1. 计算识别区域坐标 ----------------
+        # ----------------  1. 计算识别区域坐标 ----------------
         if (
             region_type in ('recorded', 'custom')
             and len(region_value) == 4
             and region_value[2] > 0
             and region_value[3] > 0
         ):
-            x, y, w, h = region_value
-            if context.is_window_mode():
-                wx, wy, ww, wh = context.get_window_rect()
-                x += wx
-                y += wy
-            region_rect = (int(x), int(y), int(w), int(h))
+            region_rect = region_value
         else:
-            region_rect = context.get_window_rect()
+            region_rect = None
 
-        context.log(f'📋 [OCR 识别定位] 模式: {region_type} | 绝对计算区域: {region_rect}')
+        context.log(f' [OCR 识别定位] 模式: {region_type} | 工作区相对区域: {region_rect or "整个工作区"}')
 
         # ---------------- 📸 2. 落盘调试准备 ----------------
         debug_dir = os.path.join(context.project_dir, 'debug_screenshots')
@@ -151,23 +261,23 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
         debug_b64 = None
         attempt_count = 0
 
-        # ---------------- 🔄 3. 主识别循环 ----------------
+        # ----------------  3. 主识别循环 ----------------
         while time.time() - start_time < timeout:
             attempt_count += 1
             try:
-                screenshot = screenshot_service.capture(region=region_rect)
-                frame_rgb = np.array(screenshot)
-                frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
-                if gray_scale:
-                    gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-                    _, thresh = cv2.threshold(gray, gray_threshold, 255, cv2.THRESH_BINARY)
-                    processed_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
-                else:
-                    processed_img = frame_bgr
-
-                # ⚡ #2 统一识别入口（RapidOCR / ddddocr 引擎链）
-                detected_text = ocr_engine_recognize(processed_img).strip()
+                recognized = recognize_ocr_region(
+                    context,
+                    region_type=region_type,
+                    region_value=region_rect,
+                    region_reference_size=params.get('region_reference_size'),
+                    gray_scale=gray_scale,
+                    gray_threshold=gray_threshold,
+                    prefer_shared_frame=False,
+                )
+                detected_text = recognized['text']
+                engine_type = recognized['engine']
+                current_region = recognized['region']
+                processed_img = recognized['processed_image']
 
                 # ⚡ #13 终局才编码调试图（循环内不再重复 PNG 编码 + base64）
                 if debug_b64 is None:
@@ -178,40 +288,42 @@ class OcrRecognitionNodeExecutor(BaseNodeExecutor):
                     break
 
             except Exception as e:
-                context.log(f'💥 [OCR 第 {attempt_count} 次尝试异常]: {e}', 'error')
+                context.log(f' [OCR 第 {attempt_count} 次尝试异常]: {e}', 'error')
                 break
 
-            time.sleep(0.3)
+            time.sleep(context.get_setting('ocr_poll_ms', 300) / 1000.0)
 
-        # ---------------- 🎯 4. 终局结果处理 ----------------
-        extra_data = {}
+        # ----------------  4. 终局结果处理 ----------------
+        extra_data = {'text': detected_text, 'engine': engine_type}
         if debug_b64:
             extra_data['debug_image'] = debug_b64
 
         if found:
-            context.log(f'🎯 [OCR 识别成功] 最终抓取文本: "{detected_text}"', image=debug_b64)
+            context.last_ocr_text = detected_text
+            context.log(f'[OCR] 识别文字="{detected_text}"', image=debug_b64)
 
             if save_to_var:
                 context.variables[save_to_var] = detected_text
-                context.log(f'📝 [变量写入] context.variables[\'{save_to_var}\'] = "{detected_text}"')
+                context.log(f' [变量写入] context.variables[\'{save_to_var}\'] = "{detected_text}"')
 
             if params.get('on_success_action') == 'click_center':
-                cx = region_rect[0] + region_rect[2] // 2
-                cy = region_rect[1] + region_rect[3] // 2
-                # ⚡ 多开友好：绑定窗口时后台投递点击，不占用物理鼠标
-                hwnd = getattr(context, 'window_hwnd', None)
-                if hwnd:
-                    from core.services.background_input import background_click
+                cx = current_region[0] + current_region[2] // 2
+                cy = current_region[1] + current_region[3] // 2
+                result = click_workspace(context, cx, cy, requested_mode='background')
+                context.log(
+                    f' [OCR成功后点击] 工作区坐标({cx}, {cy}) [{result.get("method", "none")}] '
+                    f'| {result.get("message", "")}'
+                )
+                if not result.get('ok'):
+                    return self.build_result(
+                        False,
+                        error=result.get('message', 'click failed'),
+                        extra={**extra_data, 'input': result},
+                    )
+                extra_data['input'] = result
 
-                    result = background_click(hwnd, cx, cy)
-                    context.log(f'🖱️ [成功后点击] 后台点击窗口(#{hwnd}) 坐标: ({cx}, {cy})')
-                    if not result.get('ok'):
-                        context.log(f'❌ [成功后点击] {result.get("message", "后台点击失败")}', 'warning')
-                else:
-                    context.log(f'🖱️ [成功后点击] 物理点击 坐标: ({cx}, {cy})')
-                    pyautogui.click(cx, cy)
-
-            return self.build_jump_result(True, params.get('on_success', {}), extra=extra_data)
+            return self.build_result(True, extra=extra_data)
         else:
-            context.log('⏰ [OCR 识别超时] 未能解析出有效文本', 'warning', image=debug_b64)
-            return self.build_jump_result(False, params.get('on_failure', {}), extra=extra_data, error='timeout')
+            context.last_ocr_text = ''
+            context.log(f'[OCR] 未识别到有效文字 | 区域={list(region_rect) if region_rect else "整个工作区"}', 'warning', image=debug_b64)
+        return self.build_result(False, extra=extra_data, error='timeout')

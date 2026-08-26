@@ -9,6 +9,7 @@ const MAX_EXECUTION_LOGS = 500
 export const useExecutionStore = defineStore('execution', {
     state: () => ({
         executionLogs: [],
+        _logSequence: 0,
         activeEventSource: null,
         currentExecutionId: null,
         // ===== 调试会话状态 =====
@@ -18,6 +19,7 @@ export const useExecutionStore = defineStore('execution', {
         executionCurrentVariables: {},  // 暂停时变量快照（对象 {name: value}，变量监控面板用）
         executionPrevVariables: {},     // 上一节点变量快照（对比用）
         executionCallstack: [],  // [{ function, node_id, task_id, line? }]
+        previousActiveNodeId: null, // 当前执行边的来源节点
         currentActiveNodeId: null, // 调试命中时高亮的节点
         _pollTimer: null
     }),
@@ -40,10 +42,12 @@ export const useExecutionStore = defineStore('execution', {
                 this.activeEventSource = null
             }
             this.executionLogs = []
+            this._logSequence = 0
             this.executionVariables = []
             this.executionCallstack = []
             this.executionState = 'running'
             this.executionPaused = false
+            this.previousActiveNodeId = null
             this.currentActiveNodeId = null
 
             const { useProjectStore } = await import('./projectStore')
@@ -56,13 +60,13 @@ export const useExecutionStore = defineStore('execution', {
             projectStore.updateUiState('bottomPanelExpanded', true)
             logger.info('Store', `正在准备启动任务: ${taskId}`)
             try {
-                await projectStore.saveBlueprintImmediately()
+                if (!options.skipSave) await projectStore.saveBlueprintImmediately()
                 const res = await blueprintApi.runTask(
                     projectStore.currentProjectPath,
                     taskId,
                     startNodeId,
                     {
-                        ...projectStore.blueprint,
+                        ...(options.blueprintData || projectStore.blueprint),
                         __debug: { breakpoints }
                     }
                 )
@@ -74,7 +78,11 @@ export const useExecutionStore = defineStore('execution', {
                     return res
                 }
                 this.currentExecutionId = executionId
-                this._pushLog({ time: new Date().toLocaleTimeString(), message: `任务 [${taskId}] 已启动...` })
+            // 流程名可读化：优先显示流程名称，兜底 taskId。
+                const graphLabel = taskId === 'main'
+                    ? '主流程'
+                    : (projectStore.blueprint?.functions || []).find(item => item.function_id === taskId)?.name
+                this._pushLog({ time: new Date().toLocaleTimeString(), message: `执行 [${graphLabel || taskId}] 已启动...` })
                 if (breakpoints?.length) {
                     this._pushLog({
                         time: new Date().toLocaleTimeString(),
@@ -101,7 +109,7 @@ export const useExecutionStore = defineStore('execution', {
                         if (debugState && debugState.state === 'paused') {
                             this.executionState = 'paused'
                             this.executionPaused = true
-                            this.currentActiveNodeId = debugState.node_id || null
+                            this._setActiveNode(debugState.node_id, debugState.previous_node_id)
                             const reason = debugState.pause_reason === 'breakpoint' ? '命中断点' : '已暂停'
                             this._pushLog({
                                 time: new Date().toLocaleTimeString(),
@@ -111,12 +119,12 @@ export const useExecutionStore = defineStore('execution', {
                         } else if (debugState && debugState.state === 'running') {
                             this.executionState = 'running'
                             this.executionPaused = false
-                            if (debugState.node_id) this.currentActiveNodeId = debugState.node_id
+                            if (debugState.node_id) this._setActiveNode(debugState.node_id, debugState.previous_node_id)
                         }
                         if (status.status === 'success') {
                             logger.info('Store', `任务流程结束, 最终状态: success`)
                             this.executionState = 'success'
-                            this._pushLog({ time: new Date().toLocaleTimeString(), message: '✅ 任务流程执行完毕' })
+                            this._pushLog({ time: new Date().toLocaleTimeString(), level: 'success', message: '任务流程执行完毕' })
                             this._cleanupSession(eventSource)
                         } else if (status.status === 'stopped') {
                             this.executionState = 'stopped'
@@ -126,7 +134,7 @@ export const useExecutionStore = defineStore('execution', {
                             this.executionState = 'error'
                             this._pushLog({
                                 time: new Date().toLocaleTimeString(),
-                                message: `❌ 任务终止: ${status.message || '未知错误'}`
+                                level: 'error', message: `任务终止: ${status.message || '未知错误'}`
                             })
                             this._cleanupSession(eventSource)
                         }
@@ -155,6 +163,7 @@ export const useExecutionStore = defineStore('execution', {
             this.stopDebugPolling()
             // 会话已结束/断开：无条件清理调试态，避免 UI 卡在暂停高亮（状态由调用方按需设置）
             this.currentExecutionId = null
+            this.previousActiveNodeId = null
             this.currentActiveNodeId = null
             this.executionPaused = false
             this.executionCurrentVariables = {}
@@ -171,6 +180,7 @@ export const useExecutionStore = defineStore('execution', {
                 // 乐观复位：停止信号已下发，UI 立即回到未启动状态（线程退出由后端收敛）
                 this.executionState = 'stopped'
                 this.executionPaused = false
+                this.previousActiveNodeId = null
                 this.currentActiveNodeId = null
                 this.executionCurrentVariables = {}
                 this.executionPrevVariables = {}
@@ -179,10 +189,11 @@ export const useExecutionStore = defineStore('execution', {
                 logger.info('Store', `已发送停止信号: ${this.currentExecutionId}`)
             } catch (err) {
                 logger.error('Store', '停止执行失败', err)
-                // 回退：调用旧 blueprintApi.stopExecution
-                try { await blueprintApi.stopExecution(this.currentExecutionId) } catch (_) {}
+                // 回退：直接调执行停止端点
+                try { await executionApi.stop(this.currentExecutionId) } catch (_) {}
                 this.executionState = 'stopped'
                 this.executionPaused = false
+                this.previousActiveNodeId = null
                 this.currentActiveNodeId = null
                 this.stopDebugPolling()
             }
@@ -203,7 +214,6 @@ export const useExecutionStore = defineStore('execution', {
                 await executionApi.resume(this.currentExecutionId)
                 this.executionState = 'running'
                 this.executionPaused = false
-                this.currentActiveNodeId = null
                 this._pushLog({ time: new Date().toLocaleTimeString(), message: '▶ 已恢复执行' })
             } catch (err) { logger.error('恢复失败', err); throw err }
         },
@@ -246,7 +256,10 @@ export const useExecutionStore = defineStore('execution', {
                     const status = state.status || (isPaused ? 'paused' : 'running')
                     this.executionState = status
                     this.executionPaused = isPaused
-                    this.currentActiveNodeId = state.current_node_id || state.node_id || this.currentActiveNodeId
+                    this._setActiveNode(
+                        state.current_node_id || state.node_id || this.currentActiveNodeId,
+                        state.previous_node_id
+                    )
                     if (state.callstack) this.executionCallstack = state.callstack
                     // 变量快照：current 始终取实时值；prev 仅暂停时替换，非暂停保留旧值（避免单步瞬间闪为 —）
                     this.executionCurrentVariables = state.executor_variables || state.variables || {}
@@ -274,7 +287,7 @@ export const useExecutionStore = defineStore('execution', {
                 return []
             }
         },
-        startDebugPolling(intervalMs = 1000) {
+        startDebugPolling() {
             // ⚡ #5 调试状态已随 SSE 即时推送，不再启动 1s 轮询；
             // 保留一次性手动拉取（暂停/单步后立即同步变量快照）
             this.stopDebugPolling()
@@ -290,9 +303,26 @@ export const useExecutionStore = defineStore('execution', {
             this.executionLogs = []
         },
 
+        _setActiveNode(nodeId, previousNodeId = undefined) {
+            const normalized = nodeId || null
+            if (previousNodeId !== undefined) {
+                this.previousActiveNodeId = previousNodeId || null
+                this.currentActiveNodeId = normalized
+                return
+            }
+            if (normalized && normalized !== this.currentActiveNodeId) {
+                this.previousActiveNodeId = this.currentActiveNodeId
+            }
+            this.currentActiveNodeId = normalized
+        },
+
         // ⚡ #6 日志条数上限：保留最近 500 条，防止长任务 DOM/内存无限增长
         _pushLog(item) {
-            this.executionLogs.push(item)
+            this._logSequence += 1
+            const normalized = typeof item === 'object' && item !== null
+                ? { ...item, _client_id: this._logSequence }
+                : { time: new Date().toLocaleTimeString(), message: String(item), _client_id: this._logSequence }
+            this.executionLogs.push(normalized)
             if (this.executionLogs.length > MAX_EXECUTION_LOGS) {
                 this.executionLogs.splice(0, this.executionLogs.length - MAX_EXECUTION_LOGS)
             }

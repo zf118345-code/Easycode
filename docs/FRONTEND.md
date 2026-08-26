@@ -1,5 +1,7 @@
 # Easycode 前端开发文档
 
+> UI 与交互实现必须遵循仓库根目录的 [`design.md`](../design.md)。入口取舍、前后端承接与删减记录见 [`UI_FRONTEND_AUDIT.md`](./UI_FRONTEND_AUDIT.md)。
+
 ## 1. 技术栈
 
 | 技术 | 版本 | 用途 |
@@ -23,51 +25,49 @@ frontend/src/
 │   ├── client.js                 # Axios 实例、拦截器、统一错误处理
 │   ├── blueprintApi.js           # 蓝图 CRUD、任务/节点/边、运行任务
 │   ├── executionApi.js           # 执行控制：stop/pause/resume/step、调试状态、变量
-│   ├── exporterApi.js            # 导出为独立脚本
+│   ├── exporterApi.js            # 导出、发布
 │   ├── visionApi.js              # 视觉/OCR 模板匹配
-│   └── workspaceApi.js           # 工作区上下文（窗口模式、截图坐标）
+│   ├── capabilityApi.js          # 能力库目录、契约与创建
+│   ├── platformApi.js            # 计划、状态、消息、租约与局域网
+│   ├── captureApi.js             # 原生视觉捕获会话
+│   ├── frameRecordingApi.js      # 帧录制与回放
+│   ├── projectWorkspaceApi.js    # 子项目打开、创建、最近项目与工作区身份
+│   ├── workspaceIdentity.js      # 请求级工作区代际身份
+│   └── workspaceApi.js           # 目标工作面板（窗口模式、截图坐标）
 │
 ├── components/                   # 组件目录（按功能域分文件夹）
-│   ├── canvas/                   # 画布辅助组件
-│   │   ├── CanvasLogPanel.vue    # 画布内嵌日志浮层
-│   │   └── CanvasMinimap.vue     # 画布缩略图小地图
+│   ├── canvas/                   # 统一流程/拓扑画布组件
+│   │   ├── CanvasView.vue        # 画布视口、选择、缩放与区块交互
+│   │   ├── CanvasNodeCard.vue    # 节点卡片
+│   │   ├── CanvasBlock.vue       # 几何区块（所有画布共用）
+│   │   ├── CanvasEdgeLayer.vue   # SVG 连线层
+│   │   ├── CanvasContextMenu.vue # 对象感知右键菜单
+│   │   └── CanvasLogPanel.vue    # 分类、自动跟随与虚拟化运行日志
 │   ├── conditions/               # 条件判断系统
 │   │   ├── ConditionDialog.vue   # 条件编辑对话框（5 大条件类型）
 │   │   ├── conditionSchemas.js   # 条件参数字段 Schema 定义
 │   │   └── index.js              # 条件工具函数导出
-│   ├── controls/                 # 动态表单原子控件库
-│   │   ├── index.js              # controlMap 类型 → 组件映射表
-│   │   ├── ControlString.vue     # 字符串输入
-│   │   ├── ControlNumber.vue     # 数字输入
-│   │   ├── ControlSelect.vue     # 下拉选择
-│   │   ├── ControlSwitch.vue     # 布尔开关
-│   │   ├── ControlSlider.vue     # 滑块
-│   │   ├── ControlRadioGroup.vue # 单选组
-│   │   ├── ControlTextarea.vue   # 多行文本
-│   │   ├── ControlFileHover.vue  # 文件选择/上传
-│   │   ├── ControlWindowSelect.vue # 窗口句柄选择
-│   │   ├── ControlCoordPicker.vue # 坐标/区域拾取器
-│   │   ├── ControlDict.vue       # 字典键值对编辑
-│   │   ├── ControlConditionList.vue # 条件列表编辑器
-│   │   ├── VariableInputControl.vue # 变量选择器（含自动补全）
-│   │   ├── Margin4Control.vue    # 4 向边距输入
-│   │   └── Size2Control.vue      # 宽高尺寸输入
-│   ├── inspector/                # 节点/分组检查器面板
-│   │   ├── WorkflowInspector.vue # 检查器主容器
+│   ├── controls/                 # Schema 动态表单原子控件库
+│   │   ├── ControlSelect/Number/Switch/Slider/RadioGroup.vue
+│   │   ├── VariableAwareInput.vue
+│   │   ├── ControlFileHover/CoordPicker/WindowSelect/CaptureField.vue
+│   │   ├── ControlConditionList/Dict/PageSelect.vue
+│   │   ├── ControlGesturePathEditor.vue
+│   │   └── ControlFunction*/ControlCapability*.vue
+│   ├── inspector/                # 节点与批量检查器面板
+│   │   ├── InspectorPanel.vue    # 依据选择状态路由检查器
 │   │   └── panels/
 │   │       ├── NodeInspectorPanel.vue    # 单节点参数编辑
-│   │       ├── GroupInspectorPanel.vue   # 任务组参数编辑
 │   │       └── BatchInspectorPanel.vue   # 批量节点属性编辑
-│   ├── panels/                   # IDE 侧边/底部面板
-│   │   ├── ProjectExplorerPanel.vue  # 项目资源管理器
-│   │   ├── TaskListPanel.vue         # 任务列表
-│   │   ├── NodeListPanel.vue         # 节点模板库
-│   │   ├── NodeEditorPanel.vue       # 节点参数编辑器
+│   ├── panels/                   # IDE 常驻面板与中心工作台内容
+│   │   ├── ProjectExplorerPanel.vue  # 主流程大纲与区块
+│   │   ├── FunctionLibraryPanel.vue  # 函数目录、契约与测试
+│   │   ├── PageMapPanel.vue          # 唯一页面地图大纲
+│   │   ├── ResourceLibraryPanel.vue  # 稳定视觉资源
 │   │   ├── GlobalVariablesPanel.vue  # 全局变量管理
 │   │   ├── VariableInspectorPanel.vue # 变量查看器
-│   │   ├── LogPanel.vue              # 应用日志面板
-│   │   ├── ExecutionLogPanel.vue     # 执行日志/SSE 流
-│   │   └── PluginMarketPanel.vue     # 插件市场面板
+│   │   ├── CapabilityLibraryPanel.vue # 能力目录与契约
+│   │   └── RuntimeServicesPanel.vue  # 计划、状态、消息、租约与局域网
 │   ├── player/                   # Player 运行端
 │   │   └── PlayerFormRenderer.vue    # Schema 驱动的客户表单渲染器
 │   ├── schema/                   # Schema 编辑器
@@ -76,20 +76,21 @@ frontend/src/
 │   │   ├── TopMenuBar.vue            # 顶部菜单栏
 │   │   ├── ActivityBar.vue           # 左侧活动栏（图标切换面板）
 │   │   └── ToolWindow.vue            # 可停靠工具窗口容器
-│   ├── DebugToolbar.vue          # 调试工具栏（运行/暂停/单步/断点）
-│   ├── WorkflowCanvas.vue        # 工作流节点画布
-│   ├── TopologyCanvas.vue        # 拓扑（页面状态机）画布
+│   ├── CanvasPage.vue            # 流程/拓扑统一画布编排层
+│   ├── DebugToolbar.vue          # 仅运行/暂停时显示的调试工具栏
 │   ├── ParamRenderer.vue         # Schema 驱动的通用参数渲染器
-│   ├── ScreenshotTool.vue        # 截图取色/坐标/区域工具
-│   ├── FileBrowser.vue           # 项目文件浏览器（选图片、选路径）
-│   └── PanelSettingsDialog.vue   # 面板布局设置对话框
+│   ├── FileBrowser.vue           # 选择与保存共用的项目资源管理器
+│   ├── ToolCenterDialog.vue      # 能力库/运行服务中心
+│   └── *Dialog.vue               # 项目、设置、历史、搜索、录制与计划弹窗
 │
 ├── composables/                  # 组合式函数 Hooks
-│   ├── useCanvasDrag.js          # 画布节点拖拽 + 碰撞推挤
-│   ├── useCanvasEdges.js         # 连线渲染 + 端口连接
+│   ├── useNodeDrag.js            # 画布节点拖拽 + 碰撞推挤
+│   ├── useConnection.js          # 连线创建与插入语义
 │   ├── useCanvasKeyboard.js      # 画布快捷键（删除、复制粘贴等）
-│   ├── useCanvasViewport.js      # 视口平移/缩放/聚焦
-│   ├── useEdgeLabels.js          # 连线标签定位
+│   ├── useViewport.js            # 视口平移/缩放/聚焦
+│   ├── useContextMenu.js         # 画布对象菜单
+│   ├── useRunFromSelection.js    # 单节点执行与统一预检
+│   ├── useProjectEntryActions.js # 打开/创建子项目
 │   └── useUndoRedo.js            # 撤销/重做历史栈
 │
 ├── config/                       # 静态配置
@@ -99,12 +100,11 @@ frontend/src/
 ├── layouts/                      # 布局组件
 │   └── IdeLayout.vue             # IDE 主布局（顶栏 + 活动栏 + 三栏分屏）
 │
-├── stores/                       # Pinia 状态管理（5 个独立 Store）
-│   ├── index.js                  # 统一导出 + useMainStore 向后兼容代理
+├── stores/                       # Pinia 状态管理（4 个领域 Store + IDE 门面）
+│   ├── index.js                  # 统一导出 + useIdeStore 组件门面
 │   ├── projectStore.js           # 项目/蓝图/任务/节点数据
 │   ├── uiStore.js                # UI 交互状态（选中、断点、画布模式）
 │   ├── executionStore.js         # 执行会话与调试控制
-│   ├── topologyStore.js          # 拓扑画布数据
 │   ├── contextStore.js           # 工作区上下文（窗口/坐标偏移）
 │   └── plugins/
 │       └── loggerPlugin.js       # Pinia action 日志追踪插件
@@ -123,8 +123,9 @@ frontend/src/
 │       ├── errorHandler.test.js
 │       └── storage.test.js
 │
-├── views/                        # 路由级页面
-│   └── PlayerView.vue            # Player 独立运行视图
+├── views/                        # 独立页面
+│   ├── PlayerView.vue            # Player 独立运行视图
+│   └── CaptureFileManagerView.vue # 原生捕获宿主中的资源保存页
 │
 ├── assets/
 │   └── theme.css                 # 全局主题变量与样式
@@ -135,7 +136,7 @@ frontend/src/
 
 ## 3. 核心 Store 说明
 
-项目使用 Pinia 拆分 **5 个独立 Store**，职责单一、解耦清晰。`stores/index.js` 中保留了 `useMainStore` 作为向后兼容代理层。
+项目使用 Pinia 拆分 **4 个领域 Store**。`stores/index.js` 的 `useIdeStore` 是组件层统一门面，数据仍由各领域 Store 单独持有。
 
 ### 3.1 projectStore — 项目/蓝图数据
 
@@ -145,12 +146,14 @@ frontend/src/
 
 | 关键字段 | 说明 |
 |---------|------|
-| `currentProjectPath` | 当前打开的项目路径（持久化到 localStorage） |
+| `currentProjectPath` | 当前打开的项目路径（后端工作区会话是唯一权威来源） |
+| `currentProjectId` | 项目内稳定 ID，与显示名和物理路径分离 |
+| `workspaceId / workspaceGeneration` | 绑定每个项目请求；项目切换后旧请求立即失效 |
 | `currentProjectName` | 项目名称 |
 | `blueprint` | 内存合并视图：`project_name / tasks / variables / ui_state / edges / topology`（由 project.json + workflow.json + topology.json 三份文件 GET 合并） |
 | `paramsDefinitions` | 节点参数 Schema 定义（从后端拉取） |
-| `currentTaskId` | 当前选中的任务 ID |
-| `recentProjects` | 最近 5 个打开的项目（localStorage） |
+| `currentTaskId` | 当前画布 ID；默认是内部稳定主画布，可切换到流程库中的可复用流程 |
+| `recentProjects` | 后端 `%LOCALAPPDATA%/EasyCode/recent-projects.json` 提供的最近项目 |
 | `uiState` | UI 布局状态（面板展开/折叠、宽度等，持久化到蓝图） |
 
 **关键方法**:
@@ -162,7 +165,8 @@ frontend/src/
 - `saveBlueprintDebounced()` — 防抖 400ms 三路保存（日常编辑用）
 - `saveBlueprintImmediately()` — 立即三路保存（运行任务前、手动保存用）
 - `loadParams()` — 加载节点参数定义 Schema
-- `createNewTask(taskName)` — 新建任务
+- `createFunction(name, folderId)` / `duplicateFunction(functionId)` — 创建或复制独立函数
+- `saveFunctionData(functionData)` — 保存函数契约和独立画布
 - `updateUiState(key, value)` — 更新 UI 布局状态并持久化
 
 ### 3.2 uiStore — UI 交互状态
@@ -174,18 +178,18 @@ frontend/src/
 | 关键字段 | 说明 |
 |---------|------|
 | `selectedNodeId` / `selectedNodeIds` | 当前选中的节点（单选 / 多选批量） |
-| `selectedGroupId` | 选中的任务组 ID |
-| `canvasMode` | `'workflow'` \| `'topology'` — 画布模式切换 |
-| `batchMode` | 批量操作模式开关（框选多选节点） |
+| `selectedEdgeIds` | 当前路径选择包含的连线 ID |
+| `canvasMode` | `'workflow'` \| `'function'` \| `'topology'` — 三种画布模式 |
+| `selectionAnchorId` / `primaryNodeId` | Shift 路径选择起点与主选节点 |
 | `breakpoints` | `Set<node_id>` — 调试断点集合（会话级） |
 | `focusTarget` | 画布镜头聚焦目标（跨组件通信：ProjectExplorer → Canvas） |
 
 **关键方法**:
 - `selectNode / selectNodes / clearSelection` — 节点选择
-- `toggleBatchMode / enterBatchMode / exitBatchMode` — 批量模式
+- `toggleNodeSelection / selectPath` — Ctrl 增减多选与 Shift 连通路径选择
 - `selectAllNodes / batchDeleteNodes / batchSetDelay` — 批量操作
 - `toggleBreakpoint / addBreakpoint / removeBreakpoint / clearBreakpoints` — 断点管理
-- `setCanvasMode(mode)` — 切换工作流/拓扑画布
+- `setCanvasMode(mode)` — 切换主流程、函数或页面地图
 - `setFocusTarget(target)` — 触发画布镜头聚焦
 
 ### 3.3 executionStore — 执行与调试控制
@@ -222,23 +226,11 @@ frontend/src/
 → 更新 executionLogs / executionVariables / currentActiveNodeId
 ```
 
-### 3.4 topologyStore — 拓扑画布数据
+`CanvasLogPanel` 默认显示全部日志，并按执行、节点、识别、导航、操作、数据和跨分类“问题”视图过滤。过滤不改变 `executionLogs`；复制保持复制完整日志。用户向上滚动时自动暂停跟随并显示“回到最新”，不使用常驻自动滚动开关。
 
-**文件**: `frontend/src/stores/topologyStore.js`
+### 3.4 拓扑数据
 
-**职责**: 拓扑（页面状态机）画布的节点与连线。独立于工作流画布；文件层持久化为任务组结构 `{tasks, edges}`（topology.json），store 内部保持扁平 `{nodes, edges}`，加载/保存时自动折叠/展开。
-
-| 关键字段 | 说明 |
-|---------|------|
-| `topologyBlueprint` | `{ nodes: [], edges: [] }` — 拓扑图数据（内部扁平结构） |
-| `selectedTopologyNodeId` | 当前选中的拓扑节点 |
-
-**关键方法**:
-- `loadTopologyFromBlueprint(bp)` — 从蓝图反序列化（任务组展开为扁平节点；防覆盖本地未保存数据）
-- `syncTopologyToBlueprint()` — 序列化为 topology.json 文件结构 `{tasks, edges}` 快照
-- `saveTopologyToBlueprint()` — 写入 projectStore 并触发防抖保存（POST /api/topology/save）
-- `addTopologyNode / updateTopologyNode / removeTopologyNode` — 节点 CRUD
-- `addTopologyEdge / removeTopologyEdge` — 连线 CRUD（去重同源同端口）
+拓扑与业务流程均由 `projectStore` 持有当前版 `{tasks, edges}` 文件形态。拓扑中的 `tasks[]` 只用于整理页面与跳转动作；弹窗语义由 `page_state.params.is_random_popup` 明确声明，不再依赖集合名称或 `role=popup_handler`。加载旧数据时前端会把旧弹窗集合中的页面状态转换为页面级标记。前端不再维护独立的扁平 topologyStore，也不做加载/保存形态转换。
 
 ### 3.5 contextStore — 工作区上下文
 
@@ -260,36 +252,39 @@ frontend/src/
 
 ## 4. 画布系统
 
-Easycode 包含两套自研画布：**WorkflowCanvas 工作流画布** 和 **TopologyCanvas 拓扑画布**。两者共享底层路由算法和视觉样式。
+EasyCode 由 `CanvasPage + CanvasView` 复用同一套画布交互；模式只决定数据源和可创建节点类型。
 
 ### 4.1 WorkflowCanvas 工作流画布
 
-**文件**: `frontend/src/components/WorkflowCanvas.vue`
+**文件**: `frontend/src/components/CanvasPage.vue`、`frontend/src/components/canvas/CanvasView.vue`
 
 **核心能力**:
 - **节点卡片**：节点头部带类型图标和颜色，支持拖拽移动、选中高亮、断点红点标记
-- **任务组包围框**：包裹一组节点，显示循环次数/间隔，支持组拖拽和双击检查器
+- **项目主画布**：直接编辑 `workflow.main_graph`；创建节点不会隐式创建函数或区块
+- **函数画布**：函数从函数库显式创建，拥有独立参数、局部变量、输出、结果出口、测试用例和画布
+- **函数调用**：“调用函数”按稳定契约 ID 绑定参数、输出与结果出口；删除被引用函数会被阻止
+- **几何区块**：区块不参与执行；完全位于区块内的节点随区块移动，删除默认只删除区块
 - **SVG 连线层**：使用网格 A* 寻路（`canvasRouter.js`），自动避开节点碰撞
 - **成功/失败双出口**：绿色箭头（成功流）+ 红色箭头（失败流），方向感知的箭头标记
 - **流光动画**：`edge-flow-path` 配合 CSS stroke-dashoffset 动画表达执行流向
 - **实时拉线预览**：从端口拖出时显示虚线预览路径
 - **节点碰撞推挤**：拖放节点时检测重叠，自动推挤周围节点（`useCanvasDrag.js`）
 - **20px 网格吸附**：所有节点坐标对齐 20px 网格，确保连线整齐
-- **小地图**：`CanvasMinimap.vue` 显示全景缩略图，支持点击定位
-- **视口控制**：滚轮缩放、拖拽平移、聚焦动画（`useCanvasViewport.js`）
+- **小地图**：`CanvasView.vue` 内置全景缩略图，支持点击定位
+- **视口控制**：滚轮缩放、拖拽平移、聚焦动画（`useViewport.js`）
 - **键盘快捷键**：Delete 删除、Ctrl+A 全选、Ctrl+C/V 复制粘贴（`useCanvasKeyboard.js`）
 
 ### 4.2 TopologyCanvas 拓扑画布
 
-**文件**: `frontend/src/components/TopologyCanvas.vue`
+**文件**: 同上；数据源切换为 `blueprint.topology`
 
 **与 WorkflowCanvas 的区别**:
 | 维度 | WorkflowCanvas | TopologyCanvas |
 |------|---------------|----------------|
-| 数据来源 | projectStore.blueprint.tasks[].nodes / edges（workflow.json） | topologyStore.topologyBlueprint（topology.json，任务组结构在 store 内展开为扁平） |
+| 数据来源 | `blueprint.main_graph` 或当前 `functions[].graph` | `blueprint.page_map.nodes / edges / blocks`；项目唯一页面地图 |
 | 节点语义 | 动作节点（点击/OCR/脚本...） | 页面状态（page_state）或跳转动作 |
 | 连线语义 | 执行流向：成功/失败端口 | 页面跳转：带条件 + 跳转动作 |
-| 节点特性 | delay_before / timeout 等参数 | features（页面特征列表）/ feature_mode（and/or） |
+| 节点特性 | delay_before / timeout 等参数 | features（页面特征列表）/ feature_mode（and/or）/ is_random_popup（页面级弹窗标记） |
 | 出边数量 | 每个节点最多 2 条（success/failure） | 多条 exit（每条对应一个条件分支） |
 
 **共享底层**:
@@ -384,7 +379,7 @@ switch (operator) {
 
 **挂载的对话框**:
 - `FileBrowser` — 选图片/文件、保存截图
-- `ScreenshotTool` — 调用后端截图，选择点/区域/模板
+- 原生视觉捕获宿主 — 通过统一捕获会话选择点/区域/模板，节点属性入口复用同一能力
 - `ConditionDialog` — 打开条件编辑器（分支节点、逻辑检查节点用）
 
 ### 6.2 controls/ — 原子控件库
@@ -591,8 +586,7 @@ import { Play, Pause, Square, Settings, Plus } from 'lucide-vue-next'
 | 搜索 | Search |
 | 展开/折叠 | ChevronDown / ChevronRight |
 
-**例外**:
-- 执行日志消息中的状态 emoji（✅ / ⏸ / ❌ / ⛔）仅用于执行 Store 推送的日志字符串，不涉及 UI 组件图标，属于文本内容，允许保留。
+执行端即使收到历史 Emoji 装饰，也必须在显示和复制时剥离；严重级别由结构化 `level/status`、文字和颜色表达。
 
 ## 9. 日志规范
 
@@ -665,7 +659,23 @@ Vite 默认端口 5173，支持 HMR 热更新。需同时启动后端 `api.py`�
 npm run build
 ```
 
-输出目录 `frontend/dist/`，产物可由后端 Flask 静态托管。
+输出目录为项目根目录的 `release/web/`，包含 `index.html`、`player.html`、
+`capture.html` 三个入口，由 FastAPI 或打包后的桌面应用静态托管。
+
+三个入口必须分别按需注册 Element Plus 组件和样式：
+
+- `src/main.js`：IDE 编辑器实际使用的完整控件集合。
+- `src/player-main.js`：Player 参数、运行、日志和运维入口所需集合。
+- `src/capture-main.js`：捕获资源管理器所需最小集合。
+
+`vite.config.js` 不得把 Element Plus 强制合并为单个公共块，否则 Player 会重新携带 IDE 专属控件。生产构建的单块上限为 `500 kB`；超过时应先检查入口拆分与按需注册，禁止仅提高告警阈值。
+
+### 大型项目 UI 性能约束
+
+- 项目资源树使用扁平行模型与固定行高虚拟窗口；不得恢复嵌套全量 `v-for`。
+- 画布在节点数超过 250 后使用视口裁剪，只挂载当前视口和缓冲区节点。
+- 资源树键盘焦点由稳定 `row.key` 管理，滚动后必须先更新虚拟窗口再恢复 DOM 焦点。
+- 修改虚拟树时必须运行 `ProjectExplorerPanel.test.js` 的 1000 节点用例。
 
 ### 代码检查与自动修复
 

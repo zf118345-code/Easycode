@@ -11,6 +11,8 @@ from cryptography.hazmat.backends import default_backend
 from cryptography.hazmat.primitives import padding
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
+from core.player.schema import build_user_config, normalize_form_schema
+
 
 class PlayerAssetLoader:
     """
@@ -45,10 +47,10 @@ class PlayerAssetLoader:
     @classmethod
     def load_bundle_from_ebp(
         cls, ebp_path: str, user_config_path: str = None, key: bytes = None
-    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, np.ndarray]]:
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, np.ndarray], dict[str, Any]]:
         """
         全量解密加载密包资产
-        :returns: (blueprint_dict, form_schema_dict, merged_user_config, template_matrices_dict)
+        :returns: (blueprint_dict, form_schema_dict, merged_user_config, template_matrices_dict, context_dict)
         """
         if not os.path.exists(ebp_path):
             raise FileNotFoundError(f'未找到脚本资源密包: {ebp_path}')
@@ -64,6 +66,9 @@ class PlayerAssetLoader:
         template_images: dict[str, np.ndarray] = {}
         blueprint_data = {}
         form_schema = {}
+        context_data = {}
+        asset_registry = {'assets': {}}
+        runtime_files: dict[str, bytes] = {}
 
         with zipfile.ZipFile(zip_stream, 'r') as zf:
             for name in zf.namelist():
@@ -72,6 +77,18 @@ class PlayerAssetLoader:
                     blueprint_data = json.loads(zf.read(name).decode('utf-8'))
                 elif norm_name == 'form_schema.json':
                     form_schema = json.loads(zf.read(name).decode('utf-8'))
+                elif norm_name == 'context.json':
+                    # ⚡ 提取打包时内置的默认上下文（窗口标题/裁剪/目标尺寸）：
+                    # player 端窗口预热依赖它（打包目录不再需要散装 context.json）
+                    try:
+                        context_data = json.loads(zf.read(name).decode('utf-8'))
+                    except Exception:
+                        context_data = {}
+                elif norm_name == 'templates/assets.json':
+                    try:
+                        asset_registry = json.loads(zf.read(name).decode('utf-8'))
+                    except Exception:
+                        asset_registry = {'assets': {}}
                 elif norm_name.startswith('templates/') and norm_name.lower().endswith(('.png', '.jpg', '.jpeg')):
                     # 提取纯模板名称 (如 "templates/sub/21.png" -> "sub/21")
                     clean_key = norm_name[10:].replace('\\', '/')
@@ -86,20 +103,36 @@ class PlayerAssetLoader:
                     mat = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
                     if mat is not None:
                         template_images[clean_key] = mat
+                elif (
+                    norm_name.startswith('capabilities/')
+                    and norm_name.lower().endswith(('.py', '.json'))
+                ) or (norm_name.startswith('scripts/') and norm_name.lower().endswith('.py')):
+                    payload = zf.read(name)
+                    if len(payload) > 8 * 1024 * 1024:
+                        raise ValueError(f'运行时代码文件过大: {norm_name}')
+                    runtime_files[norm_name] = payload
+
+        for asset_id, record in asset_registry.get('assets', {}).items():
+            path = str(record.get('path') or '').replace('\\', '/')
+            clean_key = os.path.splitext(path)[0]
+            if clean_key in template_images:
+                template_images[f'asset://{asset_id}'] = template_images[clean_key]
 
         # 3. 加载本地客户配置文件 user_config.json 并合并
-        user_config = {'vars': {}, 'ctx': {}, 'env': {}}
+        user_config = {'vars': {}, 'ctx': {}}
         if user_config_path and os.path.exists(user_config_path):
             try:
                 with open(user_config_path, encoding='utf-8') as f:
                     loaded_cfg = json.load(f)
-                    user_config['vars'] = loaded_cfg.get('vars', {})
-                    user_config['ctx'] = loaded_cfg.get('ctx', {})
-                    user_config['env'] = loaded_cfg.get('env', {})
+                    user_config = loaded_cfg
             except Exception as e:
-                print(f'⚠️ [Player Loader] 加载本地 user_config.json 异常: {e}')
+                print(f' [Player Loader] 加载本地 user_config.json 异常: {e}')
 
-        # 4. 执行参数三阶倒灌 (Ingestion) 到 blueprint_data 的运行状态中
+        form_schema = normalize_form_schema(form_schema)
+        user_config = build_user_config(form_schema, user_config)
+        context_data['_runtime_files'] = runtime_files
+
+        # 4. 执行参数倒灌 (Ingestion) 到 blueprint_data 的运行状态中
         if 'variables' not in blueprint_data:
             blueprint_data['variables'] = {}
 
@@ -111,4 +144,4 @@ class PlayerAssetLoader:
         for ck, cv in user_config.get('ctx', {}).items():
             blueprint_data['variables'][f'$ctx.{ck}'] = cv
 
-        return blueprint_data, form_schema, user_config, template_images
+        return blueprint_data, form_schema, user_config, template_images, context_data

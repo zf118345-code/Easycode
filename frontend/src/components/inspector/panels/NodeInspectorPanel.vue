@@ -7,17 +7,21 @@
                 <div class="node-type-icon-badge" :title="nodeTypeLabel">
                     <component :is="getNodeIcon(node.node_type)" class="inspector-type-svg" />
                 </div>
-                <el-input v-model="node.node_name" size="default" class="node-name-input" placeholder="请输入节点名称" @change="handleSave" />
+                <div class="node-heading-copy">
+                    <el-input v-model="node.node_name" size="default" class="node-name-input" placeholder="节点名称" @change="handleSave" />
+                    <span>{{ nodeTypeLabel }}<code>{{ node.node_id }}</code></span>
+                </div>
             </div>
         </div>
 
         <!-- 2. 中间滚动参数区 -->
         <div class="inspector-scrollable-body">
             <div class="params-container">
+                <div class="inspector-section-heading"><strong>节点配置</strong><span>更改会自动保存</span></div>
                 <!-- ⚡ OCR 专属: 顶部图片下方的实时识字高亮结果框 -->
                 <div v-if="node.node_type === 'ocr_recognition'" class="ocr-live-result-card">
                     <div class="result-header">
-                        <span>🔤 当前视角识别文字结果</span>
+                        <span><ScanText :size="14" /> 当前视角识别文字结果</span>
                         <el-button size="small" type="primary" link :loading="previewLoading" @click="fetchOcrText">
                             <RefreshCcw style="width: 12px; height: 12px; margin-right: 2px;" :class="{ 'is-spinning': previewLoading }" />
                             测试识别
@@ -46,13 +50,17 @@ v-model="node.params.gray_threshold"
                     </div>
 
                     <!-- 基础通用参数渲染网关 -->
-                    <div v-else-if="!['gray_threshold', 'on_success', 'on_failure'].includes(paramName)" class="param-item">
+                    <div v-else class="param-item">
                         <ParamRenderer
 :config="config"
                                        :value="node.params[paramName]"
                                        :label="config.label || paramName"
                                        :context="node.params"
+                                       :node-type="node.node_type"
                                        @update="val => handleParamUpdate(paramName, val)"
+                                       @coordinate-meta="meta => handleCoordinateMeta(paramName, meta)"
+                                       @capture-bundle="bundle => handleCaptureBundle(paramName, bundle)"
+                                       @window-selected="handleWindowSelected"
                                        @auto-change-type="handleAutoChangeType"
                                        @capture-reset="handleCaptureReset(paramName)" />
                     </div>
@@ -62,13 +70,22 @@ v-model="node.params.gray_threshold"
 
         <!-- 3. 底部固定延时/循环 -->
         <div class="inspector-fixed-footer">
+            <span
+                class="autosave-state"
+                :class="`is-${projectStore.saveState}`"
+                :title="autosaveTitle">
+                <LoaderCircle v-if="projectStore.saveState === 'saving'" :size="12" class="is-spinning" />
+                <CircleAlert v-else-if="projectStore.saveState === 'error'" :size="12" />
+                <Check v-else :size="12" />
+                {{ autosaveLabel }}
+            </span>
             <div class="footer-inline-container">
                 <div class="footer-setting-group">
                     <span class="footer-label">延迟</span>
                     <el-input v-model.number="node.delay_before" size="small" class="pure-compact-input" @change="handleSave" />
                     <span class="footer-unit">ms</span>
                 </div>
-                <div class="footer-setting-group">
+            <div v-if="node.node_type !== 'call_function'" class="footer-setting-group">
                     <span class="footer-label">循环</span>
                     <el-input v-model.number="node.loop_count" size="small" class="pure-compact-input" @change="handleSave" />
                     <span class="footer-unit">次</span>
@@ -79,13 +96,15 @@ v-model="node.params.gray_threshold"
 </template>
 
 <script setup>
-    import { ref, computed, watch } from 'vue'
-    import { useMainStore } from '@/stores'
+    import { ref, computed, watch, onUnmounted } from 'vue'
+    import { useIdeStore, useProjectStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
+    import { workspaceApi } from '@/api/workspaceApi'
+    import { ElMessage } from 'element-plus'
     import ParamRenderer from '@/components/ParamRenderer.vue'
     import {
         MousePointerClick, Clock, Image, ScanText, GitBranch,
-        SearchCheck, Binary, ListOrdered, FileCode, RefreshCcw, ScanSearch
+        SearchCheck, Binary, ListOrdered, FileCode, RefreshCcw, ScanSearch, Check, LoaderCircle, CircleAlert
     } from 'lucide-vue-next'
     import { NODE_TYPE_CONFIG } from '@/utils/canvasShared'
 
@@ -93,14 +112,17 @@ v-model="node.params.gray_threshold"
         node: { type: Object, required: true }
     })
     const emit = defineEmits(['save'])
-    const store = useMainStore()
+    const store = useIdeStore()
+    const projectStore = useProjectStore()
 
     const previewLoading = ref(false)
     const previewText = ref('')
     const originalRecordedRegion = ref(null)
+    const originalStopRecordedRegion = ref(null)
     const imageVersion = ref(Date.now())
     let isSyncingRecorded = false
     let ocrTimer = null
+    let ocrRequestId = 0
 
     // 图标映射统一从 canvasShared.NODE_TYPE_CONFIG 获取
     const _iconComponentCache = {
@@ -114,10 +136,17 @@ v-model="node.params.gray_threshold"
 
     const nodeTypeLabel = computed(() => store.paramsDefinitions[props.node?.node_type]?.label || props.node?.node_type)
     const allParams = computed(() => store.paramsDefinitions[props.node?.node_type]?.params || {})
+    const autosaveLabel = computed(() => ({
+        saving: '正在保存…',
+        error: '保存失败',
+        saved: projectStore._lastSavedAt ? '已自动保存' : '等待编辑'
+    }[projectStore.saveState] || '等待编辑'))
+    const autosaveTitle = computed(() => projectStore._lastSaveError?.message || autosaveLabel.value)
 
     // ⚡ OCR 文本测试识别方法
     const fetchOcrText = async () => {
         if (!props.node || props.node.node_type !== 'ocr_recognition') return
+        const requestId = ++ocrRequestId
         previewLoading.value = true
         try {
             const res = await visionApi.testOcr(
@@ -125,32 +154,48 @@ v-model="node.params.gray_threshold"
                 props.node.params.region_value || [0, 0, 0, 0],
                 props.node.params.gray_scale ?? true,
                 props.node.params.gray_threshold ?? 127,
-                props.node.params.image_source || ''
+                props.node.params.image_source || '',
+                props.node.params.region_reference_size || [0, 0]
             )
-            if (res) {
+            if (requestId === ocrRequestId && res) {
                 previewText.value = res.text || ''
             }
         } catch (err) {
-            console.warn('OCR 测试失败', err)
+            if (requestId === ocrRequestId) console.warn('OCR 测试失败', err)
         } finally {
-            previewLoading.value = false
+            if (requestId === ocrRequestId) previewLoading.value = false
         }
     }
 
-    const syncRecordedRegion = async () => {
+    const syncRecordedRegion = async (prefix = '') => {
         if (!props.node || !store.currentProjectPath) return
-        const rawTemplateName = props.node.params.image_source
+        const sourceKey = `${prefix}image_source`
+        const regionKey = `${prefix}region_value`
+        const referenceKey = `${prefix}region_reference_size`
+        const rawTemplateName = props.node.params[sourceKey]
         if (!rawTemplateName) return
+        const nodeId = props.node.node_id
 
         isSyncingRecorded = true
         try {
-            const regions = await visionApi.getRegions(store.currentProjectPath)
-            const cleanName = rawTemplateName.replace(/\.png$/i, '').replace(/\\/g, '/')
-            const fileNameOnly = cleanName.split('/').pop()
-            const rect = regions[rawTemplateName] || regions[cleanName] || regions[fileNameOnly] || regions[`${cleanName}.png`]
-            if (rect && Array.isArray(rect) && rect.length === 4) {
-                props.node.params.region_value = [...rect]
-                originalRecordedRegion.value = [...rect]
+            const resolved = await visionApi.resolveTemplate(store.currentProjectPath, rawTemplateName)
+            if (props.node.node_id !== nodeId || props.node.params[sourceKey] !== rawTemplateName) return
+            const capture = resolved?.capture
+            const rect = capture?.region
+            if (Array.isArray(rect) && rect.length === 4 && Number(rect[2]) > 0 && Number(rect[3]) > 0) {
+                const referenceSize = Array.isArray(capture.reference_size) ? capture.reference_size : [0, 0]
+                const previousRegion = props.node.params[regionKey]
+                const previousReference = props.node.params[referenceKey]
+                const changed = JSON.stringify(previousRegion) !== JSON.stringify(rect)
+                    || JSON.stringify(previousReference) !== JSON.stringify(referenceSize)
+                    || props.node.params.coordinate_space !== (capture.coordinate_space || 'workspace_px')
+                props.node.params[regionKey] = [...rect]
+                props.node.params[referenceKey] = [...referenceSize]
+                props.node.params.coordinate_space = capture.coordinate_space || 'workspace_px'
+                props.node.params = { ...props.node.params }
+                if (prefix) originalStopRecordedRegion.value = [...rect]
+                else originalRecordedRegion.value = [...rect]
+                if (changed) handleSave()
             }
         } catch (err) {
             console.error('获取区域配置失败', err)
@@ -162,6 +207,9 @@ v-model="node.params.gray_threshold"
     watch(() => props.node?.node_id, () => {
         if (props.node?.params?.region_type === 'recorded') {
             syncRecordedRegion()
+        }
+        if (props.node?.params?.stop_region_type === 'recorded') {
+            syncRecordedRegion('stop_')
         }
         previewText.value = ''
         if (props.node?.node_type === 'ocr_recognition') {
@@ -184,17 +232,56 @@ v-model="node.params.gray_threshold"
         handleSave()
     }
 
-    const handleParamUpdate = (paramName, value) => {
+    const resolveNodeAdb = async () => {
+        if (props.node?.node_type !== 'set_window' || !props.node.params.is_emulator) return
+        try {
+            const result = await workspaceApi.resolveAdbDevice({
+                windowTitle: props.node.params.title,
+                windowHwnd: props.node.params.window_hwnd || 0,
+                processId: props.node.params.window_process_id || 0
+            })
+            props.node.params.adb_device_id = result.serial || ''
+        } catch (error) {
+            props.node.params.is_emulator = false
+            props.node.params.adb_device_id = ''
+            ElMessage.error(error.response?.data?.detail || error.message || '无法自动识别模拟器 ADB 设备')
+        }
+        props.node.params = { ...props.node.params }
+        handleSave()
+    }
+
+    const handleWindowSelected = async windowInfo => {
+        if (props.node?.node_type !== 'set_window' || !windowInfo) return
+        props.node.params.title = windowInfo.title || props.node.params.title || ''
+        props.node.params.window_hwnd = Number(windowInfo.hwnd || 0)
+        props.node.params.window_process_id = Number(windowInfo.process_id || 0)
+        props.node.params.window_class_name = windowInfo.class_name || ''
+        if (props.node.params.is_emulator) await resolveNodeAdb()
+    }
+
+    const handleParamUpdate = async (paramName, value) => {
         if (paramName === 'region_value' && props.node.params.region_type === 'recorded' && !isSyncingRecorded) {
             if (originalRecordedRegion.value && JSON.stringify(value) !== JSON.stringify(originalRecordedRegion.value)) {
                 props.node.params.region_type = 'custom'
             }
         }
+        if (paramName === 'stop_region_value' && props.node.params.stop_region_type === 'recorded' && !isSyncingRecorded) {
+            if (originalStopRecordedRegion.value && JSON.stringify(value) !== JSON.stringify(originalStopRecordedRegion.value)) {
+                props.node.params.stop_region_type = 'custom'
+            }
+        }
         props.node.params[paramName] = value
         props.node.params = { ...props.node.params }
 
+        if (paramName === 'is_emulator') {
+            if (value) await resolveNodeAdb()
+            else props.node.params.adb_device_id = ''
+        }
+
         if (paramName === 'region_type' && value === 'recorded') syncRecordedRegion()
         if (paramName === 'image_source' && props.node.params.region_type === 'recorded') syncRecordedRegion()
+        if (paramName === 'stop_region_type' && value === 'recorded') syncRecordedRegion('stop_')
+        if (paramName === 'stop_image_source' && props.node.params.stop_region_type === 'recorded') syncRecordedRegion('stop_')
 
         if (['image_source', 'gray_scale', 'gray_threshold'].includes(paramName)) {
             imageVersion.value = Date.now()
@@ -206,6 +293,38 @@ v-model="node.params.gray_threshold"
         handleSave()
     }
 
+    const handleCoordinateMeta = (paramName, meta) => {
+        if (!meta?.referenceSize || !props.node?.params) return
+        const referenceKey = paramName === 'position'
+            ? 'position_reference_size'
+            : (paramName.startsWith('stop_') ? 'stop_region_reference_size' : 'region_reference_size')
+        props.node.params[referenceKey] = [...meta.referenceSize]
+        props.node.params.coordinate_space = meta.coordinateSpace || 'workspace_px'
+        props.node.params = { ...props.node.params }
+        handleSave()
+    }
+
+    const handleCaptureBundle = (paramName, bundle) => {
+        if (!bundle?.assetRef || !props.node?.params) return
+        props.node.params[paramName] = bundle.assetRef
+        const isStopFeature = paramName.startsWith('stop_')
+        const prefix = isStopFeature ? 'stop_' : ''
+        props.node.params[`${prefix}region_type`] = 'recorded'
+        props.node.params[`${prefix}region_value`] = [...(bundle.rect || [0, 0, 0, 0])]
+        props.node.params[`${prefix}region_reference_size`] = [...(bundle.referenceSize || [0, 0])]
+        props.node.params.coordinate_space = bundle.coordinateSpace || 'workspace_px'
+        props.node.params = { ...props.node.params }
+        if (!isStopFeature) originalRecordedRegion.value = [...props.node.params.region_value]
+        imageVersion.value = Date.now()
+        if (props.node.node_type === 'ocr_recognition') fetchOcrText()
+        handleSave()
+    }
+
+    onUnmounted(() => {
+        ocrRequestId += 1
+        if (ocrTimer) clearTimeout(ocrTimer)
+    })
+
     const handleSave = () => emit('save')
 </script>
 
@@ -215,26 +334,32 @@ v-model="node.params.gray_threshold"
         height: 100%;
         display: flex;
         flex-direction: column;
+        container: inspector / inline-size;
     }
 
     .inspector-fixed-header {
-        padding: 12px 14px;
-        background: rgba(25, 26, 38, 0.95);
-        border-bottom: 1px solid var(--el-border-color-light);
+        padding: 12px;
+        background: var(--app-bg-sidebar);
+        border-bottom: 1px solid var(--app-separator);
         flex-shrink: 0;
     }
 
     .inspector-scrollable-body {
         flex: 1;
-        padding: 12px 14px;
+        padding: 12px;
         overflow-y: auto;
         overscroll-behavior: contain;
     }
 
     .inspector-fixed-footer {
-        padding: 10px 14px;
-        background: rgba(25, 26, 38, 0.95);
-        border-top: 1px solid var(--el-border-color-light);
+        min-height: 42px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        padding: 7px 12px;
+        background: var(--app-bg-sidebar);
+        border-top: 1px solid var(--app-separator);
         flex-shrink: 0;
     }
 
@@ -245,10 +370,10 @@ v-model="node.params.gray_threshold"
     }
 
     .node-type-icon-badge {
-        width: 32px;
-        height: 32px;
-        background: rgba(78, 209, 156, 0.1);
-        border: 1px solid rgba(78, 209, 156, 0.3);
+        width: 34px;
+        height: 34px;
+        background: rgba(217, 84, 23, 0.1);
+        border: 1px solid rgba(217, 84, 23, 0.3);
         border-radius: 8px;
         display: flex;
         align-items: center;
@@ -262,11 +387,22 @@ v-model="node.params.gray_threshold"
         color: var(--el-color-primary);
     }
 
+    .node-heading-copy { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+    .node-heading-copy > span { display:flex; align-items:center; justify-content:space-between; gap:8px; color:var(--app-text-secondary); font-size:10px; }
+    .node-heading-copy code { min-width:0; overflow:hidden; color:var(--app-text-placeholder); font-size:10px; text-overflow:ellipsis; white-space:nowrap; }
+    .node-name-input :deep(.el-input__wrapper) { min-height:28px !important; padding:0 8px !important; background:transparent !important; border-color:transparent !important; box-shadow:none !important; }
+    .node-name-input :deep(.el-input__wrapper:hover), .node-name-input :deep(.el-input__wrapper.is-focus) { background:var(--app-bg-input) !important; border-color:var(--app-border-default) !important; }
+    .node-name-input :deep(.el-input__inner) { font-size:13px; font-weight:600; }
+
     .params-container {
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 0;
     }
+
+    .inspector-section-heading { height:28px; display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; border-bottom:1px solid var(--app-separator); }
+    .inspector-section-heading strong { color:var(--app-text-primary); font-size:11px; font-weight:600; }
+    .inspector-section-heading span { color:var(--app-text-placeholder); font-size:10px; }
 
     .param-item {
         display: flex;
@@ -290,6 +426,12 @@ v-model="node.params.gray_threshold"
         font-weight: bold;
         color: var(--el-color-success);
         margin-bottom: 6px;
+    }
+
+    .result-header > span {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
     }
 
     .result-text-box {
@@ -329,8 +471,13 @@ v-model="node.params.gray_threshold"
     .footer-inline-container {
         display: flex;
         align-items: center;
-        justify-content: space-between;
+        justify-content: flex-end;
+        gap: 14px;
     }
+
+    .autosave-state { display:inline-flex; align-items:center; gap:4px; color:var(--app-text-secondary); font-size:10px; white-space:nowrap; }
+    .autosave-state.is-saved { color:var(--app-color-success); }
+    .autosave-state.is-error { color:var(--app-color-danger); }
 
     .footer-setting-group {
         display: flex;
@@ -351,7 +498,7 @@ v-model="node.params.gray_threshold"
     }
 
     .pure-compact-input {
-        width: 60px !important;
+        width: 62px !important;
     }
 
         .pure-compact-input :deep(.el-input__wrapper) {
@@ -362,6 +509,14 @@ v-model="node.params.gray_threshold"
 
     .is-spinning {
         animation: spin 1s linear infinite;
+    }
+
+    @container inspector (max-width: 360px) {
+        .footer-inline-container { gap:8px; }
+        .footer-setting-group { gap:4px; }
+        .footer-label { font-size:10px; }
+        .footer-unit { display:none; }
+        .node-heading-copy code { display:none; }
     }
 
     @keyframes spin {

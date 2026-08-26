@@ -1,22 +1,25 @@
 // frontend/src/api/client.js
-// Axios ·â×°£ºÍ³Ò» baseURL¡¢³¬Ê±¡¢´íÎó´¦Àí¡¢Vite ´úÀí¶ÔÆë
-// ĞŞ¸´£º¸ÃÎÄ¼ş´ËÇ°È±Ê§£¬µ¼ÖÂ blueprintApi.js µ¼ÈëÊ§°Ü£¬Ç°¶ËÈ«²¿ API ²»¿ÉÓÃ
+// Axios å®¢æˆ·ç«¯ï¼šå¼€å‘ç¯å¢ƒç”± Vite ä»£ç† /apiï¼Œå‘å¸ƒç¯å¢ƒä¸ FastAPI åŒæºã€‚
 
 import axios from 'axios'
+import { getWorkspaceIdentity, workspaceHeaders } from './workspaceIdentity'
 
 const client = axios.create({
-    // ¿ª·¢Ä£Ê½ÏÂ Vite ´úÀí»á½«ÒÔ /api ¿ªÍ·µÄÇëÇó×ª·¢µ½ºó¶Ë http://127.0.0.1:8000
-    // Éú²úÄ£Ê½ÏÂÓÉ FastAPI ¾²Ì¬ÍĞ¹Ü£¬Í¬Ô´·ÃÎÊ
+    // å¼€å‘æ¨¡å¼ï¼šVite å°† /api è½¬å‘åˆ° FastAPIï¼›å‘å¸ƒæ¨¡å¼ï¼šFastAPI é™æ€æ‰˜ç®¡å‰ç«¯ã€‚
     baseURL: '/',
     timeout: 30000,
     headers: {
-        'Content-Type': 'application/json'
-    }
+        'Content-Type': 'application/json',
+    },
 })
 
-// ÇëÇóÀ¹½ØÆ÷£º¿ÉÔÚ´ËÌí¼Ó token µÈ
 client.interceptors.request.use(
     (config) => {
+        // ä¿å­˜é˜Ÿåˆ—å¯ä»¥æ˜¾å¼æºå¸¦æ—§å·¥ä½œåŒºèº«ä»½ï¼›æ²¡æœ‰æ˜¾å¼å€¼æ—¶ä½¿ç”¨å½“å‰èº«ä»½ã€‚
+        // åˆ‡æ¢åæ—§ generation ä¼šè¢«åç«¯æ‹’ç»ï¼Œç»ä¸ä¼šå†™å…¥æ–°é¡¹ç›®ã€‚
+        const identity = config.workspaceIdentity || getWorkspaceIdentity()
+        config.headers = { ...config.headers, ...workspaceHeaders(identity) }
+        delete config.workspaceIdentity
         return config
     },
     (error) => {
@@ -24,27 +27,26 @@ client.interceptors.request.use(
     }
 )
 
-// ÏìÓ¦À¹½ØÆ÷£ºÍ³Ò»´íÎó´¦Àí
+// ç»Ÿä¸€å°† Axios é”™è¯¯è½¬æ¢ä¸ºç”¨æˆ·å¯è¯»é”™è¯¯ã€‚
 client.interceptors.response.use(
     (response) => {
         return response.data
     },
     (error) => {
-        // Í³Ò»´íÎó¸ñÊ½
-        let message = 'ÇëÇóÊ§°Ü'
+        let message = 'è¯·æ±‚å¤±è´¥'
         if (error.response) {
-            // HTTP ´íÎó£¨4xx / 5xx£©
             const status = error.response.status
             const detail = error.response.data?.detail || error.response.data?.message
-            message = detail || `·şÎñÆ÷´íÎó (${status})`
+            message = detail || `æœåŠ¡å™¨é”™è¯¯ (${status})`
+        } else if (error.code === 'ECONNABORTED' || /timeout/i.test(error.message || '')) {
+            message = 'è¯·æ±‚è¶…æ—¶ï¼Œåç«¯å¯èƒ½æ­£å¿™æˆ–æ— å“åº”ï¼Œè¯·ç¨åé‡è¯•'
         } else if (error.request) {
-            // ÍøÂç´íÎó£¨ÎŞÏìÓ¦£©
-            message = 'ÍøÂç´íÎó£ºÎŞ·¨Á¬½Óµ½·şÎñÆ÷'
+            message = 'ç½‘ç»œå¼‚å¸¸ï¼Œæ— æ³•è¿æ¥åˆ°æœåŠ¡å™¨'
         } else {
-            message = error.message || 'Î´Öª´íÎó'
+            message = error.message || 'æœªçŸ¥é”™è¯¯'
         }
 
-        // ±£ÁôÔ­Ê¼ Error ¶ÔÏó£¬µ«¸½¼ÓÓÑºÃÏûÏ¢
+        // ä¿ç•™åŸå§‹é”™è¯¯ï¼Œå‘è°ƒç”¨æ–¹æš´éœ²ç»Ÿä¸€çš„äººç±»å¯è¯»æ¶ˆæ¯ã€‚
         const wrappedError = new Error(message)
         wrappedError.original = error
         wrappedError.status = error.response?.status

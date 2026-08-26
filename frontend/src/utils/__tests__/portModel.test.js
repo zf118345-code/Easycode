@@ -10,11 +10,14 @@ import {
 const FAILURE_TYPES = ['image_recognition', 'ocr_recognition', 'branch', 'logic_check']
 
 function makeNode(nodeType, params = {}, nodeId = 'n1') {
-    return { node_id: nodeId, node_type: nodeType, type: nodeType, params }
+    const normalized = nodeType === 'branch'
+        ? { ...params, candidates: (params.candidates || []).map((item, i) => ({ candidate_id: `cand_${i}`, ...item })) }
+        : params
+    return { node_id: nodeId, node_type: nodeType, params: normalized }
 }
 
 function makeEdges(...list) {
-    return list.map((e, i) => ({ edge_id: `e${i}`, canvas: 'topology', ...e }))
+    return list.map((e, i) => ({ edge_id: `e${i}`, canvas: 'topology', source_port_id: e.source_port, ...e }))
 }
 
 describe('portModel 端口名解析', () => {
@@ -26,10 +29,10 @@ describe('portModel 端口名解析', () => {
         expect(parseDynamicPortIndex('')).toBe(null)
     })
 
-    it('isDynamicPortName 识别动态端口名（含旧 exit 别名）', () => {
+    it('isDynamicPortName 只识别 branch_N / exit_N', () => {
         expect(isDynamicPortName('branch_1')).toBe(true)
         expect(isDynamicPortName('exit_0')).toBe(true)
-        expect(isDynamicPortName('exit')).toBe(true)
+        expect(isDynamicPortName('exit')).toBe(false)
         expect(isDynamicPortName('success')).toBe(false)
         expect(isDynamicPortName('failure')).toBe(false)
     })
@@ -101,14 +104,6 @@ describe('portModel page_state 端口（出口 = 拓扑边 + 虚线占位）', (
         expect(ports.dynamic[2]).toMatchObject({ name: 'exit_2', status: 'pending' })
     })
 
-    it('旧 exit 别名端口归一为 exit_0', () => {
-        const node = makeNode('page_state', { page_id: 'p1' })
-        const edges = makeEdges({ source_node: 'n1', source_port: 'exit', target_node: 'n2' })
-        const ports = buildNodePorts(node, edges, FAILURE_TYPES)
-        expect(ports.dynamic.map(p => p.name)).toEqual(['exit_0', 'exit_1'])
-        expect(ports.dynamic[0].connected).toBe(true)
-    })
-
     it('缺号出口边（exit_1 无 exit_0）→ bound 保留原序号，pending 取最大序号 + 1', () => {
         const node = makeNode('page_state', { page_id: 'p1' })
         const edges = makeEdges({ source_node: 'n1', source_port: 'exit_1', target_node: 'n2' })
@@ -127,13 +122,6 @@ describe('portModel 其他节点类型', () => {
         expect(ports.dynamic).toHaveLength(0)
     })
 
-    it('历史数据兼容：其他类型节点上的动态边补进端口', () => {
-        const node = makeNode('wait', {})
-        const edges = makeEdges({ source_node: 'n1', source_port: 'exit_0', target_node: 'n2' })
-        const ports = buildNodePorts(node, edges, FAILURE_TYPES)
-        expect(ports.dynamic.map(p => p.name)).toEqual(['exit_0'])
-        expect(ports.dynamic[0].connected).toBe(true)
-    })
 })
 
 describe('portModel 辅助函数', () => {

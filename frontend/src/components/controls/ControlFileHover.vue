@@ -16,14 +16,15 @@ v-if="currentDisplayUrl && !hasError"
 
                 <!-- 图片加载失败时的优雅兜底 -->
                 <div v-else-if="hasError" class="preview-empty-text error-text">
-                    <span>⚠️ 模板图片加载失败</span>
+                    <TriangleAlert :size="14" />
+                    <span>模板图片加载失败</span>
                 </div>
 
                 <!-- 实时显示二值化提示与参数角标 -->
                 <div v-if="isGrayScale && !hasError" class="binary-badge">
                     二值化 (阈值: {{ grayThreshold }})
                 </div>
-                <div class="preview-name-badge">{{ modelValue }}</div>
+                <div class="preview-name-badge">{{ displayName }}</div>
             </template>
             <div v-else class="preview-empty-text">
                 <Image style="width: 14px; height: 14px; margin-bottom: -3px; margin-right: 2px; opacity: 0.6;" />
@@ -32,22 +33,23 @@ v-if="currentDisplayUrl && !hasError"
         </div>
 
         <div class="hover-action-overlay">
-            <div class="overlay-half left-half" @click.stop="$emit('openBrowser', 'select')">
+            <button type="button" class="overlay-half left-half" @click.stop="$emit('openBrowser', 'select')">
                 <span class="action-tip">选择图片</span>
-            </div>
+            </button>
             <div class="overlay-divider"></div>
-            <div class="overlay-half right-half" @click.stop="$emit('openScreenshot', 'template')">
+            <button type="button" class="overlay-half right-half" @click.stop="$emit('openScreenshot', 'template')">
                 <span class="action-tip">录入图片</span>
-            </div>
+            </button>
         </div>
     </div>
 </template>
 
 <script setup>
-    import { ref, computed, watch } from 'vue'
-    import { Image } from 'lucide-vue-next'
-    import { useMainStore } from '@/stores'
+    import { ref, computed, onUnmounted, watch } from 'vue'
+    import { Image, TriangleAlert } from 'lucide-vue-next'
+    import { useIdeStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
+    import { loadAssetPreview, releaseAssetPreview } from '@/utils/assetPreview'
 
     const props = defineProps({
         config: { type: Object, required: true },
@@ -58,10 +60,13 @@ v-if="currentDisplayUrl && !hasError"
 
     defineEmits(['update:modelValue', 'openBrowser', 'openScreenshot'])
 
-    const store = useMainStore()
+    const store = useIdeStore()
     const currentDisplayUrl = ref('')
+    const resolvedDisplayName = ref('')
     const hasError = ref(false)
     let timer = null
+    let activePreview = null
+    let previewRequestId = 0
 
     const handleImgError = () => {
         if (currentDisplayUrl.value) {
@@ -71,49 +76,83 @@ v-if="currentDisplayUrl && !hasError"
 
     const isGrayScale = computed(() => !!props.context?.gray_scale)
     const grayThreshold = computed(() => props.context?.gray_threshold ?? 127)
+    const displayName = computed(() => resolvedDisplayName.value || props.modelValue)
 
-    const rawPreviewUrl = computed(() => {
-        if (!props.modelValue) return ''
-        if (props.modelValue.startsWith('http') || props.modelValue.startsWith('data:')) return props.modelValue
-        let cleanName = props.modelValue.replace(/\\/g, '/')
-        if (!/\.(png|jpg|jpeg)$/i.test(cleanName)) {
-            cleanName += '.png'
+    const clearPreview = () => {
+        releaseAssetPreview(activePreview)
+        activePreview = null
+        currentDisplayUrl.value = ''
+    }
+
+    const loadRawPreview = async (projectPath, imageName, requestId) => {
+        const preview = await loadAssetPreview(projectPath, imageName)
+        if (requestId !== previewRequestId) {
+            releaseAssetPreview(preview)
+            return false
         }
-        return `/api/image/thumb?project_path=${encodeURIComponent(store.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&t=${props.imageVersion}`
-    })
+        releaseAssetPreview(activePreview)
+        activePreview = preview
+        currentDisplayUrl.value = preview.url
+        return true
+    }
 
     watch(
         () => [props.modelValue, isGrayScale.value, grayThreshold.value, store.currentProjectPath, props.imageVersion],
         async ([imgName, grayOn, threshold, projPath]) => {
+            const requestId = ++previewRequestId
+            if (timer) clearTimeout(timer)
+            timer = null
+            clearPreview()
             hasError.value = false
+            resolvedDisplayName.value = ''
 
             if (!imgName || !projPath) {
                 currentDisplayUrl.value = ''
                 return
             }
 
+            if (imgName.startsWith('asset://')) {
+                visionApi.resolveTemplate(projPath, imgName)
+                    .then(asset => { resolvedDisplayName.value = asset.display_name || asset.path || imgName })
+                    .catch(() => { resolvedDisplayName.value = imgName })
+            }
+
             if (!grayOn) {
-                currentDisplayUrl.value = rawPreviewUrl.value
+                try {
+                    await loadRawPreview(projPath, imgName, requestId)
+                } catch (err) {
+                    if (requestId === previewRequestId) hasError.value = true
+                }
                 return
             }
 
-            if (timer) clearTimeout(timer)
             timer = setTimeout(async () => {
                 try {
-                    const res = await visionApi.testImage(projPath, imgName, true, threshold)
+                    const res = await visionApi.testImage(projPath, imgName, true, threshold, true)
+                    if (requestId !== previewRequestId) return
                     if (res && res.image) {
                         currentDisplayUrl.value = res.image
                     } else {
-                        currentDisplayUrl.value = rawPreviewUrl.value
+                        await loadRawPreview(projPath, imgName, requestId)
                     }
                 } catch (err) {
                     console.error('二值化预览生成失败:', err)
-                    currentDisplayUrl.value = rawPreviewUrl.value
+                    try {
+                        await loadRawPreview(projPath, imgName, requestId)
+                    } catch (previewError) {
+                        if (requestId === previewRequestId) hasError.value = true
+                    }
                 }
             }, 120)
         },
         { immediate: true }
     )
+
+    onUnmounted(() => {
+        previewRequestId += 1
+        if (timer) clearTimeout(timer)
+        clearPreview()
+    })
 </script>
 
 <style scoped>
@@ -191,6 +230,10 @@ v-if="currentDisplayUrl && !hasError"
         font-size: 11px;
         color: var(--el-text-color-placeholder);
         z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
     }
 
     .error-text {
@@ -226,13 +269,23 @@ v-if="currentDisplayUrl && !hasError"
         justify-content: center;
         cursor: pointer;
         box-sizing: border-box;
+        padding: 0;
+        background: transparent;
+        color: inherit;
         border: 2px dashed transparent;
-        transition: all 0.2s;
+        font: inherit;
+        transition: background-color 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+    }
+
+    .overlay-half:focus-visible {
+        outline: 0;
+        border-color: var(--app-color-primary);
+        box-shadow: inset var(--focus-ring);
     }
 
     .left-half:hover {
         border-color: var(--el-color-primary);
-        background: rgba(78, 209, 156, 0.15);
+    background: var(--app-color-primary-dim);
     }
 
     .right-half:hover {

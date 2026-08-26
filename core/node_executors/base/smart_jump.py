@@ -34,40 +34,37 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context) -> dict[str, Any]:
         params = node.params or {}
 
-        # 解析参数（支持 ${var} 模板）
+        # 解析统一表达式（$var{name} / $ctx{name} / $env{name}）
         target_page_id = self._resolve(params.get('target_page_id'), context)
         timeout = max(100, int(params.get('timeout', 3000) or 3000))
 
-        context.log(f'[smart_jump] 启动智能跳转 | 目标页面={target_page_id or "-"} 超时={timeout}ms')
+        context.log(f'[智能跳转] 启动智能跳转 | 目标页面=[{context._topology_page_label(target_page_id)}] 超时={timeout}ms')
 
         if not target_page_id:
-            context.log('[smart_jump] 未配置目标页面', 'error')
-            return self.build_jump_result(
-                success=False, jump_conf=(node.params or {}).get('on_failure'), error='未配置目标页面'
-            )
+            context.log('[智能跳转] 未配置目标页面', 'error')
+            return self.build_result(success=False, error='未配置目标页面')
 
-        # 当前页面判定：变量优先，缺失时现场评估所有拓扑页面
-        current_page = context.variables.get('current_page_id', '')
-        if not current_page:
-            context.log('[smart_jump] current_page_id 为空，现场评估当前页面...')
-            current_page = context.evaluate_current_page()
-            if current_page:
-                context.variables['current_page_id'] = current_page
-                context.log(f'[smart_jump] 现场评估命中当前页面: {current_page}')
-            else:
-                context.log('[smart_jump] 现场评估未命中任何页面，无法确定当前位置', 'warning')
+        # current_page_id 仅作为识别排序提示，智能跳转必须现场验证，避免点击后沿用陈旧缓存。
+        cached_page = context.variables.get('current_page_id', '')
+        if cached_page:
+            context.log(f'[智能跳转] 缓存页面仅作候选提示: [{context._topology_page_label(cached_page)}]，开始现场验证...')
+        else:
+            context.log(f'[智能跳转] 加载等待评估当前页面（超时 {timeout}ms）...')
+        current_page = context._resolve_current_page_with_load_wait(timeout)
+        if current_page:
+            context.variables['current_page_id'] = current_page
+            context.log(f'[智能跳转] 现场评估命中当前页面: [{context._topology_page_label(current_page)}]')
+        else:
+            context.log('[智能跳转] 加载等待超时，未命中任何已知页面，无法确定当前位置', 'warning')
 
         if not current_page:
-            return self.build_jump_result(
-                success=False, jump_conf=(node.params or {}).get('on_failure'), error='无法确定当前页面'
-            )
+            return self.build_result(success=False, error='无法确定当前页面')
 
         # 已在目标页面：无需跳转
         if current_page == target_page_id:
-            context.log(f'[smart_jump] 已在目标页面 [{target_page_id}]，无需跳转')
-            return self.build_jump_result(
+            context.log(f'[智能跳转] 已在目标页面 [{context._topology_page_label(target_page_id)}]，无需跳转')
+            return self.build_result(
                 success=True,
-                jump_conf=(node.params or {}).get('on_success'),
                 extra={'target_page_id': target_page_id, 'path': [target_page_id]},
             )
 
@@ -76,10 +73,9 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
 
         if not path_result.success or not path_result.path or len(path_result.path) < 2:
             reason = path_result.reason or '路径为空'
-            context.log(f'[smart_jump] 从 [{current_page}] 到 [{target_page_id}] 寻路失败: {reason}', 'error')
-            return self.build_jump_result(
+            context.log(f'[智能跳转] 从 [{context._topology_page_label(current_page)}] 到 [{context._topology_page_label(target_page_id)}] 寻路失败: {reason}', 'error')
+            return self.build_result(
                 success=False,
-                jump_conf=(node.params or {}).get('on_failure'),
                 error=f'寻路失败: {reason}',
                 extra={'target_page_id': target_page_id},
             )
@@ -89,11 +85,13 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
             'path': path_result.path,
             'target_page_id': target_page_id,
             'timeout': timeout,
+            # execute 返回后 GraphExecutor 会同步消费路径，中间没有用户操作点；
+            # 路径执行首轮可复用这个刚刚现场验证过的起点，避免重复扫描耗尽超时。
+            'verified_page_id': current_page,
         }
-        context.log(f'[smart_jump] 寻路成功 | 路径: {" → ".join(path_result.path)}')
-        return self.build_jump_result(
+        context.log(f'[智能跳转] 寻路成功 | 路径: {" → ".join(context._topology_page_label(x) for x in path_result.path)}')
+        return self.build_result(
             success=True,
-            jump_conf=(node.params or {}).get('on_success'),
             extra={'path': path_result.path, 'target_page_id': target_page_id},
         )
 
@@ -108,7 +106,7 @@ class SmartJumpNodeExecutor(BaseNodeExecutor):
 
     @staticmethod
     def _resolve(value: Any, context) -> str:
-        """解析 ${var} 模板字符串，None 安全"""
+        """解析统一变量表达式，None 安全。"""
         if value is None:
             return ''
         return str(context.parse_expr(value))

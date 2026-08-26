@@ -25,9 +25,7 @@ PARAM_DEFINITIONS: dict[str, dict[str, Any]] = {
                 'placeholder': '如：shop / dungeon_entrance',
                 'hidden': True,
             },
-            # 复合特征列表：每行一个条件（图像存在 / 文本包含），按组合模式聚合
-            # 复用 condition_list_editor（与逻辑判断同款交互），pageFeatures 追加
-            # 「组合方式 / 结果取反」两个页面特征专属字段
+            # 复合特征列表：每行一个条件（图像存在 / 文本包含），统一按页面节点组合模式聚合
             'features': {
                 'type': 'condition_list_editor',
                 'label': '复合特征列表',
@@ -36,8 +34,14 @@ PARAM_DEFINITIONS: dict[str, dict[str, Any]] = {
                 'addLabel': '添加特征',
                 'description': '定义该页面的识别特征，按 feature_mode(AND/OR) 聚合判断',
             },
-            # 全局特征组合模式：当单条特征未指定 combine_mode 时使用
+            # 页面唯一的特征组合模式；单条特征不再携带 AND/OR，避免双重语义
             'feature_mode': {'type': 'select', 'label': '特征组合模式', 'default': 'and', 'options': ['and', 'or']},
+            'is_random_popup': {
+                'type': 'bool',
+                'label': '是否为高频随机弹窗',
+                'default': False,
+                'help': '没有固定出现入口、出现时机随机，或需在界面识别/操作前高频检测并自动关闭时开启。普通导航页面不要开启。',
+            },
         },
     }
 }

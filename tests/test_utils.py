@@ -1,9 +1,9 @@
 """resolve_template_string 模板变量替换引擎单元测试
 
 验证三大命名空间：
-- 用户全局变量 {xxx} / {$var.xxx}
-- 节点上下文 {$ctx.xxx}
-- 系统/环境变量 {$env.xxx} / {$sys.xxx}
+- 用户全局变量 $var{xxx}
+- 节点上下文 $ctx{xxx}
+- 系统/环境变量 $env{xxx}
 """
 
 from datetime import datetime
@@ -54,11 +54,6 @@ class TestUserVariables:
         ctx = _MockCtx(variables={'a': '1', 'b': '2'})
         assert resolve_template_string('$var{a}+$var{b}=3', ctx) == '1+2=3'
 
-    def test_legacy_braced_dot_syntax_compat(self):
-        """旧语法 {$var.name} 兼容（历史数据）"""
-        ctx = _MockCtx(variables={'name': 'Alice'})
-        assert resolve_template_string('{$var.name}', ctx) == 'Alice'
-
     def test_undefined_variable_preserved(self):
         """未定义的变量应保留原占位符"""
         ctx = _MockCtx(variables={})
@@ -74,10 +69,6 @@ class TestContextVariables:
     def test_ctx_variable(self):
         ctx = _MockCtx(variables={'ocr_text': '识别结果'})
         assert resolve_template_string('结果: $ctx{ocr_text}', ctx) == '结果: 识别结果'
-
-    def test_legacy_ctx_syntax_compat(self):
-        ctx = _MockCtx(variables={'ocr_text': '识别结果'})
-        assert resolve_template_string('{$ctx.ocr_text}', ctx) == '识别结果'
 
     def test_ctx_undefined_preserved(self):
         ctx = _MockCtx(variables={})
@@ -99,19 +90,15 @@ class TestSystemVariables:
 
     def test_project_path(self):
         ctx = _MockCtx(project_dir='/my/project')
-        assert resolve_template_string('$sys{project_path}', ctx) == '/my/project'
+        assert resolve_template_string('$env{project_path}', ctx) == '/my/project'
 
     def test_task_name(self):
         ctx = _MockCtx(task_name='测试任务')
-        assert resolve_template_string('$sys{task_name}', ctx) == '测试任务'
+        assert resolve_template_string('$env{task_name}', ctx) == '测试任务'
 
     def test_node_name(self):
         ctx = _MockCtx(node_name='点击节点')
-        assert resolve_template_string('$sys{node_name}', ctx) == '点击节点'
-
-    def test_legacy_env_syntax_compat(self):
-        ctx = _MockCtx(project_dir='/p')
-        assert resolve_template_string('{$sys.project_path}', ctx) == '/p'
+        assert resolve_template_string('$env{node_name}', ctx) == '点击节点'
 
     def test_unknown_env_key_preserved(self):
         ctx = _MockCtx()
@@ -121,19 +108,11 @@ class TestSystemVariables:
 class TestMixedNamespaces:
     def test_all_namespaces_in_one_string(self):
         ctx = _MockCtx(variables={'user': 'Bob'}, task_name='T1')
-        result = resolve_template_string('用户:$var{user} 任务:$sys{task_name} 时间:$env{date}', ctx)
+        result = resolve_template_string('用户:$var{user} 任务:$env{task_name} 时间:$env{date}', ctx)
         assert '用户:Bob' in result
         assert '任务:T1' in result
         # 日期格式 YYYY-MM-DD
         datetime.strptime(result.split('时间:')[1], '%Y-%m-%d')
-
-    def test_legacy_mixed_syntax_compat(self):
-        ctx = _MockCtx(variables={'user': 'Bob'}, task_name='T1')
-        result = resolve_template_string('用户:{user} 任务:{$sys.task_name}', ctx)
-        # 裸 {user} 不再识别 → 保留原样；旧 {$sys.task_name} 正常替换
-        assert '用户:{user}' in result
-        assert '任务:T1' in result
-
 
 # ========== 模板匹配：多尺度 + 通道统一（#3/#4） ==========
 

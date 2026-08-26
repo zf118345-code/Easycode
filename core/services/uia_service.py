@@ -180,16 +180,20 @@ def _element_matches(el, by: str, target: str) -> bool:
     return False
 
 
-def _find_in_subtree(base, by: str, target: str, deadline: float | None = None):
-    """BFS 遍历子树找第一个匹配元素（带遍历上限）；先检查 base 自身。
+def _find_in_subtree(base, by: str, target: str, deadline: float | None = None, index: int = 0):
+    """BFS 遍历单次树快照并返回第 index 个匹配元素；先检查 base 自身。
     ⚡ deadline 感知：遍历中每 200 节点检查一次，超时立即中断（超时严格生效，
     单轮遍历不再拖过 deadline —— 修复"超时 5000ms 实际 24s"问题）。"""
     def _expired():
         return deadline is not None and time.time() > deadline
 
+    wanted = max(0, int(index or 0))
+    seen = 0
     try:
         if _element_matches(base, by, target):
-            return base
+            if seen == wanted:
+                return base
+            seen += 1
     except Exception:
         pass
     queue = [base]
@@ -206,7 +210,9 @@ def _find_in_subtree(base, by: str, target: str, deadline: float | None = None):
         for child in children:
             try:
                 if _element_matches(child, by, target):
-                    return child
+                    if seen == wanted:
+                        return child
+                    seen += 1
             except Exception:
                 pass
             queue.append(child)
@@ -269,23 +275,20 @@ def find_control(
     except (TypeError, ValueError):
         index = 0
     deadline = time.time() + remaining_ms / 1000.0
-    seen = 0
     while time.time() < deadline:
         try:
             root = auto.GetRootControl()
             if window_title:
                 base = _find_window_in_subtree(root, window_title, deadline)
                 if base is None:
-                    base = root  # 窗口未找到 → 回退全桌面（保持向后兼容）
+                    return None
             else:
                 base = root
-            match = _find_in_subtree(base, by, target, deadline)
+            match = _find_in_subtree(base, by, target, deadline, index=index)
             if match is not None:
-                if seen == index:
-                    info = _element_info(match)
-                    info['match_index'] = seen
-                    return info
-                seen += 1
+                info = _element_info(match)
+                info['match_index'] = index
+                return info
         except Exception as e:
             logger.warning('UIA 查找异常: %s', e)
         time.sleep(0.05)
@@ -687,8 +690,61 @@ def find_control_by_path(window_title: str = '', path: list | None = None, timeo
 
 # ------------------------------------------------------------------ UIA 后台操作
 
-def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
-    """对 UIA 元素执行操作（多开友好：Invoke / PostMessage 优先，物理点击兜底）
+def _resolve_action_element(info: dict, auto):
+    """从目标窗口树重新取得元素引用，不依赖会被遮挡窗口劫持的 ControlFromPoint。"""
+    deadline = time.time() + 1.5
+    hwnd = int(info.get('hwnd') or 0)
+    if hwnd:
+        try:
+            control_from_handle = getattr(auto, 'ControlFromHandle', None)
+            if control_from_handle is not None:
+                element = control_from_handle(hwnd)
+                if element is not None:
+                    return element
+        except Exception:
+            pass
+
+    try:
+        root = auto.GetRootControl()
+    except Exception:
+        return None
+    path = info.get('_ancestor_path') or []
+    if isinstance(path, list) and path:
+        current = _find_window_in_subtree(root, path[0].get('name', ''), deadline)
+        if current is not None:
+            for level in path[1:]:
+                try:
+                    current = _match_best_child(current.GetChildren(), level)
+                except Exception:
+                    current = None
+                if current is None:
+                    break
+            if current is not None:
+                return current
+
+    window_title = str(info.get('window_title') or '').strip()
+    if not window_title:
+        return None
+    base = _find_window_in_subtree(root, window_title, deadline)
+    if base is None:
+        return None
+    for by, value in (
+        ('uia_id', info.get('automation_id')),
+        ('uia_class', info.get('class_name')),
+        ('uia_name', info.get('name')),
+        ('uia_type', info.get('control_type')),
+    ):
+        value = str(value or '').strip()
+        if value:
+            # AutomationId / class 通常是实例级定位，不应沿用名称搜索产生的同名序号。
+            index = 0 if by in ('uia_id', 'uia_class') else int(info.get('match_index') or 0)
+            element = _find_in_subtree(base, by, value, deadline, index=index)
+            if element is not None:
+                return element
+    return None
+
+def perform_uia_action(info: dict, action: str, text: str = '', allow_physical_fallback: bool = False) -> dict:
+    """对 UIA 元素执行操作（Invoke / 后台消息优先，物理回退必须显式授权）
     元素引用通过 rect 中心重新定位获得（info 是序列化信息）。"""
     auto = _uia()
     if auto is None:
@@ -696,15 +752,25 @@ def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
     rect = info.get('rect') or [0, 0, 0, 0]
     cx = (rect[0] + rect[2]) // 2
     cy = (rect[1] + rect[3]) // 2
-    try:
-        el = auto.ControlFromPoint(cx, cy)
-    except Exception as e:
-        return {'ok': False, 'message': f'重新定位元素失败: {e}'}
-    if el is None:
-        return {'ok': False, 'message': '元素不存在（可能已关闭）'}
 
     if action == 'exists':
         return {'ok': True, 'message': '控件存在'}
+
+    def _physical_click(cx, cy, clicks=1) -> dict:
+        """真实鼠标点击；仅在项目显式授权后调用。"""
+        try:
+            import pyautogui
+
+            pyautogui.click(int(cx), int(cy), clicks=clicks)
+            return {'ok': True, 'method': 'physical', 'message': f'物理点击 ({int(cx)}, {int(cy)})'}
+        except Exception as e:
+            return {'ok': False, 'method': 'physical', 'message': f'物理点击失败: {e}'}
+
+    el = _resolve_action_element(info, auto)
+    if el is None:
+        if action in ('click', 'double_click') and allow_physical_fallback:
+            return _physical_click(cx, cy, 2 if action == 'double_click' else 1)
+        return {'ok': False, 'message': '无法在绑定窗口的UIA树中重新定位目标元素，严格后台模式已阻止操作'}
 
     def _identity_matches(el, info: dict) -> bool:
         """重新定位元素与目标控件身份校验（name/automation_id 任一归一化匹配即视为一致；
@@ -726,23 +792,15 @@ def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
             return False
         return True  # 双方都无有效身份信息时放行（避免误判）
 
-    def _physical_click(cx, cy, clicks=1) -> dict:
-        """真实鼠标点击（对 WinUI/自绘控件唯一可靠的方式）"""
-        try:
-            import pyautogui
-
-            pyautogui.click(int(cx), int(cy), clicks=clicks)
-            return {'ok': True, 'message': f'物理点击 ({int(cx)}, {int(cy)})'}
-        except Exception as e:
-            return {'ok': False, 'message': f'物理点击失败: {e}'}
-
     if action in ('click', 'double_click'):
         clicks = 2 if action == 'double_click' else 1
         if not _identity_matches(el, info):
             logger.warning(
-                '重新定位元素与目标不一致（期望 name=%r aid=%r），改用物理点击',
+                '重新定位元素与目标不一致（期望 name=%r aid=%r）',
                 info.get('name'), info.get('automation_id'))
-            return _physical_click(cx, cy, clicks)
+            if allow_physical_fallback:
+                return _physical_click(cx, cy, clicks)
+            return {'ok': False, 'message': '重新定位到的UIA元素与目标不一致，严格后台模式已阻止物理点击'}
         # 1) InvokePattern：UIA 注入，不占物理鼠标（任务栏/回收站等自绘控件的最佳方式）
         try:
             pat = el.GetPattern(auto.PatternId.InvokePattern)
@@ -764,7 +822,7 @@ def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
                 return result
         # 3) 无原生句柄（自绘/WinUI/浏览器内元素）：PostMessage 到顶层窗口对这类控件
         #    基本无效（不处理合成鼠标消息，任务栏点不开的根因）→ 真实物理点击确保生效
-        if not hwnd:
+        if not hwnd and allow_physical_fallback:
             result = _physical_click(cx, cy, clicks)
             if result.get('ok'):
                 return result
@@ -779,13 +837,16 @@ def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
 
             result = background_click(top_hwnd, cx, cy, clicks=clicks)
             if result.get('ok'):
-                return {'ok': True, 'message': f'窗口后台点击兜底 ({cx}, {cy})'}
+                result['message'] = f'窗口后台点击兜底 ({cx}, {cy})；{result.get("message", "效果未验证")}'
+                return result
         # 5) 最后手段：物理点击
-        try:
-            clickable = el.GetClickablePoint()
-            return _physical_click(int(clickable[0]), int(clickable[1]), clicks)
-        except Exception as e:
-            return {'ok': False, 'message': f'点击失败: {e}'}
+        if allow_physical_fallback:
+            try:
+                clickable = el.GetClickablePoint()
+                return _physical_click(int(clickable[0]), int(clickable[1]), clicks)
+            except Exception as e:
+                return {'ok': False, 'message': f'点击失败: {e}'}
+        return {'ok': False, 'message': '控件不支持UIA Invoke或可靠后台消息，严格后台模式已阻止物理点击'}
 
     if action in ('get_text', 'get_value'):
         try:
@@ -814,9 +875,15 @@ def perform_uia_action(info: dict, action: str, text: str = '') -> dict:
         return {'ok': False, 'message': '该控件不支持文本输入'}
 
     if action == 'hover':
+        from core.services.background_input import background_hover
+
+        hwnd = info.get('hwnd') or 0
+        result = background_hover(hwnd, cx, cy)
+        if result.get('ok') or not allow_physical_fallback:
+            return result
         import pyautogui
 
         pyautogui.moveTo(cx, cy)
-        return {'ok': True, 'message': f'物理悬停 ({cx}, {cy})'}
+        return {'ok': True, 'method': 'physical', 'message': f'后台悬停失败，已回退物理悬停 ({cx}, {cy})'}
 
     return {'ok': False, 'message': f'不支持的操作: {action}'}

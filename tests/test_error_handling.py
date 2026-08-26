@@ -7,6 +7,8 @@
 - 统一响应格式包含 code/data/message
 """
 
+import threading
+
 
 
 class TestValidationErrors:
@@ -20,9 +22,9 @@ class TestValidationErrors:
         assert data['code'] != 0  # 非成功
 
     def test_missing_query_param(self, client):
-        """GET /api/blueprint 缺失必填 query 参数应返回 422"""
+        """没有活动工作区身份时应明确拒绝，而不是猜测项目路径。"""
         resp = client.get('/api/blueprint')
-        assert resp.status_code == 422
+        assert resp.status_code == 409
 
 
 class TestGlobalExceptionHandling:
@@ -30,7 +32,7 @@ class TestGlobalExceptionHandling:
         """触发内部异常应被全局处理器捕获，返回 500 而非崩溃"""
         # 加载不存在路径会触发异常，但不应导致连接断开
         resp = client.get('/api/blueprint', params={'project_path': '/nonexistent/trigger/error'})
-        assert resp.status_code in (404, 500)
+        assert resp.status_code == 409
         # 响应体应为 JSON
         data = resp.json()
         assert isinstance(data, dict)
@@ -59,3 +61,23 @@ class TestRateLimitMiddleware:
         """正常请求不应被速率限制拦截"""
         resp = client.get('/api/params')
         assert resp.status_code == 200
+
+
+def test_executor_console_encoding_error_never_aborts_runtime(monkeypatch):
+    """GBK/无控制台宿主不能让含 Emoji 的运行日志终止任务。"""
+    from core import executor as executor_module
+
+    runtime = executor_module.GraphExecutor.__new__(executor_module.GraphExecutor)
+    runtime.variables = {}
+    runtime.logs = []
+    runtime.max_logs = 20
+    runtime._logs_lock = threading.Lock()
+
+    def reject_emoji(*_args, **_kwargs):
+        raise UnicodeEncodeError('gbk', '🤖', 0, 1, 'illegal multibyte sequence')
+
+    monkeypatch.setattr('builtins.print', reject_emoji)
+    monkeypatch.setattr(executor_module.logger, 'info', lambda *_args, **_kwargs: None)
+
+    runtime.log('🤖 模拟器 ADB 绑定成功')
+    assert runtime.logs[0]['message'] == '🤖 模拟器 ADB 绑定成功'

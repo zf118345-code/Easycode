@@ -1,167 +1,88 @@
-<!-- frontend/src/components/inspector/InspectorPanel.vue
-  统一属性检查器：workflow 与 topology 共用一套逻辑。
-  监听 uiStore 选中状态，从「当前画布数据源」（blueprint.workflow / blueprint.topology）读取节点编辑，
-  保存时写回同一数据源（两数据源结构同构，节点页面数据内嵌 params）。
--->
 <template>
     <div class="workflow-inspector-embedded">
-        <NodeInspectorPanel
-            v-if="targetType === 'node' && currentNode"
-            :node="currentNode"
-            @save="triggerSave" />
-
-        <BatchInspectorPanel
-            v-else-if="targetType === 'batch' && selectedNodes.length > 1"
-            :nodes="selectedNodes"
-            @save="triggerSave" />
-
-        <GroupInspectorPanel
-            v-else-if="targetType === 'group' && targetData"
-            :group="targetData"
-            mode="workflow"
-            @save="triggerSave" />
-
+        <NodeInspectorPanel v-if="targetType === 'node' && currentNode" :node="currentNode" @save="commitActiveDraft" />
+        <BatchInspectorPanel v-else-if="targetType === 'batch' && selectedNodes.length > 1" :nodes="selectedNodes" @save="saveCurrentGraph" />
         <div v-else class="inspector-empty-tip">
-            <span><MousePointerClick :size="14" style="vertical-align: middle;" /> 请在画布中点击节点或任务组以查看/编辑属性</span>
+            <MousePointerClick :size="16" />
+            <span>选择一个节点查看属性；区块名称和范围直接在画布中编辑。</span>
         </div>
     </div>
 </template>
 
 <script setup>
-    import { ref, computed, watch } from 'vue'
-    import { useMainStore, useUiStore } from '@/stores'
-    import { MousePointerClick } from 'lucide-vue-next'
-    import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
-    import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
-    import GroupInspectorPanel from './panels/GroupInspectorPanel.vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
+import { MousePointerClick } from 'lucide-vue-next'
+import { useIdeStore, useUiStore } from '@/stores'
+import BatchInspectorPanel from './panels/BatchInspectorPanel.vue'
+import NodeInspectorPanel from './panels/NodeInspectorPanel.vue'
 
-    const store = useMainStore()
-    const uiStore = useUiStore()
+const store = useIdeStore()
+const uiStore = useUiStore()
+const currentNode = ref(null)
+const currentGraphMode = ref('workflow')
+const targetType = ref('none')
+let hydratingDraft = false
+const clone = value => JSON.parse(JSON.stringify(value))
 
-    const isTopology = computed(() => store.canvasMode === 'topology')
+const workflowGraphs = computed(() => [
+    store.blueprint?.main_graph,
+    ...(store.blueprint?.functions || []).map(item => item.graph)
+].filter(Boolean))
+const graphsForMode = mode => mode === 'topology' ? [store.blueprint?.page_map].filter(Boolean) : workflowGraphs.value
+const activeGraph = computed(() => {
+    if (store.canvasMode === 'topology') return store.blueprint?.page_map || null
+    if (store.currentTaskId === 'main') return store.blueprint?.main_graph || null
+    return (store.blueprint?.functions || []).find(item => item.function_id === store.currentTaskId)?.graph || store.blueprint?.main_graph || null
+})
+const selectedNodes = computed(() => {
+    const ids = new Set(uiStore.selectedNodeIds || [])
+    return (activeGraph.value?.nodes || []).filter(node => ids.has(node.node_id))
+})
 
-    // 当前画布数据源（两 Tab 同构 {tasks, edges}）
-    const canvasData = computed(() => (
-        isTopology.value
-            ? { tasks: store.blueprint?.topology?.tasks || [], edges: store.blueprint?.topology?.edges || [] }
-            : { tasks: store.blueprint?.tasks || [], edges: store.blueprint?.edges || [] }
-    ))
+const saveCurrentGraph = () => store.canvasMode === 'topology' ? store.saveTopologyDebounced() : store.saveWorkflowDebounced()
 
-    const currentNode = ref(null)
-    const targetType = ref('node')
-    const targetData = ref(null)
-
-    const selectedNodes = computed(() => {
-        const ids = uiStore.selectedNodeIds || []
-        const tasks = canvasData.value.tasks || []
-        let list = []
-        tasks.forEach(t => {
-            (t.nodes || []).forEach(n => {
-                if (ids.includes(n.node_id)) list.push(n)
-            })
-        })
-        return list
-    })
-
-    watch(() => [uiStore.selectedNodeIds, uiStore.selectedGroupId, uiStore.inspectorSyncTick], () => {
-        const nodeIds = uiStore.selectedNodeIds || []
-        const tasks = canvasData.value.tasks || []
-
-        if (nodeIds.length > 1) {
-            targetType.value = 'batch'
-            targetData.value = null
-            currentNode.value = null
-        } else if (nodeIds.length === 1) {
-            targetType.value = 'node'
-            let foundNode = null
-            for (const task of tasks) {
-                const n = (task.nodes || []).find(item => item.node_id === nodeIds[0])
-                if (n) { foundNode = n; break }
-            }
-            if (foundNode) {
-                const nodeCopy = JSON.parse(JSON.stringify(foundNode))
-                if (!nodeCopy.params) nodeCopy.params = {}
-                currentNode.value = nodeCopy
-            }
-        } else if (uiStore.selectedGroupId) {
-            targetType.value = 'group'
-            const t = tasks.find((task, idx) => `group_${task.task_id || idx}` === uiStore.selectedGroupId)
-            if (t) {
-                targetData.value = {
-                    groupId: uiStore.selectedGroupId,
-                    taskId: t.task_id,
-                    groupName: t.task_name,
-                    loopCount: t.loop_count || 1,
-                    loopInterval: t.loop_interval || 0
-                }
-                currentNode.value = null
-            }
-        } else {
-            targetType.value = 'node'
-            currentNode.value = null
-            targetData.value = null
-        }
-    }, { immediate: true, deep: true })
-
-    const triggerSave = async () => {
-        try {
-            if (targetType.value === 'node' && currentNode.value) {
-                const tasks = canvasData.value.tasks || []
-                for (const task of tasks) {
-                    if (task.nodes) {
-                        const idx = task.nodes.findIndex(n => n.node_id === currentNode.value.node_id)
-                        if (idx > -1) {
-                            currentNode.value.loop_count = Number(currentNode.value.loop_count) || 1
-                            currentNode.value.delay_before = Number(currentNode.value.delay_before) || 0
-                            task.nodes[idx] = JSON.parse(JSON.stringify(currentNode.value))
-                            break
-                        }
-                    }
-                }
-                // 出口已由画布连线定义（边即出口），不再修剪 params.exits 相关连线
-            } else if (targetType.value === 'group' && targetData.value) {
-                targetData.value.loopCount = Number(targetData.value.loopCount) || 1
-                targetData.value.loopInterval = Number(targetData.value.loopInterval) || 0
-                const groupTask = (canvasData.value.tasks || []).find(t =>
-                    t.task_id === targetData.value.taskId || `group_${t.task_id}` === targetData.value.groupId)
-                if (groupTask) {
-                    groupTask.task_name = targetData.value.groupName
-                    groupTask.loop_count = targetData.value.loopCount
-                    groupTask.loop_interval = targetData.value.loopInterval
-                }
-            }
-            if (isTopology.value) {
-                await store.saveTopologyDebounced()
-            } else {
-                // ⚡ #8 参数编辑防抖保存（打字/滑块合并为 400ms 一次全量写，IO 减少 ~90%）
-                await store.saveWorkflowDebounced()
-            }
-        } catch (err) {
-            console.error('保存节点配置失败:', err)
-        }
+function commitNodeDraft(draft = currentNode.value) {
+    if (hydratingDraft || !draft?.node_id) return false
+    for (const graph of graphsForMode(currentGraphMode.value)) {
+        const index = (graph.nodes || []).findIndex(node => node.node_id === draft.node_id)
+        if (index < 0) continue
+        const next = clone(draft)
+        next.loop_count = Math.max(1, Number(next.loop_count) || 1)
+        next.delay_before = Math.max(0, Number(next.delay_before) || 0)
+        graph.nodes.splice(index, 1, next)
+        currentGraphMode.value === 'topology' ? store.saveTopologyDebounced() : store.saveWorkflowDebounced()
+        return true
     }
+    return false
+}
+const commitActiveDraft = () => targetType.value === 'node' && currentNode.value ? commitNodeDraft() : undefined
+
+watch(() => [store.canvasMode, store.currentTaskId, [...(uiStore.selectedNodeIds || [])], uiStore.inspectorSyncTick], () => {
+    commitActiveDraft()
+    hydratingDraft = true
+    const ids = uiStore.selectedNodeIds || []
+    currentNode.value = null
+    if (ids.length > 1) {
+        targetType.value = 'batch'
+    } else if (ids.length === 1) {
+        const found = (activeGraph.value?.nodes || []).find(node => node.node_id === ids[0])
+        if (found) {
+            currentNode.value = clone(found)
+            currentNode.value.params ||= {}
+            currentGraphMode.value = store.canvasMode
+            targetType.value = 'node'
+        } else targetType.value = 'none'
+    } else targetType.value = 'none'
+    hydratingDraft = false
+}, { immediate: true, deep: false, flush: 'sync' })
+
+watch(currentNode, value => {
+    if (!hydratingDraft && targetType.value === 'node' && value) commitNodeDraft(value)
+}, { deep: true, flush: 'sync' })
+
+onBeforeUnmount(commitActiveDraft)
 </script>
 
 <style scoped>
-    .workflow-inspector-embedded {
-        width: 100%;
-        height: 100%;
-        background: rgba(38, 40, 61, 0.95);
-        display: flex;
-        flex-direction: column;
-        user-select: none;
-        overflow: hidden;
-        box-sizing: border-box;
-    }
-
-    .inspector-empty-tip {
-        flex: 1;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        padding: 20px;
-        text-align: center;
-        font-size: 12px;
-        color: var(--el-text-color-placeholder);
-    }
+.workflow-inspector-embedded{width:100%;height:100%;display:flex;flex-direction:column;overflow:hidden;box-sizing:border-box;background:var(--app-panel-bg);user-select:none}.inspector-empty-tip{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:24px;text-align:center;font-size:11px;line-height:1.55;color:var(--el-text-color-placeholder)}
 </style>

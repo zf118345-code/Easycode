@@ -5,7 +5,7 @@ from .defaults import NODE_DEFAULTS
 PARAM_DEFINITIONS = {
     'branch': {
         'label': '分支选择',
-        'modes': ['workflow'],
+        'modes': ['workflow', 'topology'],
         'params': {
             'match_strategy': {
                 'type': 'select',

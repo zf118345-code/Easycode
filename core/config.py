@@ -6,7 +6,6 @@
 
 环境变量说明（请在生产环境通过 .env 或系统环境变量注入）：
 - APP_ENV                : 运行环境 (dev|prod)，默认 dev
-- EASYCODE_SIGN_SECRET   : 蓝图 HMAC-SHA256 签名密钥（生产必填）
 - EASYCODE_MASTER_SALT   : 资产加密 PBKDF2 Salt（生产必填）
 - EASYCODE_CORS_ORIGINS  : 允许的 CORS 来源，逗号分隔 (例如 "http://a.com,http://b.com")
 - EASYCODE_RATE_LIMIT    : 全局速率限制 (例如 "60/minute")，默认 "120/minute"
@@ -22,11 +21,6 @@ class SecurityConfig:
     IS_PROD: Final[bool] = APP_ENV == 'prod'
     IS_DEV: Final[bool] = APP_ENV == 'dev'
 
-    # ====== 蓝图签名密钥 ======
-    _SIGN_SECRET_ENV = 'EASYCODE_SIGN_SECRET'
-    # dev 模式下使用的兜底密钥（仅用于本地调试，prod 模式必须通过环境变量注入）
-    _DEV_FALLBACK_SIGN_SECRET = b'easycode_blueprint_signature_v1'
-
     # ====== 资产加密 Salt ======
     _MASTER_SALT_ENV = 'EASYCODE_MASTER_SALT'
     _DEV_FALLBACK_SALT = b'EasycodeDRMSalt2026SecureStorage'
@@ -37,22 +31,6 @@ class SecurityConfig:
     # ====== 速率限制 ======
     _RATE_LIMIT_ENV = 'EASYCODE_RATE_LIMIT'
     _DEFAULT_RATE_LIMIT = '120/minute'
-
-    @classmethod
-    def get_sign_secret(cls) -> bytes:
-        """获取蓝图签名密钥
-
-        - 生产环境：必须通过 EASYCODE_SIGN_SECRET 注入，否则启动失败
-        - 开发环境：允许使用内置兜底密钥以便快速本地调试
-        """
-        secret = os.environ.get(cls._SIGN_SECRET_ENV, '').strip()
-        if secret:
-            return secret.encode('utf-8')
-        if cls.IS_PROD:
-            raise RuntimeError(
-                f'生产环境必须设置环境变量 {cls._SIGN_SECRET_ENV}，禁止使用兜底密钥'
-            )
-        return cls._DEV_FALLBACK_SIGN_SECRET
 
     @classmethod
     def get_master_salt(cls) -> bytes:

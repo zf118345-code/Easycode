@@ -11,8 +11,8 @@ from core.registry import NodeExecutorRegistry
 class BranchNodeExecutor(BaseNodeExecutor):
     def _get_cond_desc(self, condition):
         """格式化 5 大类判定条件的日志描述"""
-        cond_type = condition.get('condition_type') or condition.get('type', 'variable_check')
-        cond_params = condition.get('params', condition)
+        cond_type = condition.get('condition_type', 'variable_check')
+        cond_params = condition
 
         if cond_type == 'image_exists':
             mode_str = '不存在' if cond_params.get('exist_mode') == 'not_exists' else '存在'
@@ -21,12 +21,8 @@ class BranchNodeExecutor(BaseNodeExecutor):
             mode_str = cond_params.get('exist_mode', 'contains')
             return f'文本({mode_str}) [{cond_params.get("target_text", "")}]'
         elif cond_type == 'variable_check':
-            var_name = cond_params.get('variable_name') or cond_params.get('var_name', '')
-            val = (
-                cond_params.get('compare_value')
-                if cond_params.get('compare_value') is not None
-                else cond_params.get('target_value', '')
-            )
+            var_name = cond_params.get('variable_name', '')
+            val = cond_params.get('compare_value', '')
             return f'变量 [{var_name}] {cond_params.get("operator", "eq")} [{val}]'
         elif cond_type == 'window_state':
             return f'窗口 [{cond_params.get("window_title", "")}] ({cond_params.get("state_check", "exists")})'
@@ -45,12 +41,12 @@ class BranchNodeExecutor(BaseNodeExecutor):
         timeout_sec = timeout_ms / 1000.0
 
         if not candidates:
-            context.log('❌ [Branch 分流] 未配置任何候选分支条件', 'error')
-            return self.build_jump_result(False, params.get('on_failure', {}), error='no candidates')
+            context.log(' [Branch 分流] 未配置任何候选分支条件', 'error')
+            return self.build_result(False, error='no candidates')
 
         strategy_label = '顺序优先' if match_strategy == 'first' else '择优优先'
         context.log(
-            f'🔀 [Branch 分流] 开始评估分支列表 | 策略: {strategy_label} | 候选数: {len(candidates)} | 超时: {int(timeout_ms)}ms'
+            f' [Branch 分流] 开始评估分支列表 | 策略: {strategy_label} | 候选数: {len(candidates)} | 超时: {int(timeout_ms)}ms'
         )
 
         start_time = time.time()
@@ -62,8 +58,6 @@ class BranchNodeExecutor(BaseNodeExecutor):
 
             for idx, cand in enumerate(candidates):
                 condition = cand.get('condition', {})
-                jump_target = cand.get('on_success', {})
-
                 eval_cond = copy.deepcopy(condition)
                 if 'params' in eval_cond and isinstance(eval_cond['params'], dict):
                     eval_cond['params']['timeout'] = 0
@@ -86,22 +80,22 @@ class BranchNodeExecutor(BaseNodeExecutor):
 
                 if is_passed:
                     context.log(
-                        f'  ├─ 分支 {idx + 1} ({desc}): 匹配成功 ✅ | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms'
+                        f'  ├─ 分支 {idx + 1} ({desc}): 匹配成功  | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms'
                     )
-                    passed_candidates.append({'index': idx, 'desc': desc, 'jump_target': jump_target, 'score': score})
+                    passed_candidates.append({'index': idx, 'desc': desc, 'score': score})
 
                     # 模式一：顺序优先 (命中即跳)
                     if match_strategy == 'first':
                         context.log(
-                            f'🎯 [Branch 命中] [顺序优先] 走向分支 {idx + 1} (branch_{idx}) 连线目标 (第 {attempt} 次轮询)'
+                            f' [Branch 命中] [顺序优先] 走向分支 {idx + 1} (branch_{idx}) 连线目标 (第 {attempt} 次轮询)'
                         )
-                        result = self.build_jump_result(True, jump_target)
-                        # 实体边时代：目标由图的 branch_N 出边决定；旧数据（候选内嵌 on_success）经 result['jump'] 兼容
+                        result = self.build_result(True)
                         result['branch_index'] = idx
+                        result['branch_id'] = cand.get('candidate_id') or f'branch_{idx}'
                         return result
                 else:
                     context.log(
-                        f'  ├─ 分支 {idx + 1} ({desc}): 未匹配 ❌ | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms'
+                        f'  ├─ 分支 {idx + 1} ({desc}): 未匹配  | 得分: {score:.2f} | 耗时: {cond_elapsed_ms:.1f}ms'
                     )
 
             # 模式二：择优优先 (对比全部成立项后取最高分)
@@ -115,17 +109,19 @@ class BranchNodeExecutor(BaseNodeExecutor):
                 context.log(
                     f'  ├─ 本轮评估共 {len(passed_candidates)} 项条件成立，最高得分项: 分支 {best_idx + 1} (得分: {best_score:.2f})'
                 )
-                context.log(f'🎯 [Branch 命中] [择优优先] 走向最高得分分支 {best_idx + 1} ({best_desc}) 连线目标')
-                result = self.build_jump_result(True, best_match['jump_target'])
+                context.log(f' [Branch 命中] [择优优先] 走向最高得分分支 {best_idx + 1} ({best_desc}) 连线目标')
+                result = self.build_result(True)
                 result['branch_index'] = best_idx
+                best_candidate = candidates[best_idx] if best_idx < len(candidates) else {}
+                result['branch_id'] = best_candidate.get('candidate_id') or f'branch_{best_idx}'
                 return result
 
             elapsed = time.time() - start_time
             if elapsed >= timeout_sec:
                 break
 
-            time.sleep(0.1)  # 100ms 高速轮询间隔
+            time.sleep(context.get_setting('match_poll_ms', 100) / 1000.0)  # 高速轮询间隔
 
         total_elapsed_ms = (time.time() - start_time) * 1000.0
         context.log(f'⏰ [Branch 兜底] 轮询 {int(total_elapsed_ms)}ms 后所有候选条件均未成立 ──> 走向 Else 兜底连线')
-        return self.build_jump_result(False, params.get('on_failure', {}))
+        return self.build_result(False)

@@ -18,7 +18,7 @@ import { computed } from 'vue'
 
 const props = defineProps({
   config: { type: Object, required: true },
-  modelValue: { required: false },
+  modelValue: { type: [String, Number, Boolean, Array, Object], default: null },
   context: { type: Object, default: () => ({}) }
 })
 

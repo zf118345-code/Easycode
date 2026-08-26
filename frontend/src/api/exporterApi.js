@@ -2,24 +2,21 @@
 import client from './client'
 
 export const exporterApi = {
-    /**
-     * »ñÈ¡µ±Ç°ÏîÄ¿°ó¶¨µÄ¿Í»§±íµ¥ Schema ¶¨Òå
-     */
-    getFormSchema: (projectPath) => client.get('/api/exporter/schema', { params: { project_path: projectPath } }),
+    /** èŽ·å–å½“å‰é¡¹ç›®ç»‘å®šçš„ Player è¡¨å• Schemaã€‚ */
+    getFormSchema: (projectPath) =>
+        client.get('/api/exporter/schema', { params: { project_path: projectPath } }),
 
-    /**
-     * ±£´æµ±Ç°ÏîÄ¿°ó¶¨µÄ¿Í»§±íµ¥ Schema ¶¨Òå
-     */
-    saveFormSchema: (projectPath, schemaData) => client.post('/api/exporter/schema', {
-        project_path: projectPath,
-        schema_data: schemaData
-    }),
+    /** ä¿å­˜å½“å‰é¡¹ç›®ç»‘å®šçš„ Player è¡¨å• Schemaã€‚ */
+    saveFormSchema: (projectPath, schemaData) =>
+        client.post('/api/exporter/schema', {
+            project_path: projectPath,
+            schema_data: schemaData,
+        }),
 
-    /**
-     * Ö´ÐÐÏîÄ¿´ò°üµ¼³ö£¨Éú³É assets.ebp ¼ÓÃÜÃÜ°ü£©
-     */
-    buildExportBundle: (projectPath, formSchema) => client.post('/api/exporter/build', {
-        project_path: projectPath,
-        form_schema: formSchema
-    })
+    /** æž„å»ºé¡¹ç›®èµ„æºä¸Žé…ç½®çš„åŠ å¯† assets.ebp åŒ…ã€‚ */
+    buildExportBundle: (projectPath, formSchema) =>
+        client.post('/api/exporter/build', {
+            project_path: projectPath,
+            form_schema: formSchema,
+        }),
 }

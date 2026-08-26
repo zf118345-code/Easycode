@@ -99,3 +99,19 @@ class TestAtomicWriteJson:
         assert '_private_runtime' not in loaded
         assert loaded['nested']['keep'] == 3
         assert '_drop' not in loaded['nested']
+
+    def test_permission_error_fails_immediately_without_tempfile_retry(self, tmp_path, monkeypatch):
+        """Windows 目录不可写时只尝试一次，并保留真实权限异常。"""
+        real_open = open
+        attempts = []
+
+        def guarded_open(path, *args, **kwargs):
+            if str(path).endswith('.tmp'):
+                attempts.append(str(path))
+                raise PermissionError('read-only app data')
+            return real_open(path, *args, **kwargs)
+
+        monkeypatch.setattr('builtins.open', guarded_open)
+        with pytest.raises(PermissionError, match='read-only app data'):
+            atomic_write_json(str(tmp_path / 'data.json'), {'ok': True})
+        assert len(attempts) == 1

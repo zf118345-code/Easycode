@@ -13,7 +13,7 @@
                 <template #content>
                     <div class="param-help-content"><pre>{{ helpText }}</pre></div>
                 </template>
-                <span class="param-help-icon">?</span>
+                <CircleHelp class="param-help-icon" />
             </el-tooltip>
         </div>
 
@@ -31,6 +31,7 @@
                        @capture-reset="handleCaptureReset"
                        @open-browser="mode => openBrowser(mode)"
                        @open-screenshot="mode => openScreenshot(mode)"
+                       @window-selected="payload => emit('windowSelected', payload)"
                        @open-cond-dialog="handleOpenCondDialog" />
         </div>
 
@@ -49,15 +50,8 @@ ref="fileBrowserRef"
                          :mode="fileBrowserMode"
                          :initial-path="browserInitialPath"
                          @select="onFileSelected"
-                         @save="onFileSave"
                          @close="browserVisible = false" />
         </el-dialog>
-
-        <ScreenshotTool
-ref="screenshotToolRef"
-                        @template-crop-selected="onTemplateCropSelected"
-                        @point-selected="onPointSelected"
-                        @region-selected="onRegionSelected" />
 
         <ConditionDialog
 v-model:visible="condDialogVisible"
@@ -73,24 +67,48 @@ v-model:visible="condDialogVisible"
 <script setup>
     import { ref, computed } from 'vue'
     import { ElMessage } from 'element-plus'
-    import { useMainStore } from '@/stores'
-    import { workspaceApi } from '@/api/workspaceApi'
-    import { controlMap } from './controls'
+    import { CircleHelp } from 'lucide-vue-next'
+    import { useIdeStore, useUiStore } from '@/stores'
+    import { captureApi } from '@/api/captureApi'
+    import { controlMap as baseControlMap } from './controls'
+    import ControlFunctionSelect from './controls/ControlFunctionSelect.vue'
+    import ControlCallInputBindings from './controls/ControlCallInputBindings.vue'
+    import ControlCallOutputBindings from './controls/ControlCallOutputBindings.vue'
+    import ControlCapabilitySelect from './controls/ControlCapabilitySelect.vue'
+    import ControlCapabilityInputBindings from './controls/ControlCapabilityInputBindings.vue'
+    import ControlCapabilityOutputBindings from './controls/ControlCapabilityOutputBindings.vue'
+    import ControlGesturePathEditor from './controls/ControlGesturePathEditor.vue'
+    import ControlFunctionOutcomeSelect from './controls/ControlFunctionOutcomeSelect.vue'
+    import ControlFunctionReturnBindings from './controls/ControlFunctionReturnBindings.vue'
 
-    import ScreenshotTool from '@/components/ScreenshotTool.vue'
     import FileBrowser from '@/components/FileBrowser.vue'
     import ConditionDialog from '@/components/conditions/ConditionDialog.vue'
 
     const props = defineProps({
         config: { type: Object, required: true },
-        value: { required: false },
+        value: { type: [String, Number, Boolean, Array, Object], default: null },
         label: { type: String, default: '' },
-        context: { type: Object, default: () => ({}) }
+        context: { type: Object, default: () => ({}) },
+        nodeType: { type: String, default: '' },
+        assetCategory: { type: String, default: '' }
     })
 
-    const emit = defineEmits(['update', 'autoChangeType', 'captureReset'])
-    const store = useMainStore()
+    const emit = defineEmits(['update', 'autoChangeType', 'captureReset', 'coordinateMeta', 'captureBundle', 'windowSelected'])
+    const store = useIdeStore()
+    const uiStore = useUiStore()
     const projectPath = computed(() => store.currentProjectPath)
+    const controlMap = {
+        ...baseControlMap,
+        function_select: ControlFunctionSelect,
+        function_input_bindings: ControlCallInputBindings,
+        function_output_bindings: ControlCallOutputBindings,
+        function_outcome_select: ControlFunctionOutcomeSelect,
+        function_return_bindings: ControlFunctionReturnBindings,
+        capability_select: ControlCapabilitySelect,
+        capability_input_bindings: ControlCapabilityInputBindings,
+        capability_output_bindings: ControlCapabilityOutputBindings,
+        gesture_path: ControlGesturePathEditor
+    }
 
     const activeControl = computed(() => {
         return controlMap[props.config.type] || controlMap.str
@@ -103,7 +121,10 @@ v-model:visible="condDialogVisible"
         return [
             'margin4', 'size2', 'file',
             'condition_list_editor', 'branch_candidate_editor',
-            'condition_list', 'candidates', 'list_dict', 'textarea'
+            'condition_list', 'candidates', 'list_dict', 'textarea',
+            'function_input_bindings', 'function_output_bindings', 'function_return_bindings',
+            'capability_input_bindings', 'capability_output_bindings',
+            'gesture_path'
         ].includes(props.config.type)
     })
 
@@ -140,11 +161,9 @@ v-model:visible="condDialogVisible"
     const handleAutoChangeType = (varType) => emit('autoChangeType', varType)
 
     const fileBrowserRef = ref(null)
-    const screenshotToolRef = ref(null)
     const browserVisible = ref(false)
     const fileBrowserMode = ref('select')
     const browserInitialPath = ref('')
-    const pendingCropRect = ref(null)
     const imageVersion = ref(Date.now())
 
     const condDialogVisible = ref(false)
@@ -159,25 +178,90 @@ v-model:visible="condDialogVisible"
         if (!projectPath.value) return ElMessage.warning('请先打开项目')
         const targetMode = typeof mode === 'string' ? mode : 'select'
         fileBrowserMode.value = targetMode
-        if (targetMode === 'select') pendingCropRect.value = null
-
+        const isPageAsset = props.assetCategory === 'page' || !!props.config?.pageFeatures
         const isOcr = props.config?.label?.includes('OCR') || props.label?.includes('OCR')
-        browserInitialPath.value = isOcr ? 'ocr' : ''
+        browserInitialPath.value = props.assetCategory || (isPageAsset ? 'page' : (isOcr ? 'ocr' : 'image'))
 
         browserVisible.value = true
-        if (screenshotToolRef.value) screenshotToolRef.value.setPauseState(true)
     }
 
     const handleBrowserClose = () => {
         browserVisible.value = false
-        if (screenshotToolRef.value) screenshotToolRef.value.setPauseState(false)
     }
 
-    // ⚡ 参数纯化：确保 ScreenshotTool open 拿到干净的模式，并触发 useZIndex 动态压盖
-    const openScreenshot = (mode = 'template') => {
+    const openScreenshot = async (mode = 'template') => {
+        if (!projectPath.value) return ElMessage.warning('请先打开项目')
+        if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务')
         const targetMode = typeof mode === 'string' ? mode : 'template'
-        if (screenshotToolRef.value) {
-            screenshotToolRef.value.open(targetMode)
+        const requestId = `field_${globalThis.crypto.randomUUID().replaceAll('-', '')}`
+        const isPageFeatures = targetMode === 'page-features'
+        const selectionMode = targetMode === 'point'
+            ? 'point'
+            : (targetMode === 'region' ? 'region' : 'asset')
+        const category = props.assetCategory || (isPageFeatures
+            ? 'page'
+            : (props.nodeType === 'ocr_recognition' || displayLabel.value.toUpperCase().includes('OCR') ? 'ocr' : 'image'))
+        const maxRects = isPageFeatures ? 32 : 1
+
+        uiStore.cancelFieldCapture()
+        uiStore.setFieldCaptureHandler(requestId, async payload => {
+            const referenceSize = payload.reference_size || [0, 0]
+            const coordinateMeta = { referenceSize, coordinateSpace: 'workspace_px' }
+            if (selectionMode === 'point') {
+                emit('update', payload.point || [0, 0])
+                emit('coordinateMeta', coordinateMeta)
+                return { message: '坐标已回填' }
+            }
+            if (selectionMode === 'region') {
+                emit('update', payload.rects?.[0] || [0, 0, 0, 0])
+                emit('coordinateMeta', coordinateMeta)
+                return { message: '范围已回填' }
+            }
+
+            const assetRefs = Array.isArray(payload.asset_refs) ? payload.asset_refs : []
+            const rects = Array.isArray(payload.rects) ? payload.rects : []
+            if (!assetRefs.length) throw new Error('资源已经保存，但没有返回可用的资源引用')
+            if (isPageFeatures) {
+                const current = Array.isArray(props.value) ? [...props.value] : []
+                assetRefs.forEach((assetRef, index) => current.push({
+                    condition_type: 'image_exists',
+                    exist_mode: 'exists',
+                    image_source: assetRef,
+                    threshold: 85,
+                    gray_scale: true,
+                    gray_threshold: 127,
+                    region_type: 'recorded',
+                    region_value: rects[index] || [0, 0, 0, 0],
+                    region_reference_size: referenceSize,
+                    coordinate_space: 'workspace_px',
+                    negate: false
+                }))
+                emit('update', current)
+                return { message: `已录入 ${assetRefs.length} 个页面图像特征` }
+            }
+            emit('captureBundle', {
+                assetRef: assetRefs[0],
+                rect: rects[0] || [0, 0, 0, 0],
+                referenceSize,
+                coordinateSpace: 'workspace_px'
+            })
+            imageVersion.value = Date.now()
+            return { message: '图片与录制范围已回填' }
+        })
+
+        try {
+            await captureApi.trigger({
+                field_capture: {
+                    request_id: requestId,
+                    selection_mode: selectionMode,
+                    category,
+                    max_rects: maxRects,
+                    title: targetMode === 'point' ? '取点' : targetMode === 'region' ? '框选范围' : '录入图片'
+                }
+            })
+        } catch (error) {
+            uiStore.cancelFieldCapture(requestId)
+            ElMessage.error(error?.message || '截图捕获启动失败')
         }
     }
 
@@ -189,35 +273,6 @@ v-model:visible="condDialogVisible"
         browserVisible.value = false
     }
 
-    const onTemplateCropSelected = (cropRect) => {
-        pendingCropRect.value = cropRect
-        openBrowser('save')
-    }
-
-    const onFileSave = async ({ relativePath, fileName }) => {
-        if (!pendingCropRect.value) return ElMessage.error('缺少截图框选数据')
-        try {
-            const cleanFileName = fileName.trim().replace(/\.png$/i, '')
-            const cleanRelPath = relativePath ? relativePath.replace(/\.png$/i, '') : ''
-            const fullTemplateName = cleanRelPath ? `${cleanRelPath}/${cleanFileName}` : cleanFileName
-
-            await workspaceApi.cropScreenshot(projectPath.value, fullTemplateName, pendingCropRect.value)
-
-            emit('update', fullTemplateName)
-            imageVersion.value = Date.now()
-            ElMessage.success(`模板图片 [${fullTemplateName}] 保存成功`)
-
-            browserVisible.value = false
-            pendingCropRect.value = null
-            if (screenshotToolRef.value) screenshotToolRef.value.close()
-        } catch (err) {
-            ElMessage.error('保存失败: ' + err.message)
-        }
-    }
-
-    const onPointSelected = (pointArr) => emit('update', pointArr)
-    const onRegionSelected = (regionArr) => emit('update', regionArr)
-
     const handleOpenCondDialog = ({ idx, data, isBranch }) => {
         isBranchMode.value = isBranch
         editingIdx.value = idx
@@ -225,9 +280,11 @@ v-model:visible="condDialogVisible"
         condDialogVisible.value = true
     }
 
-    const handleCondSave = ({ condition, on_success }) => {
+    const handleCondSave = ({ condition }) => {
         const currentList = Array.isArray(props.value) ? [...props.value] : []
-        const payload = isBranchMode.value ? { condition, on_success } : condition
+        const previous = editingIdx.value > -1 ? currentList[editingIdx.value] : null
+        const candidateId = previous?.candidate_id || `cand_${globalThis.crypto.randomUUID().replaceAll('-', '')}`
+        const payload = isBranchMode.value ? { candidate_id: candidateId, condition } : condition
 
         if (editingIdx.value > -1) {
             currentList[editingIdx.value] = payload
@@ -240,17 +297,15 @@ v-model:visible="condDialogVisible"
 
 <style scoped>
     .param-renderer {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 12px;
-        margin-bottom: 12px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        align-items: start;
+        gap: 6px;
+        margin-bottom: 13px;
     }
 
         .param-renderer.is-stacked {
-            flex-direction: column;
-            align-items: flex-start;
-            gap: 6px;
+            grid-template-columns: minmax(0, 1fr);
         }
 
             .param-renderer.is-stacked .param-label {
@@ -264,12 +319,13 @@ v-model:visible="condDialogVisible"
             }
 
     .param-label {
-        font-size: 13px;
-        color: var(--el-text-color-primary);
+        font-size: 11px;
+        line-height: 16px;
+        color: var(--el-text-color-secondary);
         font-weight: 500;
         white-space: nowrap;
         flex-shrink: 0;
-        min-width: 120px;
+        min-width: 0;
         text-align: left;
         display: flex;
         align-items: center;
@@ -277,11 +333,21 @@ v-model:visible="condDialogVisible"
     }
 
     .param-control {
-        flex: 1;
         display: flex;
-        justify-content: flex-end;
+        justify-content: stretch;
         align-items: center;
         width: 100%;
+    }
+
+    .param-control :deep(> *) { width: 100%; }
+
+    @container inspector (min-width: 520px) {
+        .param-renderer:not(.is-stacked) {
+            grid-template-columns: minmax(112px, .42fr) minmax(0, 1fr);
+            align-items: center;
+            column-gap: 12px;
+        }
+        .param-renderer:not(.is-stacked) .param-label { color: var(--el-text-color-regular); }
     }
 
     .param-help-icon {

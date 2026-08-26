@@ -4,11 +4,13 @@
 import {
     MousePointerClick, Timer, ScrollText, Image as ImageIcon, Type, GitBranch,
     Filter, Variable, Code, AppWindow, MapPin, Navigation, Square,
-    Clock, SearchCheck, Binary, ListOrdered, FileCode, Target, ScanSearch
+    Clock, SearchCheck, Binary, ListOrdered, FileCode, Target, ScanSearch, Workflow,
+    Mouse, Move, Keyboard, Braces, LogIn, CornerDownLeft
 } from 'lucide-vue-next'
 
 export const NODE_ICON_MAP = {
     MousePointerClick, Timer, ScrollText, Image: ImageIcon, Type, GitBranch,
     Filter, Variable, Code, AppWindow, MapPin, Navigation, Square,
-    Clock, SearchCheck, Binary, ListOrdered, FileCode, Target, ScanSearch
+    Clock, SearchCheck, Binary, ListOrdered, FileCode, Target, ScanSearch, Workflow,
+    Mouse, Move, Keyboard, Braces, LogIn, CornerDownLeft
 }

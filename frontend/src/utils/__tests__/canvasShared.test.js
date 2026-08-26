@@ -6,7 +6,8 @@ import {
     computeCanvasNodeHeight,
     PORT_GRID_TOP,
     PORT_GRID_BOTTOM,
-    PORT_GRID_STEP
+    filterEdgesToViewport,
+    filterNodesToViewport
 } from '../canvasShared'
 
 function makeNode({ h = 100, dynamicCount = 0 } = {}) {
@@ -24,6 +25,36 @@ function makeNode({ h = 100, dynamicCount = 0 } = {}) {
 }
 
 describe('canvasShared 网格化端口布局', () => {
+    it('大画布只渲染视口附近节点，但始终保留选中和拖动节点', () => {
+        const nodes = Array.from({ length: 300 }, (_, index) => ({
+            node_id: `n${index}`,
+            position: { x: index * 1000, y: 0 },
+            w: 160,
+            h: 100
+        }))
+        const visible = filterNodesToViewport(
+            nodes,
+            { x: 0, y: 0, zoom: 1 },
+            { width: 900, height: 600 },
+            new Set(['n250']),
+            'n299'
+        )
+        expect(visible.map(node => node.node_id)).toContain('n0')
+        expect(visible.map(node => node.node_id)).toContain('n250')
+        expect(visible.map(node => node.node_id)).toContain('n299')
+        expect(visible.length).toBeLessThan(20)
+    })
+
+    it('大画布只挂载视口附近连线，同时保留选中连线', () => {
+        const edges = Array.from({ length: 500 }, (_, index) => ({
+            id: `e${index}`,
+            selected: index === 499,
+            rawPixelPoints: [{ x: index * 200, y: 0 }, { x: index * 200 + 120, y: 80 }]
+        }))
+        const visible = filterEdgesToViewport(edges, { x: 0, y: 0, zoom: 1 }, { width: 1000, height: 700 })
+        expect(visible.length).toBeLessThan(20)
+        expect(visible.some(edge => edge.id === 'e499')).toBe(true)
+    })
     it('entry 位于左缘距顶 1 格', () => {
         const node = makeNode({ h: 100 })
         expect(getNodePortTop(node, 'entry')).toBe(PORT_GRID_TOP * GRID_SIZE)
@@ -34,14 +65,14 @@ describe('canvasShared 网格化端口布局', () => {
     it('success 位于右缘距顶 1 格', () => {
         const node = makeNode({ h: 100 })
         expect(getNodePortTop(node, 'success')).toBe(PORT_GRID_TOP * GRID_SIZE)
-        const pos = getPortPosition(node, 'succ')
+        const pos = getPortPosition(node, 'success')
         expect(pos).toEqual({ x: 80 + 160, y: 40 + PORT_GRID_TOP * GRID_SIZE })
     })
 
     it('failure 位于右缘距底 1 格（随节点最新高度联动）', () => {
         const node = makeNode({ h: 140 })
         expect(getNodePortTop(node, 'failure')).toBe(140 - PORT_GRID_BOTTOM * GRID_SIZE)
-        const pos = getPortPosition(node, 'fail')
+        const pos = getPortPosition(node, 'failure')
         expect(pos.x).toBe(80 + 160)
         expect(pos.y).toBe(40 + 140 - PORT_GRID_BOTTOM * GRID_SIZE)
     })

@@ -18,6 +18,8 @@ class ControlExistsEvaluator(BaseConditionEvaluator):
 
         target = resolve_template_string(raw_target, context).strip()
         window_title = resolve_template_string(str(params.get('window_title', '')), context).strip()
+        if not window_title:
+            window_title = str(getattr(context, 'variables', {}).get('title') or '').strip()
         by = str(params.get('by', 'uia_name')).strip()
         try:
             index = int(params.get('index', 0) or 0)
@@ -42,7 +44,7 @@ class ControlExistsEvaluator(BaseConditionEvaluator):
             path = control_info.get('ancestor_path') if isinstance(control_info, dict) else None
             if isinstance(path, list) and path:
                 info = uia_service.find_control_by_path(
-                    window_title=window_title, path=path, timeout_ms=min(timeout_ms, 1500)
+                    window_title=window_title, path=path, timeout_ms=min(timeout_ms, int(context.get_setting('control_timeout_cap_ms', 1500)))
                 )
             # 位置锚点：固定位置控件 rect 中心命中 + 身份校验
             if info is None and isinstance(control_info, dict):

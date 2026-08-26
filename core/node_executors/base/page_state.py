@@ -2,11 +2,9 @@
 # P2 新增：page_state 节点执行器
 # 职责：评估当前屏幕是否匹配该页面的复合特征（AND/OR 组合）。
 #   - 逐条评估 features 中的特征（统一通过 evaluate_condition 评估）
-#   - 按 feature_mode（and/or）以及每条特征自带的 combine_mode 组合结果
-#   - 匹配成功：将 page_id 写入 context.variables["current_page_id"]，走 on_success
-#   - 匹配失败：走 on_failure
-# exits 仅作为拓扑地图的出口元数据（供 GraphBuilder 构建邻接表 / smart_jump 寻路），
-# 不在本执行器中直接驱动跳转。
+#   - 所有特征只按页面节点的 feature_mode（and/or）统一组合
+#   - 匹配成功：将 page_id 写入 context.variables["current_page_id"]
+# 跳转由 topology.json 的实体边负责。
 
 import logging
 from typing import Any
@@ -16,6 +14,20 @@ from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
 
 logger = logging.getLogger(__name__)
+
+# ⚡ 条件类型中文映射（日志可读化）
+_CONDITION_LABELS = {
+    'image_exists': '图像存在',
+    'image_not_exists': '图像不存在',
+    'text_contains': '文本包含',
+    'text_not_contains': '文本不包含',
+    'ocr_exists': '文字识别',
+    'control_exists': '控件存在',
+    'control_not_exists': '控件不存在',
+    'file_exists': '文件检查',
+    'variable_check': '变量判断',
+    'logic_check': '逻辑判断',
+}
 
 
 @NodeExecutorRegistry.register('page_state')
@@ -33,36 +45,32 @@ class PageStateNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context) -> dict[str, Any]:
         params = node.params or {}
         page_id = params.get('page_id', '') or ''
-        page_name = params.get('page_name', '') or page_id
         features = params.get('features', []) or []
         feature_mode = (params.get('feature_mode', 'and') or 'and').lower()
 
-        context.log(f'[page_state] 评估页面状态: {page_name} (page_id={page_id})，特征数={len(features)}')
+        page_name = getattr(node, 'node_name', '') or page_id
+
+        context.log(f'[页面状态] 评估页面: [{page_name}]，特征数={len(features)}')
 
         # 未定义任何特征时，视为不匹配，避免误判为"任意页面"
         if not features:
-            context.log(f'[page_state] 页面 [{page_name}] 未定义任何特征，判定为不匹配', 'warning')
-            return self.build_jump_result(
+            context.log(f'[页面状态] 页面 [{page_name}] 未定义任何特征，判定为不匹配', 'warning')
+            return self.build_result(
                 success=False,
-                jump_conf=(node.params or {}).get('on_failure'),
                 error='页面未定义特征',
                 extra={'page_id': page_id, 'matched': False},
             )
 
         matched, detail = self._evaluate_features(features, feature_mode, context)
-        context.log(f'[page_state] 页面 [{page_name}] 评估结果: {"匹配" if matched else "不匹配"} | {detail}')
+        context.log(f'[页面状态] 页面 [{page_name}] 评估结果: {"✓ 匹配" if matched else "✗ 不匹配"} | {detail}')
 
         if matched:
             # 匹配成功：记录当前页面 ID，供 smart_jump 寻路使用
             context.variables['current_page_id'] = page_id
-            context.log(f'[page_state] 已更新 current_page_id = {page_id}')
-            return self.build_jump_result(
-                success=True, jump_conf=(node.params or {}).get('on_success'), extra={'page_id': page_id, 'matched': True}
-            )
+            context.log(f'[页面状态] 已定位当前页面: {page_name}')
+            return self.build_result(success=True, extra={'page_id': page_id, 'matched': True})
 
-        return self.build_jump_result(
-            success=False, jump_conf=(node.params or {}).get('on_failure'), extra={'page_id': page_id, 'matched': False}
-        )
+        return self.build_result(success=False, extra={'page_id': page_id, 'matched': False})
 
     # ========== 特征评估 ==========
 
@@ -72,6 +80,9 @@ class PageStateNodeExecutor(BaseNodeExecutor):
         :return: (是否匹配, 评估明细字符串)
         """
         results: list[bool] = []
+        mode = 'or' if str(feature_mode or 'and').lower() == 'or' else 'and'
+        get_setting = getattr(context, 'get_setting', None)
+        full_diagnostics = bool(get_setting('diagnostic_full_page_evaluation', False)) if callable(get_setting) else False
 
         for idx, feature in enumerate(features):
             if not isinstance(feature, dict):
@@ -80,66 +91,80 @@ class PageStateNodeExecutor(BaseNodeExecutor):
 
             # 将特征定义归一化为 evaluate_condition 可识别的条件字典
             cond = self._build_condition(feature)
+            cond_label = _CONDITION_LABELS.get(cond.get('condition_type'), cond.get('condition_type'))
             try:
+                # ⚡ 评估前清零得分，评估后读取（image_exists 会把匹配置信度写回 context.last_match_score）
+                if hasattr(context, 'last_match_score'):
+                    context.last_match_score = 0.0
                 ok = bool(evaluate_condition(cond, context))
+                score = float(getattr(context, 'last_match_score', 0.0) or 0.0)
             except Exception as e:
-                context.log(f'[page_state] 特征 #{idx + 1} 评估异常({cond.get("type")}): {e}', 'error')
+                context.log(f'[页面状态] 特征 #{idx + 1} ({cond_label}) 评估异常: {e}', 'error')
                 ok = False
+                score = 0.0
 
             # 支持取反（描述"不存在某图/某文本"这类负向特征）
             if feature.get('negate'):
                 ok = not ok
 
             results.append(ok)
-            context.log(f'[page_state] 特征 #{idx + 1} ({cond.get("type")}) -> {ok}')
+            # ⚡ 匹配分数进日志：图像特征显示置信度，方便排障（最接近页面差多少一目了然）
+            if cond.get('condition_type') == 'image_exists' and score > 0:
+                context.log(
+                    f'[页面状态] 特征 #{idx + 1} ({cond_label}) -> {"✓ 命中" if ok else "✗ 未命中"} | 置信度 {score:.2f}'
+                )
+            else:
+                context.log(
+                    f'[页面状态] 特征 #{idx + 1} ({cond_label}) -> {"✓ 命中" if ok else "✗ 未命中"}'
+                )
 
-        return self._combine_results(results, features, feature_mode)
+            if not full_diagnostics and ((mode == 'and' and not ok) or (mode == 'or' and ok)):
+                skipped = len(features) - idx - 1
+                if skipped > 0:
+                    context.log(f'[页面状态] {mode.upper()} 已确定结果，跳过剩余 {skipped} 个特征')
+                break
+
+        return self._combine_results(results, features[:len(results)], feature_mode)
 
     @staticmethod
     def _build_condition(feature: dict[str, Any]) -> dict[str, Any]:
         """
         将特征定义归一化为 evaluate_condition 可识别的条件字典
-        - feature_type / condition_type / type 映射为条件的 type 字段
-        - params 嵌套结构与特征层级平铺结构均兼容（新条件编辑器产出 condition_type + 平铺字段）
-        - 组合/取反等页面组合键（combine_mode / negate）由执行器消费，不进入条件参数
+        - condition_type 映射为条件的 type 字段
+        - 条件参数使用平铺结构
+        - 页面组合键由页面节点统一消费；旧的 combine_mode 永远不进入条件参数
         """
-        cond: dict[str, Any] = {
-            'type': feature.get('feature_type')
-            or feature.get('condition_type')
-            or feature.get('type')
-            or 'image_exists'
-        }
-        params = feature.get('params')
-        if isinstance(params, dict):
-            cond.update(params)
-        # 兼容：特征层级直接平铺的参数（image_source / target_text / region / threshold 等）
+        cond: dict[str, Any] = {'condition_type': feature.get('condition_type') or 'image_exists'}
         for key, value in feature.items():
-            if key in ('feature_type', 'condition_type', 'type', 'params', 'combine_mode', 'negate'):
+            if key in ('condition_type', 'combine_mode', 'negate'):
                 continue
             if key not in cond:
                 cond[key] = value
+        # 捕获生成的页面特征只要带有有效录制区域，就应使用该区域匹配。
+        # 旧数据有时同时保存 crop_rect/region，却误写为 fullwindow；这里按
+        # 明确的捕获元数据纠正，手工创建且没有捕获元数据的 fullwindow 不受影响。
+        region = cond.get('region_value')
+        captured_region = cond.get('crop_rect') or cond.get('region')
+        if (
+            cond.get('condition_type') == 'image_exists'
+            and str(cond.get('region_type') or '').lower() == 'fullwindow'
+            and isinstance(region, list) and len(region) == 4
+            and float(region[2] or 0) > 0 and float(region[3] or 0) > 0
+            and isinstance(captured_region, list) and len(captured_region) == 4
+        ):
+            cond['region_type'] = 'recorded'
         return cond
 
     @staticmethod
     def _combine_results(results: list[bool], features: list[dict[str, Any]], feature_mode: str) -> tuple[bool, str]:
         """
         组合特征评估结果
-        - 首条特征作为初始累积值
-        - 后续特征优先使用自身 combine_mode，缺失时回退到全局 feature_mode
+        页面节点是唯一组合语义来源；单条特征不允许覆盖 AND/OR。
         """
         if not results:
             return False, '无特征'
 
-        acc = results[0]
-        detail_parts = [f'#1:{results[0]}']
-
-        for i in range(1, len(results)):
-            feat = features[i] if i < len(features) and isinstance(features[i], dict) else {}
-            mode = (feat.get('combine_mode') or feature_mode).lower()
-            if mode == 'or':
-                acc = acc or results[i]
-            else:
-                acc = acc and results[i]
-            detail_parts.append(f'({mode})#{i + 1}:{results[i]}')
-
-        return acc, ' '.join(detail_parts)
+        mode = 'or' if str(feature_mode or 'and').lower() == 'or' else 'and'
+        matched = any(results) if mode == 'or' else all(results)
+        detail = f' {mode} '.join(f'#{index + 1}:{value}' for index, value in enumerate(results))
+        return matched, detail

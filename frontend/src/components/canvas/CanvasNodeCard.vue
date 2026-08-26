@@ -20,6 +20,8 @@
         :data-node-id="node.node_id"
         @mousedown.stop="$emit('node-mousedown', $event, node)"
         @mouseup="$emit('node-mouseup', $event, node)"
+        @mouseenter="$emit('node-hover', node.node_id)"
+        @mouseleave="$emit('node-hover', null)"
         @dblclick.stop="$emit('node-dblclick', $event, node)"
         @contextmenu.prevent.stop="$emit('node-contextmenu', $event, node)">
 <!-- 1. Header with accent color (per-type) -->
@@ -35,13 +37,16 @@
                 <CirclePlay class="debug-pulse-icon" />
             </span>
             <!-- 断点槽：标题栏右侧（未设置=空心环，已设置=实心红点，命中=脉冲） -->
-            <span
+            <button
+                type="button"
                 class="node-breakpoint-gutter"
                 :class="{ active: hasBreakpoint }"
                 :title="hasBreakpoint ? '点击移除断点' : '点击设置断点'"
+                :aria-label="hasBreakpoint ? `移除 ${node.node_name} 的断点` : `为 ${node.node_name} 设置断点`"
+                :aria-pressed="hasBreakpoint"
                 @click.stop="$emit('toggle-breakpoint', node.node_id)">
                 <span v-if="hasBreakpoint" class="bp-dot" />
-            </span>
+            </button>
         </div>
 
         <!-- 2. Body — 注册表驱动的内容区（无内容时高度为 0） -->
@@ -49,26 +54,26 @@
             <!-- 图像识别：模板缩略图（保持宽高比，最小高度 80px） -->
             <div v-if="contentKind === 'image'" class="node-image-embedded">
                 <img
-                    v-if="node.params?.image_source"
+                    v-if="node.params?.image_source && imageThumbUrl && !imageThumbError"
                     :src="imageThumbUrl"
                     :class="['embedded-template-img', { 'is-contain': isSpecialTallImage }]"
                     alt="模板"
                     @load="onImageLoaded"
-                    @error="$event.target.style.display = 'none'" />
+                    @error="imageThumbError = true" />
                 <div v-else class="embedded-placeholder">
                     <ImageIcon class="embedded-icon" style="width: 18px; height: 18px;" />
-                    <span>未选模板</span>
+                    <span>{{ node.params?.image_source ? (imageThumbError ? '预览加载失败' : '预览加载中') : '未选模板' }}</span>
                 </div>
             </div>
 
             <!-- OCR 识别：模板缩略图 + 识别配置行（最小高度 60px） -->
             <div v-else-if="contentKind === 'ocr'" class="ocr-preview-block">
                 <img
-                    v-if="node.params?.image_source"
+                    v-if="node.params?.image_source && imageThumbUrl && !imageThumbError"
                     :src="imageThumbUrl"
                     class="ocr-thumb"
                     alt="OCR 模板"
-                    @error="$event.target.style.display = 'none'" />
+                    @error="imageThumbError = true" />
                 <div v-else class="ocr-thumb ocr-thumb-placeholder">
                     <ImageIcon style="width: 16px; height: 16px;" />
                 </div>
@@ -138,7 +143,7 @@
             :class="{ 'is-unconnected': !node.ports?.success?.connected }"
             :style="{ top: portTop('success') }"
             :title="'成功出口 (success)'"
-            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'succ')"
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'success')"
             @mouseenter="$emit('row-hover', null)" />
 
         <!-- Failure exit — right, 1 grid from bottom (conditional) -->
@@ -148,7 +153,7 @@
             :class="{ 'is-unconnected': !node.ports?.failure?.connected }"
             :style="{ top: portTop('failure') }"
             :title="node.node_type === 'branch' ? 'Else 兜底出口' : '失败出口 (failure)'"
-            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'fail')"
+            @mousedown.stop="$emit('start-connection', $event, node.node_id, 'failure')"
             @mouseenter="$emit('row-hover', null)" />
 
         <!-- Dynamic exits — 行对齐（branch=候选行 / page_state=出口行），pending 为虚线占位口 -->
@@ -158,7 +163,8 @@
             class="node-handle source-handle dyn-handle"
             :class="{
                 'is-unconnected': !port.connected,
-                'is-pending': port.status === 'pending'
+                'is-pending': port.status === 'pending',
+                'is-danger': port.color === 'red'
             }"
             :style="{ top: portTop(port.name) }"
             :title="port.label"
@@ -169,34 +175,17 @@
 </template>
 
 <script setup>
-    import { computed, reactive } from 'vue'
+    import { computed, onUnmounted, reactive, ref, watch } from 'vue'
     import {
         CirclePlay,
         Image as ImageIcon,
-        MousePointerClick,
-        Timer,
-        ScrollText,
-        Type,
-        GitBranch,
-        Filter,
-        Variable,
-        Code,
-        AppWindow,
-        MapPin,
-        Navigation,
-        Square,
-        SearchCheck,
-        Binary,
-        ListOrdered,
-        FileCode,
-        Target,
-        Clock,
-        ScanSearch
+        Square
     } from 'lucide-vue-next'
     import { getNodeConfig, getNodePortTop } from '@/utils/canvasShared'
     import { NODE_ICON_MAP } from '@/utils/nodeIcons'
     import { getNodeContentSpec } from '@/config/nodeRegistry'
-    import { useMainStore } from '@/stores'
+    import { useIdeStore } from '@/stores'
+    import { loadAssetPreview, releaseAssetPreview } from '@/utils/assetPreview'
 
     const props = defineProps({
         node:              { type: Object,  required: true },
@@ -204,7 +193,7 @@
         isActiveDebug:     { type: Boolean, default: false },
         hasBreakpoint:     { type: Boolean, default: false },
         currentProjectPath:{ type: String,  default: '' },
-        blueprintVersion:  { type: [Number, String], default: 0 },
+        assetRevision:     { type: [Number, String], default: 0 },
         mode:              { type: String,  default: 'workflow' },
         hoveredPort:       { type: String,  default: '' }
     })
@@ -217,10 +206,11 @@
         'toggle-breakpoint',
         'start-connection',
         'row-hover',
+        'node-hover',
         'image-loaded'
     ])
 
-    const store = useMainStore()
+    const store = useIdeStore()
 
     // 页面状态出口行：bound（已连线出口）+ pending（虚线占位）
     const boundExitPorts = computed(() =>
@@ -258,12 +248,42 @@
     const tallImageFlags = reactive({})
     const isSpecialTallImage = computed(() => !!tallImageFlags[props.node.node_id])
 
-    const imageThumbUrl = computed(() => {
-        const imageSource = props.node.params?.image_source
-        if (!imageSource) return ''
-        let cleanName = imageSource.replace(/\\/g, '/')
-        if (!/\.(png|jpg|jpeg)$/i.test(cleanName)) cleanName += '.png'
-        return `/api/image/thumb?project_path=${encodeURIComponent(props.currentProjectPath || '')}&name=${encodeURIComponent(cleanName)}&v=${props.blueprintVersion}`
+    const imageThumbUrl = ref('')
+    const imageThumbError = ref(false)
+    let activePreview = null
+    let previewRequestId = 0
+
+    const clearPreview = () => {
+        releaseAssetPreview(activePreview)
+        activePreview = null
+        imageThumbUrl.value = ''
+    }
+
+    watch(
+        () => [props.node.params?.image_source, props.currentProjectPath, props.assetRevision],
+        async ([imageSource, projectPath]) => {
+            const requestId = ++previewRequestId
+            clearPreview()
+            imageThumbError.value = false
+            if (!imageSource || !projectPath) return
+            try {
+                const preview = await loadAssetPreview(projectPath, imageSource, props.assetRevision)
+                if (requestId !== previewRequestId) {
+                    releaseAssetPreview(preview)
+                    return
+                }
+                activePreview = preview
+                imageThumbUrl.value = preview.url
+            } catch (error) {
+                if (requestId === previewRequestId) imageThumbError.value = true
+            }
+        },
+        { immediate: true }
+    )
+
+    onUnmounted(() => {
+        previewRequestId += 1
+        clearPreview()
     })
 
     const regionText = computed(() => {
@@ -284,15 +304,15 @@
 
     const formatCondDesc = (item) => {
         if (!item) return '未配置条件'
-        const condType = item.condition_type || item.type || 'variable_check'
-        const params = item.params || item
+        const condType = item.condition_type || 'variable_check'
+        const params = item
         if (condType === 'image_exists') {
             const opText = params.exist_mode === 'not_exists' ? '不存在' : '存在'
             return `${opText}: ${params.image_source || '未选图片'}`
         }
         if (condType === 'text_contains') return `文本: ${params.target_text || '未设文本'}`
         if (condType === 'variable_check') {
-            return `变量: ${params.variable_name || params.var_name || '未选'} (${params.operator || 'eq'}) ${params.compare_value ?? params.target_value ?? ''}`
+            return `变量: ${params.variable_name || '未选'} (${params.operator || 'eq'}) ${params.compare_value ?? ''}`
         }
         if (condType === 'window_state') return `窗口: ${params.window_title || '默认'} (${params.state_check || '存在'})`
         if (condType === 'file_exists') return `文件: ${params.file_path || '未设路径'}`

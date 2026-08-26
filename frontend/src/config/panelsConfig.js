@@ -1,25 +1,56 @@
 // frontend/src/config/panelsConfig.js
 import { defineAsyncComponent } from 'vue'
-import { FolderTree, Binary, Puzzle, Sliders, Terminal, Bug } from 'lucide-vue-next'
+import { FolderTree, Braces, Map, Images, Boxes, Binary, ServerCog, Sliders, Terminal, Bug } from 'lucide-vue-next'
 
 export const leftPanelsConfig = [
     {
         id: 'explorer',
-        title: '项目资源管理器',
+        title: '主流程大纲',
+        group: 'structure',
         icon: FolderTree,
         component: defineAsyncComponent(() => import('@/components/panels/ProjectExplorerPanel.vue'))
     },
     {
+        id: 'functions',
+        title: '函数库',
+        group: 'structure',
+        icon: Braces,
+        component: defineAsyncComponent(() => import('@/components/panels/FunctionLibraryPanel.vue'))
+    },
+    {
+        id: 'page-map',
+        title: '页面地图',
+        group: 'structure',
+        icon: Map,
+        component: defineAsyncComponent(() => import('@/components/panels/PageMapPanel.vue'))
+    },
+    {
+        id: 'resources',
+        title: '图片资源',
+        group: 'assets',
+        icon: Images,
+        component: defineAsyncComponent(() => import('@/components/panels/ResourceLibraryPanel.vue'))
+    },
+    {
+        id: 'capabilities',
+        title: '能力库',
+        group: 'assets',
+        icon: Boxes,
+        component: defineAsyncComponent(() => import('@/components/panels/CapabilityLibraryPanel.vue'))
+    },
+    {
         id: 'variables',
-        title: '全局变量监控',
+        title: '变量与上下文',
+        group: 'assets',
         icon: Binary,
         component: defineAsyncComponent(() => import('@/components/panels/GlobalVariablesPanel.vue'))
     },
     {
-        id: 'plugins',
-        title: '扩展插件中心',
-        icon: Puzzle,
-        component: defineAsyncComponent(() => import('@/components/panels/PluginMarketPanel.vue'))
+        id: 'runtime',
+        title: '运行服务',
+        group: 'runtime',
+        icon: ServerCog,
+        component: defineAsyncComponent(() => import('@/components/panels/RuntimeServicesPanel.vue'))
     }
 ]
 

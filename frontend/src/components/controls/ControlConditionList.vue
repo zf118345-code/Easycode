@@ -15,6 +15,13 @@
             <el-button type="primary" size="small" class="add-btn" @click="$emit('open-cond-dialog', { idx: -1, data: null, isBranch: false })">
                 <Plus :size="14" style="vertical-align: middle;" /> {{ config.addLabel || '添加判断条件' }}
             </el-button>
+            <el-button
+                v-if="config.pageFeatures"
+                size="small"
+                class="add-btn"
+                @click="$emit('open-screenshot', 'page-features')">
+                <ScanSearch :size="14" /> 批量捕获图片特征
+            </el-button>
         </template>
 
         <!-- 2. 分流分支候选列表 (用于 Branch 多分支节点，已彻底隐藏“成功跳转”冗余提示) -->
@@ -37,23 +44,36 @@
 
 <script setup>
     import { Plus, Shuffle, Image, Type, Hash, AppWindow, FolderOpen , ScanSearch } from 'lucide-vue-next'
+    import { ElMessageBox } from 'element-plus'
 
     const props = defineProps({
         config: { type: Object, required: true },
         modelValue: { type: Array, default: () => [] }
     })
 
-    const emit = defineEmits(['update:modelValue', 'open-cond-dialog'])
+    const emit = defineEmits(['update:modelValue', 'open-cond-dialog', 'open-screenshot'])
 
-    const removeCond = (idx) => {
+    const removeCond = async (idx) => {
+        const isBranchCandidate = configIsBranch()
+        if (isBranchCandidate) {
+            try {
+                await ElMessageBox.confirm(
+                    '删除该分支会同时移除它已有的出口连线，且不会把连线转移给其他分支。是否继续？',
+                    '删除分支',
+                    { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+                )
+            } catch { return }
+        }
         const updated = [...(props.modelValue || [])]
         updated.splice(idx, 1)
         emit('update:modelValue', updated)
     }
 
+    const configIsBranch = () => ['branch_candidate_editor', 'candidates'].includes(props.config?.type)
+
     // 根据条件类型返回对应的 Lucide 图标组件
     const getCondIcon = (item) => {
-        const condType = item?.condition_type || item?.type || 'variable_check'
+        const condType = item?.condition_type || 'variable_check'
         const iconMap = {
             image_exists: Image,
             text_contains: Type,
@@ -68,8 +88,8 @@
     // 智能格式化动态 Schema 的条件预览描述
     const formatCondDesc = (item) => {
         if (!item) return '未配置条件'
-        const condType = item.condition_type || item.type || 'variable_check'
-        const params = item.params || item
+        const condType = item.condition_type || 'variable_check'
+        const params = item
 
         let base = ''
         if (condType === 'image_exists') {
@@ -80,9 +100,9 @@
             const modeText = modeMap[params.exist_mode] || '包含'
             base = `屏幕文本 (${modeText}): [${params.target_text || '未设文本'}]`
         } else if (condType === 'variable_check') {
-            const varName = params.variable_name || params.var_name || '未选变量'
+            const varName = params.variable_name || '未选变量'
             const op = params.operator || 'eq'
-            const val = params.compare_value ?? params.target_value ?? ''
+            const val = params.compare_value ?? ''
             base = `变量判定: ${varName} (${op}) ${val}`
         } else if (condType === 'window_state') {
             base = `窗口状态: [${params.window_title || '默认窗口'}] (${params.state_check || '存在'})`
@@ -95,10 +115,9 @@
             base = `判定类型: ${condType}`
         }
 
-        // 页面特征专属：结果取反 / 组合方式附加提示
+        // 页面特征专属：结果取反；AND/OR 由页面节点统一设置
         const extra = []
         if (item.negate) extra.push('取反')
-        if (item.combine_mode) extra.push(item.combine_mode.toUpperCase())
         return extra.length ? `${base} (${extra.join(' · ')})` : base
     }
 </script>

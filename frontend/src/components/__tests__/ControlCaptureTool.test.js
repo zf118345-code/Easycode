@@ -4,7 +4,7 @@
 // 2. 进入/退出按钮调用 modeControl（一次性请求）
 // 3. SSE 捕获事件（props.captureEvent）驱动面板：select/wheel 更新、clear 清空、copy 生成节点、mode 切换状态
 // 4. backendConnected=false 时明示后端连接中断
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import ControlCaptureTool from '../ControlCaptureTool.vue'

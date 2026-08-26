@@ -11,7 +11,7 @@ from core.services.control_service import _class_type, matches
 def test_schema_structure():
     ctrl = ALL_PARAMS['control']
     assert ctrl['label'] == '控件操作'
-    assert ctrl['modes'] == ['workflow']  # 控件操作基于桌面应用，仅流程画布
+    assert ctrl['modes'] == ['workflow', 'topology']
     p = ctrl['params']
     assert set(p.keys()) == {'action', 'by', 'target', 'window_title', 'index', 'timeout', 'control_info'}
     assert p['action']['default'] == 'click'
@@ -77,6 +77,9 @@ class FakeCtx:
         self.logs.append(msg)
 
 
+    def get_setting(self, key, default=None):
+        return default
+
 def make_node(params):
     from core.models import Node
 
@@ -106,7 +109,7 @@ def test_executor_click_hit(monkeypatch):
     import core.node_executors.base.control as control_mod
 
     monkeypatch.setattr(control_mod, 'find_control', lambda **kw: _fake_control())
-    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='': {'ok': True, 'message': '点击控件中心'})
+    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': '点击控件中心'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({'action': 'click', 'by': 'text', 'target': '确定'}), ctx)
@@ -132,7 +135,7 @@ def test_executor_action_failure_fails(monkeypatch):
     import core.node_executors.base.control as control_mod
 
     monkeypatch.setattr(control_mod, 'find_control', lambda **kw: _fake_control())
-    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='': {'ok': False, 'message': '不支持的操作'})
+    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='', **kwargs: {'ok': False, 'message': '不支持的操作'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({'action': 'double_click', 'by': 'class_name', 'target': 'Button'}), ctx)
@@ -147,7 +150,7 @@ def test_executor_template_vars_resolved(monkeypatch):
         captured.update(kw)
         return _fake_control()
     monkeypatch.setattr(control_mod, 'find_control', fake_find)
-    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(control_mod, 'perform_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx({'btn_text': '开始游戏', 'title': '主窗口'})
     result = _executor().execute(
@@ -245,7 +248,7 @@ def test_executor_uses_captured_window_title(monkeypatch):
         captured.update(kw)
         return _fake_control()
     monkeypatch.setattr(uia_service, 'find_control', fake_find)
-    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({
@@ -265,7 +268,7 @@ def test_executor_captured_window_title_overridden_by_explicit(monkeypatch):
         captured.update(kw)
         return _fake_control()
     monkeypatch.setattr(uia_service, 'find_control', fake_find)
-    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({
@@ -287,7 +290,7 @@ def test_executor_primary_miss_tries_captured_fallbacks(monkeypatch):
             return _fake_control(automation_id='cb_1', class_name='ComboBoxEx32', name='最高')
         return None
     monkeypatch.setattr(uia_service, 'find_control', fake_find)
-    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({
@@ -335,7 +338,7 @@ def test_executor_prefers_ancestor_path(monkeypatch):
         raise AssertionError('有祖先链时不应走 BFS')
     monkeypatch.setattr(uia_service, 'find_control_by_path', fake_path_find)
     monkeypatch.setattr(uia_service, 'find_control', fake_find)
-    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({
@@ -364,7 +367,7 @@ def test_executor_path_miss_falls_back_to_bfs(monkeypatch):
         return _fake_control(name='开始游戏')
     monkeypatch.setattr(uia_service, 'find_control_by_path', fake_path_find)
     monkeypatch.setattr(uia_service, 'find_control', fake_find)
-    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='': {'ok': True, 'message': 'ok'})
+    monkeypatch.setattr(uia_service, 'perform_uia_action', lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = _executor().execute(make_node({

@@ -1,6 +1,6 @@
 # Easycode 系统架构设计文档
 
-> 版本：2.4 | 更新日期：2026-08-14
+> 版本：2.4 | 更新日期：2026-08-22
 
 ---
 
@@ -48,6 +48,7 @@ Easycode 采用经典的 **前后端分离 + 独立客户端** 三层架构：
 
 - **IDE 编辑器**：`frontend/src/main.js` 入口，提供可视化蓝图编辑器、节点属性面板、执行日志面板、全局变量面板等完整 IDE 功能
 - **Player 运行端**：`frontend/src/player-main.js` 独立入口，面向终端用户提供动态表单渲染 + 一键运行能力
+- **捕获文件管理器**：`frontend/src/capture-main.js` 独立入口，供原生截图宿主悬浮调用
 - **组件体系**：
   - 画布层：`WorkflowCanvas.vue` / `TopologyCanvas.vue`（工作流图 + 拓扑地图双画布）
   - 面板层：`NodeListPanel` / `NodeEditorPanel` / `ExecutionLogPanel` / `GlobalVariablesPanel` / `ProjectExplorerPanel` 等
@@ -71,16 +72,18 @@ Easycode 采用经典的 **前后端分离 + 独立客户端** 三层架构：
 
 ### 2.1 API 层（`api/routers/`）
 
-共 **6 个路由模块**，全部通过工厂函数 `create_xxx_router()` 创建，支持依赖注入：
+路由按工作区、蓝图、执行、构建、视觉、捕获、系统等领域拆分，并通过工厂函数装配：
 
 | 路由模块 | 文件 | 主要职责 |
 |---|---|---|
 | **System** | `system_router.py` | 系统信息、参数 Schema 注册、健康检查、配置枚举查询 |
-| **Blueprint** | `blueprint_router.py` | 蓝图 CRUD、签名校验、项目加载、节点/任务组增删改 |
+| **Blueprint** | `blueprint_router.py` | 蓝图 CRUD、签名校验、项目加载、流程/节点增删改 |
 | **Execution** | `execution_router.py` | 任务启动/停止、SSE 日志流 `/execution/{id}/stream`、状态查询 |
 | **Build** | `build_router.py` | EBP 密包导出、PyInstaller EXE 编译、Player 打包 |
 | **Vision** | `vision_router.py` | 视觉识别接口、截图、模板匹配、OCR 识别调试 |
 | **Workspace** | `workspace_router.py` | 工作空间管理、项目列表、文件系统操作、导入导出 |
+| **Project Workspace** | `project_workspace_router.py` | 单活动项目打开/关闭、最近项目、修复、外部修改检测 |
+| **Capture** | `capture_router.py` | 冻结帧、原生捕获宿主、资源保存事务与 IDE 操作桥接 |
 
 路由注册见 `api/app.py:161-173`，统一通过 `include_router()` 装配。
 
@@ -88,19 +91,20 @@ Easycode 采用经典的 **前后端分离 + 独立客户端** 三层架构：
 
 ### 2.2 核心服务层（`core/services/`）
 
-共 **9 个核心服务类**，承载业务逻辑：
+核心服务按领域拆分，承载项目、执行、捕获、资源与交付逻辑：
 
 | 服务 | 文件 | 核心职责 |
 |---|---|---|
-| **BlueprintService** | `blueprint_service.py` | 蓝图保存/加载、签名自动附加、JSON 原子写入、目录校验 |
+| **ProjectWorkspaceManager** | `project_workspace_service.py` | 单活动项目、初始化/修复、代次隔离、项目锁、最近项目与外部修改检测 |
+| **BlueprintService** | `blueprint_service.py` | 元数据/工作流/拓扑三文档事务保存、崩溃恢复与结构校验 |
+| **TemplateLibraryService** | `template_library_service.py` | 项目资源删除/移动/恢复、引用清理、回收站与崩溃恢复 |
 | **ExecutionService** | `execution_service.py` | 执行生命周期管理、后台线程运行、状态/日志内存存储、SSE 流生成 |
 | **DebugService** | `debug_service.py` | 断点调试会话：`DebugSession` 管理 pause/resume/step、断点集合、变量快照 |
-| **SignatureService** | `signature_service.py` | HMAC-SHA256 蓝图签名：`sign_blueprint()` / `verify_blueprint()` / `strip_signature()` |
 | **ExportService** | `export_service.py` | 资产导出编排：调用 ProjectExporter 生成 EBP 密包、生成 user_config.json |
 | **PlayerService** | `player_service.py` | Player 运行时：EBP 解密加载、表单 Schema 解析、运行上下文注入 |
 | **VisionService** | `vision_service.py` | 视觉能力封装：图像匹配、OCR、内存模板缓存（MemoryMatcher） |
 | **WorkspaceService** | `workspace_service.py` | 工作空间文件操作、路径安全校验、项目列表检索 |
-| **SnapshotService** | `snapshot_service.py` | 执行快照：变量状态、节点进度持久化与回滚 |
+| **SnapshotService** | `snapshot_service.py` | 项目版本历史快照、恢复与容量保留策略 |
 
 服务调用关系：
 
@@ -157,23 +161,21 @@ API Router → Core Services → Node Executors → Graph Engine
 
 ---
 
-### 2.5 安全模块（`core/security/` + `core/security.py`）
+### 2.5 安全模块（`core/security/`）
 
 ```
 core/security/
 ├── __init__.py
 ├── crypto.py          # SecureAssetCrypto - AES-256 + PBKDF2
 └── licensing.py       # 授权管理（机器码绑定 / 卡密校验）
-
-core/security.py       # assert_safe_path + atomic_write_json
 ```
 
 | 组件 | 实现要点 |
 |---|---|
 | **SecureAssetCrypto** | `crypto.py:12` - AES-256-CBC 加解密 + PBKDF2(SHA256, 10万次迭代) 动态密钥派生 + 随机 IV 头部 |
 | **Licensing** | `licensing.py` - 机器码采集 + 卡密格式校验 + 授权过期判断 |
-| **assert_safe_path** | `security.py:17` - 防目录遍历：normcase+abspath 规范化 + prefix 严格校验（Windows 兼容） |
-| **atomic_write_json** | `security.py:42` - 线程锁 + 临时文件 + `os.replace` 原子替换 + Windows 重试（WinError 5 兼容） |
+| **assert_safe_path** | `security/__init__.py` - realpath + normcase 边界校验，阻止目录穿越与链接越界 |
+| **atomic_write_json** | `security/__init__.py` - 同目录临时文件、fsync、`os.replace` 原子替换 |
 
 ---
 
@@ -202,7 +204,7 @@ core/conditions/
 
 ---
 
-### 2.7 图与路由（`core/graph/` + `core/variables/`）
+### 2.7 图与运行时变量
 
 #### 图引擎（`core/graph/`）
 
@@ -215,32 +217,14 @@ core/graph/
 
 | 类 | 核心方法 | 作用 |
 |---|---|---|
-| **GraphBuilder** | `build_from_project()` | 扫描 project.tasks 为每个任务组构建邻接表 |
+| **GraphBuilder** | `build_from_project()` | 扫描运行时 `project.tasks`，为主流程和函数调用帧构建邻接表 |
 | **GraphBuilder** | `build_topology_graph()` | 从 topology 配置构建页面跳转拓扑图 |
 | **PathFinder** | `find_shortest_path(graph, src, dst)` | BFS 算法返回 PathResult（路径 + 节点序列 + 总权重） |
 
 GraphExecutor 在 `__init__` 中调用 `_build_graphs()` 预构建所有邻接表（`executor.py:90`），供 smart_jump 节点运行时寻路。
 
-#### 变量类型系统（`core/variables/`）
-
-```
-core/variables/
-├── __init__.py
-├── base.py          # VariableType 基类 + TypeRegistry
-└── types/
-    ├── string.py    # 字符串（含模板渲染 ${var}）
-    ├── number.py    # 数值（int/float，自动类型转换）
-    ├── boolean.py   # 布尔
-    ├── list.py      # 列表
-    ├── dict.py      # 字典
-    ├── point.py     # 坐标点 (x, y)
-    └── region.py    # 区域矩形 (x, y, w, h)
-```
-
-变量系统支持：
-- 运行时类型检查与自动转换
-- 模板字符串解析：`${var}` / `${ctx.key}` / `${env.PATH}`
-- 作用域隔离：全局变量 vs 任务组局部变量
+运行时变量由项目元数据、执行上下文和表达式求值器共同管理；不再维护旧版
+`core/variables/` 类型注册目录。任务调用通过显式输入/输出映射隔离局部值。
 
 ---
 
@@ -253,28 +237,19 @@ core/variables/
 | 环境变量 | 用途 | Dev 兜底 | Prod 要求 |
 |---|---|---|---|
 | `APP_ENV` | 运行环境标记 dev/prod | dev | 必须为 prod |
-| `EASYCODE_SIGN_SECRET` | 蓝图 HMAC 签名密钥 | `easycode_blueprint_signature_v1` | **必填**，否则启动失败 |
 | `EASYCODE_MASTER_SALT` | PBKDF2 资产加密 Salt | `EasycodeDRMSalt2026SecureStorage` | **必填**，否则启动失败 |
 | `EASYCODE_CORS_ORIGINS` | CORS 白名单（逗号分隔） | `['*']` | 未配置时仅允许 `127.0.0.1:8000` |
 | `EASYCODE_RATE_LIMIT` | slowapi 速率限制 | `120/minute` | 按需调整 |
 
-启动时 Prod 环境缺失关键密钥抛 `RuntimeError`（`config.py:52` / `config.py:68`）。
+启动时 Prod 环境缺失资产加密 Salt 会抛出 `RuntimeError`。
 
 ---
 
-### 3.2 SignatureService 蓝图签名校验（`core/services/signature_service.py`）
+### 3.2 项目结构校验（`core/project_schema.py`）
 
-**目的：防止终端用户手动编辑 blueprint.json 导致 IDE 加载崩溃或逻辑异常。**
-
-```
-签名格式：v1:<hmac_sha256_hex>
-签名字段：_signature（存储在蓝图 JSON 顶层）
-```
-
-流程：
-1. **签名**（`sign_blueprint()`）：排除 `_signature` 字段 → `sort_keys=True` JSON 序列化 → HMAC-SHA256 签名
-2. **校验**（`verify_blueprint()`）：版本匹配 → 重新计算签名 → `hmac.compare_digest()` 常量时间比较（防时序攻击）
-3. **兼容策略**：无 `_signature` 字段的旧蓝图视为合法，向后兼容
+IDE 只接受同一版本的 `project.json`、`workflow.json`、`topology.json`、
+`context.json`、`form_schema.json`，并要求 `templates/assets.json` 使用当前资源索引版本。
+加载时严格校验任务、节点、实体边、稳定端口 ID 与 `asset://` 资源引用；不会补建缺失文档或猜测执行跨版本迁移。同一文档版本内仅对旧滚动/拖拽字段执行一次性、带三文档快照的手势参数迁移。
 
 ---
 
@@ -303,7 +278,7 @@ Master Key (32B)
 
 ---
 
-### 3.4 assert_safe_path 防目录遍历（`core/security.py:17`）
+### 3.4 assert_safe_path 防目录遍历（`core/security/__init__.py`）
 
 **攻击防护场景**：用户提交 `../../etc/passwd` 或 `project/../secret.txt` 路径尝试越界访问。
 
@@ -365,10 +340,10 @@ Master Key (32B)
 
 | 改进项 | 解决问题 | 实现方式 |
 |---|---|---|
-| **停止机制** | 旧版无法中断无限循环 | `_stop` 标志 + `_stop_lock`；所有循环检查 `is_stopped` |
+| **停止机制** | 无限循环可中断 | `_stop` 标志 + `_stop_lock`；所有循环检查 `is_stopped` |
 | **环路保护** | 连线环路导致死循环 | `_visited_count` 计数器；单节点访问上限 `MAX_NODE_VISITS=50` |
 | **迭代式跳转** | 递归跨任务导致 Python 栈溢出 | 显式 `_call_stack` 列表；`_execute_task_iterative()` while 循环 |
-| **O(1) 节点查找** | 旧版 `list.index()` 线性扫描 | `node_id_to_index` dict 预构建映射 |
+| **O(1) 节点查找** | 避免线性扫描 | `node_id_to_index` dict 预构建映射 |
 | **沙箱异常捕获** | 单节点崩溃中断整个流程 | `_execute_node_safely()` try/except 包装 |
 
 **执行主流程**（`run()` → `_execute_task_iterative()` → `_execute_single_task()`）：
@@ -399,6 +374,7 @@ Master Key (32B)
 - 增量推送：维护 `last_sent_index`，仅推送新日志
 - 流终止条件：状态 ∈ `[success, error, stopped]` **且** 日志全部推送完毕
 - 每条消息格式：`data: {"status": {...}, "logs": [...]}\n\n`
+- 日志项契约：`{time, level, category, message, image?}`。`category` 固定为 `execution / node / vision / navigation / operation / data`，由执行器统一生成。
 
 前端通过 `EventSource` API 订阅，实时追加到 ExecutionLogPanel。
 
@@ -451,7 +427,7 @@ Master Key (32B)
 | 表 | 字段 | 用途 |
 |---|---|---|
 | `executions` | execution_id(PK), project_path, task_id, start_node_id, status, message, created_at, updated_at | 执行主记录 |
-| `execution_logs` | id, execution_id(FK), seq, timestamp, level, message | 日志明细（seq 自增有序） |
+| `execution_logs` | id, execution_id(FK), seq, timestamp, level, category, message | 日志明细（seq 自增有序、来源分类可过滤） |
 | `execution_variables` | execution_id + variable_name (联合 PK), variable_value(JSON), variable_type, updated_at | 变量快照 |
 
 关键方法：
@@ -505,12 +481,14 @@ assets.ebp
 ├── [IV 16 bytes] 随机头部
 └── [AES-256-CBC 加密数据]
         └── ZIP 压缩（ZIP_DEFLATED）
-             ├── blueprint.json       （三文件蓝图合并视图：project.json + workflow.json + topology.json）
+             ├── blueprint.json       （固定 revision 的运行蓝图合并视图）
              ├── form_schema.json     （动态表单 Schema）
              ├── context.json         （如果存在）
-             ├── regions.json         （区域坐标，如果存在）
-             └── templates/
+             ├── templates/
+                  ├── assets.json     （稳定资源 ID、路径和捕获元数据）
                   └── **/*.png|jpg|jpeg  （识图模板，保留子目录结构）
+             ├── capabilities/        （仅实际引用的项目/公共能力及其包依赖）
+             └── scripts/             （仅实际引用的兼容脚本）
 ```
 
 **user_config.json 自动生成**（`exporter.py:116`）：
@@ -518,10 +496,16 @@ assets.ebp
 - 按 `target` 前缀分发：`$var.xxx` → `vars.xxx`；`$ctx.xxx` → `ctx.xxx`；`$env.xxx` → `env.xxx`
 - 提取 `default` 值填充初始配置
 
-蓝图存储：项目目录下的三文件结构（旧版单文件 `project_blueprint.json` 在首次访问时由 `core/services/migration.py` 自动迁移拆分，旧文件备份为 `.bak`）：
-- `project.json`：`project_name` / `variables` / `ui_state`
-- `workflow.json`：`{ tasks, edges }`（流程画布）
-- `topology.json`：`{ tasks, edges }`（拓扑地图，任务组内为 page_state 等拓扑节点，页面数据存于节点 params）
+项目只使用当前严格文档版本；手势字段迁移前会写入 `.easycode/migrations/gesture-path-*` 快照，并以可恢复事务提交：
+- `project.json`：`schema_version` / `project_id` / `revision` / `project_name` / `variables` / `ui_state` / `settings`
+- `workflow.json`：`{ schema_version, tasks, edges }`（流程画布）
+- `topology.json`：`{ schema_version, tasks, edges }`（拓扑地图，页面数据存于节点 params）
+- `context.json`：可移植工作面板参数；窗口句柄、标题和 ADB 绑定写入 `.easycode/local-settings.json`
+- `form_schema.json`：Player 参数表单与固定入口
+- `templates/assets.json`：稳定 `asset://<assetId>` 到 `image/ocr/page` 文件的映射
+
+EasyCode 源码目录不是脚本项目。任意文件夹都可被显式打开为一个隔离项目；浏览器请求必须携带
+`X-Workspace-Id` 和 `X-Workspace-Generation`。切换项目会先冲刷旧保存队列，并使所有旧代次请求失效。
 
 ---
 
@@ -529,36 +513,26 @@ assets.ebp
 
 **执行流程**：
 
-1. 校验 project_path 存在性（404 提前返回）
+1. 发布前检查并创建固定 `projectId + revision` 的不可变构建快照
 2. 定位 `scripts/build_player.py` 脚本
-3. 通过环境变量 `EASYCODE_EXPORT_PROJECT_PATH` 注入项目路径（避免命令行参数泄漏）
+3. `EASYCODE_EXPORT_PROJECT_PATH` 只指向快照，`EASYCODE_OUTPUT_PROJECT_PATH` 只接收最终产物
 4. `subprocess.Popen([sys.executable, build_script])` 子进程启动
    - stdout/stderr 实时捕获
    - timeout=300s（5 分钟 PyInstaller 超时保护）
 5. returncode ≠ 0 → 抛 500 详细日志
 6. 成功返回 `dist/EasycodePlayer_Bundle` 绝对路径
 
-关键设计：子进程隔离编译环境，避免 PyInstaller 导入污染主 API 进程。
+关键设计：子进程隔离编译环境；构建期间继续编辑项目不会混入本次交付包。
 
 ---
 
 ## 六、测试架构
 
-### 6.1 测试文件清单（`tests/` 共 10 个测试文件）
+### 6.1 测试范围
 
-| 测试文件 | 覆盖领域 | 用例数（约） |
-|---|---|---|
-| `test_config.py` | SecurityConfig 环境变量读取、dev/prod 兜底逻辑、密钥校验 | ~8 |
-| `test_signature_service.py` | 蓝图签名/校验/篡改检测/版本不兼容/无签名向后兼容 | ~12 |
-| `test_crypto.py` | AES-256 加解密、PBKDF2 派生、IV 随机性、非法长度异常 | ~10 |
-| `test_security_path.py` | assert_safe_path 防目录遍历（Linux/Windows 双场景、边界 case） | ~15 |
-| `test_response.py` | 统一响应格式（success/error/pagination）、错误码映射 | ~8 |
-| `test_utils.py` | 通用工具函数（模板渲染、路径处理、时间格式等） | ~10 |
-| `test_system_api.py` | /system/* 接口（健康检查、参数 Schema、配置枚举） | ~10 |
-| `test_blueprint_api.py` | /blueprint/* 接口（CRUD、签名校验、任务组管理） | ~12 |
-| `test_error_handling.py` | 全局异常处理、参数校验 422、兜底 500、错误码一致性 | ~8 |
+后端测试由 `pytest` 自动发现，覆盖当前项目结构、实体边语义、执行循环、弹窗处理、稳定资源、Player、捕获宿主、后台输入和发布前检查。前端测试由 Vitest 覆盖画布、Store、资源管理、Player 与大型流程工具；ESLint 作为静态质量门禁。
 
-**总计约 93 条用例**（通过 `pytest -v` 可精确统计）。
+用例数随功能持续增长，以 `pytest -q` 和 `npm test -- --run` 的当次统计为准。
 
 ---
 
@@ -582,7 +556,7 @@ assets.ebp
 │  └─ HTTP 请求 → 路由 → 服务 → DB       │
 ├────────────────────────────────────────┤
 │  服务单元测试                           │
-│  test_signature_service / test_crypto  │
+│  test_asset_service / test_crypto      │
 │  └─ 直接调用类方法，断言输出            │
 ├────────────────────────────────────────┤
 │  基础设施 / 工具测试                    │
@@ -606,10 +580,40 @@ assets.ebp
 | 运行蓝图 | `core/executor.py:141` | `GraphExecutor.run()` |
 | 调试会话 | `core/services/debug_service.py:161` | `DebugService.start_debug_session()` |
 | SSE 流 | `core/services/execution_service.py:132` | `stream_execution_logs()` |
-| 蓝图签名 | `core/services/signature_service.py:41` | `SignatureService.sign_blueprint()` |
+| 项目结构校验 | `core/project_schema.py` | `load_project_documents()` |
 | 资产加密 | `core/security/crypto.py:38` | `SecureAssetCrypto.encrypt_ebp_stream()` |
 | 导出 EBP | `core/builder/exporter.py:44` | `ProjectExporter.build_export_bundle()` |
 | 编译 EXE | `core/builder/compiler_service.py:16` | `CompilerService.compile_player_exe()` |
 | 条件评估 | `core/conditions/evaluator.py:5` | `evaluate_condition()` |
 | 最短路径 | `core/graph/pathfinder.py` | `PathFinder.find_shortest_path()` |
-| 路径安全 | `core/security.py:17` | `assert_safe_path()` |
+| 路径安全 | `core/security/__init__.py` | `assert_safe_path()` |
+
+---
+
+## 七、复杂脚本能力架构
+
+EasyCode 将可复用逻辑分为三层，避免为每个业务细节增加一种节点：
+
+1. **基础节点**：语义稳定且几乎所有项目都会使用，如等待、滚动/滑动、拖拽/长按、文本输入、图像与 OCR。
+2. **能力函数**：算法性、多步骤、领域相关的功能以包的形式交付，由“调用能力”节点做类型化输入/输出绑定。
+3. **平台服务**：跨执行和跨电脑的持久状态、计划任务、消息、租约与离线补发，由 SQLite WAL 和协调 API 承载。
+
+项目能力放在 `<project>/capabilities/<package>/`；可跨项目复用的能力放在 `EASYCODE_CAPABILITY_HOME` 或默认用户级目录。打包时只收集蓝图真实引用的能力包及声明依赖；能力代码在真正调用前不执行，不同项目使用隔离的 Python 命名空间。
+
+详细能力包合约、调用示例和内置能力见 `docs/CAPABILITIES.md`。
+
+---
+
+## 八、v3 主流程、函数、区块与唯一页面地图
+
+磁盘项目只接受严格 v3，五个项目文档分别承担单一职责：`project.json`、`workflow.json`、`topology.json`、`context.json` 与 `form_schema.json`。保存和加载不会迁移旧格式；版本或结构不符会明确阻止打开。
+
+- `workflow.json.main_graph` 是项目唯一主流程，不存在用户可见的任务组或子流程。
+- `workflow.json.functions[]` 保存显式创建的函数。每个函数拥有独立画布、唯一固定入口、形参、局部变量、输出、结果出口、测试用例和至少一个显式返回节点。
+- `call_function` 通过稳定的参数、输出和结果出口 ID 调用函数；递归调用在 Schema、发布检查和运行时三层阻止。
+- `workflow.json.function_folders[]` 只整理函数库，不改变执行或变量作用域。
+- 主流程、函数画布与页面地图都可创建几何区块。区块只持久化 `x/y/width/height` 等几何信息，不保存节点 ID；节点完全落入区块内容范围时才随区块移动。
+- `topology.json` 是项目唯一扁平页面地图，直接保存 `nodes/edges/blocks`。页面节点用 `page_id` 标识，随机弹窗由页面节点自身的 `is_random_popup` 声明，与区块无关。
+- 函数跨项目传输统一使用数据型 `.ecf`；导出会收集被调用函数、稳定资源和能力闭包，导入会生成全新 ID 并重写内部引用。
+
+执行器内部仍使用紧凑的 `Task` 对象承载主流程与函数调用帧，这是运行时适配层，不是持久化格式，也不会重新暴露为产品概念。

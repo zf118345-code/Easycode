@@ -32,7 +32,7 @@ export function buildControlNodeName(info) {
 /**
  * 捕获的完整控件信息 → 分行展示文本（只读 textarea 用，兼容 UIA 与 Win32 两种字段集）
  * @param {Object} info 捕获信息（control_info 隐藏字段）
- * @param {string} target 兜底控件名称（无 control_info 的旧节点）
+ * @param {string} target 手工配置时的控件名称
  * @returns {string} 如 "控件名称：确定\n控件类型：button\n自动化ID：btn_1\n…"
  */
 export function formatControlInfo(info, target = '') {

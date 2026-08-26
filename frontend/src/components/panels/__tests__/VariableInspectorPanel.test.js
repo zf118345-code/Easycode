@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach } from 'vitest'
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import VariableInspectorPanel from '../VariableInspectorPanel.vue'
-import { useProjectStore, useExecutionStore, useMainStore } from '@/stores'
+import { useProjectStore, useExecutionStore, useIdeStore } from '@/stores'
 
 function mountPanel() {
     return mount(VariableInspectorPanel, {
@@ -59,7 +59,7 @@ describe('VariableInspectorPanel 变量监控', () => {
         const exec = useExecutionStore()
         exec.executionCurrentVariables = { a: 1 }
         exec.executionPrevVariables = { a: 0 }
-        const main = useMainStore()
+        const main = useIdeStore()
         expect(main.executionCurrentVariables).toEqual({ a: 1 })
         expect(main.executionPrevVariables).toEqual({ a: 0 })
     })

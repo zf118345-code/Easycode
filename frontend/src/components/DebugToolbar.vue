@@ -5,18 +5,19 @@
   状态徽标 + 断点计数 + 命中节点
 -->
 <script setup>
-import { computed, onMounted, onUnmounted } from 'vue'
-import { useMainStore, useExecutionStore, useUiStore } from '@/stores'
+import { computed, onMounted, onUnmounted, toRef } from 'vue'
+    import { useIdeStore, useExecutionStore, useUiStore } from '@/stores'
 import { ElMessage } from 'element-plus'
 import {
     Play, Pause, Square, SkipForward, CircleDot, CircleDashed, Clock, Target
 } from 'lucide-vue-next'
+import { useRunFromSelection } from '@/composables/useRunFromSelection'
 
-const store = useMainStore()
+const props = defineProps({ recordingActive: { type: Boolean, default: false } })
+
+    const store = useIdeStore()
 const execStore = useExecutionStore()
 const uiStore = useUiStore()
-
-const hasTasks = computed(() => (store.blueprint?.tasks?.length || 0) > 0)
 
 const isRunning = computed(() => execStore.isRunning)
 const isPaused = computed(() => execStore.isPaused)
@@ -27,9 +28,13 @@ const activeNodeLabel = computed(() => {
     // 命中显示节点名（找不到回落 node_id）
     const id = currentActiveNodeId.value
     if (!id) return ''
-    const tasks = store.blueprint?.tasks || []
-    for (const task of tasks) {
-        const found = (task.nodes || []).find(n => n.node_id === id)
+    const graphs = [
+        store.blueprint?.main_graph,
+        ...(store.blueprint?.functions || []).map(item => item.graph),
+        store.blueprint?.page_map
+    ]
+    for (const graph of graphs) {
+        const found = (graph?.nodes || []).find(n => n.node_id === id)
         if (found) return found.node_name || id
     }
     return id
@@ -46,46 +51,29 @@ const stateClass = computed(() => ({
 }))
 
 // ===== 主控按钮：就绪=从选中节点运行 / 运行中=暂停 / 暂停=继续到下一断点 =====
-const selectedRunNodeId = computed(() => uiStore.selectedNodeIds?.[0] || uiStore.selectedNodeId || null)
+const {
+    canRun,
+    disabledReason,
+    runSelectedNode
+} = useRunFromSelection({
+    blocked: toRef(props, 'recordingActive'),
+    blockedReason: '请先停止逐帧录制'
+})
 const mainBtnDisabled = computed(() => {
     if (isRunning.value || isPaused.value) return false
-    return !hasTasks.value || !selectedRunNodeId.value
+    return !canRun.value
 })
 const mainBtnTitle = computed(() => {
     if (isPaused.value) return '继续运行到下一个断点 (F5)'
     if (isRunning.value) return '暂停 (F6)'
-    if (!selectedRunNodeId.value) return '请先在画布中选中一个节点'
+    if (!canRun.value) return disabledReason.value
     return '从选中节点开始运行 (F5)'
 })
 const mainBtnHint = computed(() => (isPaused.value ? 'F5' : isRunning.value ? 'F6' : 'F5'))
 
-function findTaskIdByNode(nodeId) {
-    const tasks = store.blueprint?.tasks || []
-    for (const task of tasks) {
-        if ((task.nodes || []).some(n => n.node_id === nodeId)) return task.task_id
-    }
-    return null
-}
-
 // ===== 操作 =====
 async function runSelectedTask() {
-    const nodeId = selectedRunNodeId.value
-    if (!nodeId) {
-        ElMessage.warning('请先在画布中选中一个节点再运行')
-        return
-    }
-    const taskId = findTaskIdByNode(nodeId)
-    if (!taskId) {
-        ElMessage.warning('未找到该节点所属的任务')
-        return
-    }
-    try {
-        const result = await execStore.runTask(taskId, nodeId)
-        if (result?.status === 'started') ElMessage.success('任务已启动')
-        else ElMessage.error('启动失败：' + (result?.error || JSON.stringify(result || {})))
-    } catch (err) {
-        ElMessage.error('启动失败：' + err.message)
-    }
+    await runSelectedNode()
 }
 async function handleMainButton() {
     if (isPaused.value || isRunning.value) {
@@ -138,10 +126,10 @@ function _onDebugHotkey(e) {
     // F9：切换当前选中节点的断点
     if (key === 'F9') {
         e.preventDefault(); e.stopPropagation()
-        const sel = uiStore.selectedNodeId
-        if (!sel) { ElMessage.warning('请先选中一个节点，然后按 F9 切换断点'); return }
+        const sel = uiStore.selectedNodeIds?.length === 1 ? uiStore.selectedNodeIds[0] : null
+        if (!sel) { ElMessage.warning('请先只选中一个节点，然后按 F9 切换断点'); return }
         const added = uiStore.toggleBreakpoint(sel)
-        ElMessage.info(added ? '🔴 已设置断点' : '⚪ 已移除断点')
+        ElMessage.info(added ? '已设置断点' : '已移除断点')
         return
     }
     // F10：下一步（暂停时）
@@ -210,78 +198,79 @@ onUnmounted(() => window.removeEventListener('keydown', _onDebugHotkey, true))
 
 <style scoped>
 .debug-toolbar {
-    display: inline-flex;
+    width: 100%;
+    display: flex;
     align-items: center;
     gap: 6px;
-    padding: 6px 10px;
-    background: var(--el-bg-color-page, #1a1b2e);
-    border: 1px solid var(--el-border-color-lighter, #2a2c48);
-    border-radius: 10px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 0;
     flex-wrap: nowrap;
     user-select: none;
 }
-.dbg-sep { width: 1px; height: 22px; background: var(--el-border-color-lighter); margin: 0 4px; opacity: .7; }
+.dbg-sep { width: 1px; height: 20px; background: var(--app-separator); margin: 0 5px; }
 
 .dbg-btn {
     display: inline-flex; align-items: center; gap: 4px;
-    padding: 6px 10px; min-height: 30px;
-    background: var(--el-fill-color-light);
+    padding: 4px 8px; min-height: 28px;
+    background: transparent;
     color: var(--el-text-color-regular);
-    border: 1px solid var(--el-border-color-lighter);
-    border-radius: 6px;
+    border: 1px solid transparent;
+    border-radius: 5px;
     cursor: pointer;
-    transition: all .15s;
+    transition: background-color .15s ease, border-color .15s ease, color .15s ease, opacity .15s ease;
     font-size: 12px;
 }
-.dbg-btn:hover:not(:disabled) { background: var(--el-color-primary); color: #fff; border-color: var(--el-color-primary); }
+.dbg-btn:hover:not(:disabled) { background: var(--app-bg-hover); color: var(--app-text-primary); border-color: var(--app-border-strong); }
 .dbg-btn:disabled { opacity: .35; cursor: not-allowed; }
-.dbg-btn.primary { background: rgba(78, 209, 156, 0.12); color: #4ed19c; border-color: rgba(78, 209, 156, 0.4); }
-.dbg-btn.primary:hover:not(:disabled) { background: #4ed19c; color: #1a1a1a; }
-.dbg-btn.danger { color: #f56c6c; }
-.dbg-btn.danger:hover:not(:disabled) { background: #f56c6c; color: #fff; border-color: #f56c6c; }
+.dbg-btn.primary { background: var(--app-color-primary-dim); color: var(--app-color-primary); border-color: color-mix(in srgb, var(--app-color-primary) 40%, transparent); }
+.dbg-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--app-color-primary) 20%, transparent); color: var(--app-color-primary-hover); }
+.dbg-btn.danger { color: var(--app-color-danger); }
+.dbg-btn.danger:hover:not(:disabled) { background: var(--app-color-danger-soft); color: var(--app-color-danger); border-color: color-mix(in srgb, var(--app-color-danger) 30%, transparent); }
 
 .dbg-icon { flex-shrink: 0; }
 .dbg-hint {
     font-size: 10px; opacity: .7; font-weight: 600;
     padding: 1px 4px; border-radius: 3px;
-    background: rgba(255,255,255,0.06);
+    background: color-mix(in srgb, var(--app-text-primary) 6%, transparent);
 }
 
 .dbg-state {
     display: inline-flex; align-items: center; gap: 6px;
-    padding: 4px 10px; border-radius: 999px;
-    font-size: 12px; font-weight: 600;
-    border: 1px solid var(--el-border-color-lighter);
+    padding: 4px 8px; border-radius: 6px;
+    font-size: 11px; font-weight: 600;
+    border: 1px solid transparent;
 }
 .state-stopped { color: var(--el-text-color-secondary); }
-.state-running { color: #4ed19c; background: rgba(78, 209, 156, 0.1); border-color: rgba(78, 209, 156, 0.4); }
-.state-paused  { color: #ffb020; background: rgba(255, 176, 32, 0.1); border-color: rgba(255, 176, 32, 0.4); }
+.state-running { color: var(--app-color-success); background: var(--app-color-success-soft); border-color: color-mix(in srgb, var(--app-color-success) 40%, transparent); }
+.state-paused  { color: var(--app-color-warning); background: var(--app-color-warning-soft); border-color: color-mix(in srgb, var(--app-color-warning) 40%, transparent); }
 .state-icon    { width: 12px; height: 12px; }
 
 .dbg-meta {
     display: inline-flex; align-items: center; gap: 6px;
     padding: 4px 10px; border-radius: 6px;
     font-size: 12px;
-    background: var(--el-fill-color-lighter);
+    background: transparent;
     color: var(--el-text-color-regular);
 }
-.dbg-count { font-weight: 700; color: var(--el-color-danger, #e5484d); min-width: 18px; text-align: center; }
+.dbg-count { font-weight: 700; color: var(--app-color-danger); min-width: 18px; text-align: center; }
 .dbg-meta-label { opacity: .7; }
 .dbg-mini-btn {
     font-size: 11px;
     padding: 1px 6px; margin-left: 4px;
-    background: rgba(229,72,77,0.12); color: #e5484d;
-    border: 1px solid rgba(229,72,77,0.35);
+    background: var(--app-color-danger-soft); color: var(--app-color-danger);
+    border: 1px solid color-mix(in srgb, var(--app-color-danger) 35%, transparent);
     border-radius: 4px; cursor: pointer;
 }
-.dbg-mini-btn:hover { background: #e5484d; color: #fff; }
+.dbg-mini-btn:hover { background: var(--app-color-danger); color: var(--app-color-on-primary); }
 
-.dbg-meta.active-node { background: rgba(255,176,32,0.1); color: #ffb020; border: 1px solid rgba(255,176,32,0.35); }
+.dbg-meta.active-node { margin-left: auto; background: var(--app-color-warning-soft); color: var(--app-color-warning); border: 1px solid color-mix(in srgb, var(--app-color-warning) 28%, transparent); }
 .dbg-active-icon { font-size: 12px; }
 .dbg-node-id { font-family: monospace; font-weight: 600; }
 
 .bp-dot-inline {
     display: inline-block; width: 10px; height: 10px; border-radius: 50%;
-    background: #e5484d; box-shadow: 0 0 4px rgba(229, 72, 77, 0.7);
+    background: var(--app-color-danger); box-shadow: 0 0 4px color-mix(in srgb, var(--app-color-danger) 70%, transparent);
 }
 </style>

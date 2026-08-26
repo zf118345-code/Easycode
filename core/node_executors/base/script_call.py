@@ -1,5 +1,3 @@
-import importlib
-
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
 
@@ -8,49 +6,38 @@ from core.registry import NodeExecutorRegistry
 class ScriptCallNodeExecutor(BaseNodeExecutor):
     def execute(self, node, context):
         params = node.params
-        script_name = params.get('script', '').strip()
-        entry_func = params.get('entry', '').strip()
-        return_on_complete = params.get('return_on_complete', False)
+        call_mode = str(params.get('call_mode') or 'capability').strip().lower()
+        if call_mode != 'capability':
+            context.log(f'调用能力节点不支持调用方式: {call_mode}', 'error')
+            return {'success': False, 'error': f'unsupported capability call mode: {call_mode}', 'code': 'UNSUPPORTED_CALL_MODE'}
+        return self._execute_capability(params, context)
 
-        if not script_name:
-            context.log('script_call 缺少 script 参数', 'error')
-            return {'success': False, 'error': 'missing script name'}
+    @staticmethod
+    def _execute_capability(params, context):
+        from core.services.capability_service import CapabilityError, CapabilityService
 
-        # 尝试导入脚本模块
+        capability_id = str(params.get('capability_id') or '').strip()
+        if not capability_id:
+            context.log('调用能力节点尚未选择能力', 'error')
+            return {'success': False, 'error': 'missing capability id', 'code': 'MISSING_CAPABILITY'}
         try:
-            # 假设脚本放在 scripts/ 目录下
-            module = importlib.import_module(f'scripts.{script_name}')
-        except ImportError as e:
-            context.log(f'无法导入脚本 {script_name}: {e}', 'error')
-            return {'success': False, 'error': f'script not found: {script_name}'}
-
-        # 如果指定了入口函数，则调用；否则调用默认的 run 或 main
-        if entry_func:
-            func = getattr(module, entry_func, None)
-        else:
-            func = getattr(module, 'run', None) or getattr(module, 'main', None)
-
-        if func is None:
-            context.log(f'脚本 {script_name} 中未找到入口函数', 'error')
-            return {'success': False, 'error': 'entry function not found'}
-
-        try:
-            # 将 context 传递给脚本，方便其访问变量和日志
-            result = func(context)
-            if result is None:
-                result = {'success': True}
-            elif isinstance(result, bool):
-                result = {'success': result}
-            elif not isinstance(result, dict):
-                result = {'success': True, 'result': result}
-        except Exception as e:
-            context.log(f'脚本执行异常: {e}', 'error')
-            return {'success': False, 'error': str(e)}
-
-        # 如果 return_on_complete 为 True，则返回跳转类型为 end 或继续？
-        # 实际跳转由 on_success/on_failure 控制，这里只需返回结果
-        if return_on_complete:
-            # 脚本执行完成后希望整个任务结束或返回，可以在 on_success 中设置跳转
-            # 这里我们添加一个标志，但执行器不直接处理跳转
-            context.log('脚本执行完成，return_on_complete=True，将由 on_success 控制后续')
+            result = CapabilityService.invoke(
+                context,
+                capability_id,
+                version=str(params.get('capability_version') or '').strip(),
+                input_bindings=params.get('input_bindings') or [],
+                output_bindings=params.get('output_bindings') or [],
+                timeout_ms=int(params.get('timeout_ms') or 0) or None,
+                retry_count=int(params.get('retry_count') or 0),
+                retry_interval_ms=int(params.get('retry_interval_ms') or 200),
+            )
+        except CapabilityError as exc:
+            context.log(f'[调用能力] {exc}', 'error')
+            return {'success': False, 'error': str(exc), 'code': 'CAPABILITY_CONFIG_ERROR'}
+        except Exception as exc:
+            context.log(f'[调用能力] 运行时异常: {exc}', 'error')
+            return {'success': False, 'error': str(exc), 'code': 'CAPABILITY_RUNTIME_ERROR'}
+        level = 'info' if result.get('success') else 'error'
+        message = result.get('message') or result.get('code') or ('完成' if result.get('success') else '失败')
+        context.log(f'[调用能力] {capability_id}: {message}', level)
         return result

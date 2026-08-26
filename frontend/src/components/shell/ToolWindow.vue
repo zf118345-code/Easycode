@@ -29,7 +29,7 @@ defineEmits(['close'])
 
 <style scoped>
     .tool-window-pane {
-        background: var(--el-bg-color);
+        background: var(--app-sidebar-bg);
         border-right: 1px solid var(--el-border-color-light);
         border-bottom: 1px solid var(--el-border-color-light);
         display: flex;
@@ -40,14 +40,14 @@ defineEmits(['close'])
     }
 
     .tool-window-header {
-        height: 30px;
-        background: rgba(25, 26, 38, 0.95);
-        border-bottom: 1px solid var(--el-border-color-light);
+        height: 34px;
+        background: var(--app-sidebar-bg);
+        border-bottom: 1px solid var(--app-separator);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 10px;
-        font-size: 11px;
+        padding: 0 12px;
+        font-size: 12px;
         font-weight: 600;
         color: var(--el-text-color-regular);
         user-select: none;
@@ -67,8 +67,8 @@ defineEmits(['close'])
         display: flex;
         align-items: center;
         justify-content: center;
-        border-radius: 3px;
-        transition: all 0.2s;
+        border-radius: 5px;
+        transition: background .14s ease, color .14s ease;
     }
 
         .window-tool-btn:hover {

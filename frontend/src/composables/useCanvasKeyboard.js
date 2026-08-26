@@ -15,8 +15,6 @@ import { logger } from '@/utils/logger'
  *   onSelectAll: 自定义全选回调（可选，默认选中当前任务所有节点）
  */
 export function useCanvasKeyboard(options = {}) {
-    let isInputFocused = false
-
     function checkInputFocus() {
         const el = document.activeElement
         if (!el) return false
@@ -115,8 +113,9 @@ export function useCanvasKeyboard(options = {}) {
             return
         }
 
-        // Delete / Backspace
-        if (e.key === 'Delete' || e.key === 'Backspace') {
+        // Delete / Backspace。复杂画布会自行优先处理连线、组和多选节点，
+        // 可显式传入 onDelete:false，避免安装第二个空操作删除监听器。
+        if (options.onDelete !== false && (e.key === 'Delete' || e.key === 'Backspace')) {
             handleDelete(e)
             return
         }

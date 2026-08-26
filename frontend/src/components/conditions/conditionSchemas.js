@@ -255,20 +255,9 @@ export const CONDITION_SCHEMAS = {
 }
 
 // ===== 页面特征 schema（page_state 复合特征，条件列表编辑器使用） =====
-// 复用通用条件 schema，并追加页面特征专属字段：组合方式 / 结果取反
+// AND/OR 只由页面节点的 feature_mode 统一设置；单条特征仅保留结果取反。
 
 const PAGE_FEATURE_COMMON = {
-    combine_mode: {
-        type: "select",
-        label: "与上一特征组合方式",
-        // 默认空 = 跟随全局「特征组合模式」；显式选择 and/or 才覆盖全局
-        default: "",
-        options: [
-            { label: "跟随全局 (默认)", value: "" },
-            { label: "且 (AND)", value: "and" },
-            { label: "或 (OR)", value: "or" }
-        ]
-    },
     negate: {
         type: "bool",
         label: "结果取反（描述不存在该特征）",

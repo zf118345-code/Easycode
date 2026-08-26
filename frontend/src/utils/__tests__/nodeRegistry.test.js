@@ -7,6 +7,7 @@ import {
     getNodeContentSpec,
     estimateNodeContentHeight
 } from '../../config/nodeRegistry'
+import { DEFAULT_NODE_ICON, getNodeIcon, getNodeLabel } from '../../config/nodeIconsConfig'
 
 describe('nodeRegistry 统一注册表', () => {
     it('getNodeTypesForMode 按 modes 过滤可用类型', () => {
@@ -20,12 +21,24 @@ describe('nodeRegistry 统一注册表', () => {
         // smart_jump 是主流程专属节点，拓扑画布不再出现
         expect(topologyTypes.smart_jump).toBeUndefined()
         expect(topologyTypes.click).toBeTruthy()
-        expect(topologyTypes.branch).toBeUndefined()
+        expect(topologyTypes.branch).toBe('分支选择')
+
+        const functionTypes = getNodeTypesForMode('function')
+        expect(functionTypes.call_function).toBe('调用函数')
+        expect(functionTypes.function_return).toBe('函数返回')
+        expect(functionTypes.function_entry).toBeUndefined()
     })
 
-    it('控件节点：workflow 画布可用、拓扑不可用，外观/内容规则完整', () => {
+    it('大纲图标与节点注册表同源，新架构节点不会退回通用方块', () => {
+        for (const type of ['call_function', 'function_entry', 'function_return', 'control']) {
+            expect(getNodeIcon(type)).not.toBe(DEFAULT_NODE_ICON)
+            expect(getNodeLabel(type)).toBe(NODE_REGISTRY[type].label)
+        }
+    })
+
+    it('控件节点：双画布均可用，外观/内容规则完整', () => {
         expect(getNodeTypesForMode('workflow').control).toBe('控件操作')
-        expect(getNodeTypesForMode('topology').control).toBeUndefined()
+        expect(getNodeTypesForMode('topology').control).toBe('控件操作')
         expect(getNodeConfig('control').icon).toBe('ScanSearch')
         expect(getNodeConfig('control').color).toBe('#00bcd4')
         expect(getNodeContentSpec('control')).toBeNull()
@@ -101,7 +114,7 @@ describe('nodeRegistry 统一注册表', () => {
     })
 
     it('注册表为单一事实源：所有类型都定义了 modes 且 content 规则完整', () => {
-        for (const [type, cfg] of Object.entries(NODE_REGISTRY)) {
+        for (const cfg of Object.values(NODE_REGISTRY)) {
             expect(Array.isArray(cfg.modes)).toBe(true)
             expect(cfg.modes.length).toBeGreaterThan(0)
             expect(cfg.label).toBeTruthy()

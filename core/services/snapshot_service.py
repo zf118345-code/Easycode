@@ -1,177 +1,156 @@
-# core/services/snapshot_service.py
-# 蓝图自动版本快照服务：history 文件夹备份 + SHA256 哈希校验
+"""项目版本快照：内容哈希去重、按数量与空间双重限额保留。"""
+
+from __future__ import annotations
+
 import hashlib
 import json
-import logging
 import os
-from datetime import datetime
-
-from core.security import assert_safe_path, atomic_write_json
-
-logger = logging.getLogger(__name__)
-
-MAX_SNAPSHOTS = 20  # 最大保留快照数
+import tempfile
+from datetime import datetime, timezone
 
 
 class SnapshotService:
-    """蓝图版本快照管理"""
+    HISTORY_DIR = '.easycode/history'
+    MAX_SNAPSHOTS = 100
+    MAX_BYTES = 500 * 1024 * 1024
+
+    @classmethod
+    def _history_dir(cls, project_path: str) -> str:
+        path = os.path.join(os.path.abspath(project_path), *cls.HISTORY_DIR.split('/'))
+        os.makedirs(path, exist_ok=True)
+        return path
 
     @staticmethod
-    def get_history_dir(project_path: str) -> str:
-        return os.path.join(project_path, 'history')
+    def _canonical_hash(blueprint: dict) -> str:
+        payload = json.dumps(blueprint, ensure_ascii=False, sort_keys=True, separators=(',', ':')).encode('utf-8')
+        return hashlib.sha256(payload).hexdigest()
 
-    @staticmethod
-    def compute_hash(data: dict) -> str:
-        """计算蓝图数据的 SHA256 哈希"""
-        raw = json.dumps(data, ensure_ascii=False, sort_keys=True)
-        return hashlib.sha256(raw.encode('utf-8')).hexdigest()
+    @classmethod
+    def create(cls, project_path: str, blueprint: dict, reason: str = 'save') -> dict:
+        history_dir = cls._history_dir(project_path)
+        digest = cls._canonical_hash(blueprint)
+        latest = cls.list(project_path)
+        if latest and latest[0].get('hash') == digest:
+            return {**latest[0], 'deduplicated': True}
 
-    @staticmethod
-    def create_snapshot(project_path: str, blueprint_data: dict) -> dict:
-        """创建蓝图版本快照
-        Returns: { snapshot_id, hash, timestamp, path }
-        """
-        history_dir = SnapshotService.get_history_dir(project_path)
-        os.makedirs(history_dir, exist_ok=True)
-
-        # 计算哈希
-        content_hash = SnapshotService.compute_hash(blueprint_data)
-
-        # 检查是否与最近一次快照相同（避免无变化时重复备份）
-        snapshots = SnapshotService.list_snapshots(project_path)
-        if snapshots:
-            latest = snapshots[-1]
-            if latest.get('hash') == content_hash:
-                logger.info(f'快照跳过：内容哈希未变化 ({content_hash[:8]})')
-                return latest
-
-        # 生成快照文件名
-        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        snapshot_id = f'snapshot_{timestamp}_{content_hash[:8]}'
-        snapshot_path = os.path.join(history_dir, f'{snapshot_id}.json')
-
-        # 写入快照（包含元数据）
-        snapshot_data = {
+        now = datetime.now(timezone.utc)
+        snapshot_id = f'{now.strftime("%Y%m%dT%H%M%S%fZ")}-{digest[:12]}'
+        record = {
             'snapshot_id': snapshot_id,
-            'hash': content_hash,
-            'timestamp': datetime.now().isoformat(),
-            'project_name': blueprint_data.get('project_name', ''),
-            'blueprint': blueprint_data,
+            'created_at': now.isoformat(),
+            'reason': reason,
+            'hash': digest,
+            'project_name': blueprint.get('project_name', ''),
+            'blueprint': blueprint,
         }
-        atomic_write_json(snapshot_path, snapshot_data)
-        logger.info(f'快照已创建: {snapshot_id}')
-
-        # 清理旧快照
-        SnapshotService._cleanup_old_snapshots(project_path)
-
-        return {
-            'snapshot_id': snapshot_id,
-            'hash': content_hash,
-            'timestamp': snapshot_data['timestamp'],
-            'path': snapshot_path,
-        }
-
-    @staticmethod
-    def list_snapshots(project_path: str) -> list:
-        """列出所有快照（按时间排序）"""
-        history_dir = SnapshotService.get_history_dir(project_path)
-        if not os.path.exists(history_dir):
-            return []
-
-        snapshots = []
-        for fname in os.listdir(history_dir):
-            if not fname.startswith('snapshot_') or not fname.endswith('.json'):
-                continue
-            fpath = os.path.join(history_dir, fname)
-            try:
-                with open(fpath, encoding='utf-8') as f:
-                    data = json.load(f)
-                snapshots.append(
-                    {
-                        'snapshot_id': data.get('snapshot_id', fname),
-                        'hash': data.get('hash', ''),
-                        'timestamp': data.get('timestamp', ''),
-                        'project_name': data.get('project_name', ''),
-                        'path': fpath,
-                    }
-                )
-            except Exception as e:
-                logger.warning(f'读取快照失败: {fname}: {e}')
-
-        snapshots.sort(key=lambda s: s.get('timestamp', ''))
-        return snapshots
-
-    @staticmethod
-    def load_snapshot(project_path: str, snapshot_id: str) -> dict:
-        """加载指定快照的蓝图数据"""
-        history_dir = SnapshotService.get_history_dir(project_path)
-        snapshot_path = os.path.join(history_dir, f'{snapshot_id}.json')
-        assert_safe_path(history_dir, snapshot_path)
-
-        if not os.path.exists(snapshot_path):
-            raise FileNotFoundError(f'快照不存在: {snapshot_id}')
-
-        with open(snapshot_path, encoding='utf-8') as f:
-            data = json.load(f)
-
-        # 哈希校验
-        blueprint = data.get('blueprint', {})
-        computed_hash = SnapshotService.compute_hash(blueprint)
-        if computed_hash != data.get('hash'):
-            raise ValueError(f'快照哈希校验失败: {snapshot_id}')
-
-        return blueprint
-
-    @staticmethod
-    def restore_snapshot(project_path: str, snapshot_id: str) -> dict:
-        """恢复到指定快照（先创建当前状态的快照）"""
-        # 先备份当前状态
-        from core.services.blueprint_service import BlueprintService
-
+        target = os.path.join(history_dir, snapshot_id + '.json')
+        fd, tmp_path = tempfile.mkstemp(prefix='snapshot_', suffix='.tmp', dir=history_dir)
         try:
-            current = BlueprintService.load_blueprint(project_path)
-            SnapshotService.create_snapshot(project_path, current)
-        except Exception as e:
-            logger.warning(f'恢复前备份失败: {e}')
+            with os.fdopen(fd, 'w', encoding='utf-8') as stream:
+                json.dump(record, stream, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, target)
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
 
-        # 加载并恢复快照
-        blueprint = SnapshotService.load_snapshot(project_path, snapshot_id)
-        BlueprintService.save_blueprint(project_path, blueprint)
-        logger.info(f'已恢复到快照: {snapshot_id}')
-        return blueprint
+        cls._prune(history_dir)
+        return {key: value for key, value in record.items() if key != 'blueprint'}
 
-    @staticmethod
-    def delete_snapshot(project_path: str, snapshot_id: str) -> bool:
-        """删除指定快照"""
-        history_dir = SnapshotService.get_history_dir(project_path)
-        snapshot_path = os.path.join(history_dir, f'{snapshot_id}.json')
-        assert_safe_path(history_dir, snapshot_path)
-
-        if os.path.exists(snapshot_path):
-            os.remove(snapshot_path)
-            return True
-        return False
-
-    @staticmethod
-    def verify_blueprint(project_path: str) -> dict:
-        """校验当前蓝图完整性"""
+    @classmethod
+    def capture_current(cls, project_path: str, reason: str = 'save') -> dict:
         from core.services.blueprint_service import BlueprintService
 
         blueprint = BlueprintService.load_blueprint(project_path)
-        content_hash = SnapshotService.compute_hash(blueprint)
-        return {'valid': True, 'hash': content_hash, 'timestamp': datetime.now().isoformat()}
-
-    @staticmethod
-    def _cleanup_old_snapshots(project_path: str):
-        """清理旧快照，保留最近 MAX_SNAPSHOTS 个"""
-        snapshots = SnapshotService.list_snapshots(project_path)
-        if len(snapshots) <= MAX_SNAPSHOTS:
-            return
-
-        to_delete = snapshots[: len(snapshots) - MAX_SNAPSHOTS]
-        for snap in to_delete:
+        auxiliary = {}
+        for filename in ('form_schema.json', 'context.json'):
+            path = os.path.join(project_path, filename)
+            if not os.path.isfile(path):
+                continue
             try:
-                os.remove(snap['path'])
-                logger.info(f'已清理旧快照: {snap["snapshot_id"]}')
-            except Exception as e:
-                logger.warning(f'清理快照失败: {snap["snapshot_id"]}: {e}')
+                with open(path, encoding='utf-8-sig') as stream:
+                    auxiliary[filename] = json.load(stream)
+            except (OSError, ValueError):
+                continue
+        if auxiliary:
+            blueprint['_auxiliary_files'] = auxiliary
+        return cls.create(project_path, blueprint, reason)
+
+    @classmethod
+    def list(cls, project_path: str) -> list[dict]:
+        history_dir = cls._history_dir(project_path)
+        records = []
+        for name in sorted(os.listdir(history_dir), reverse=True):
+            if not name.endswith('.json'):
+                continue
+            path = os.path.join(history_dir, name)
+            try:
+                with open(path, encoding='utf-8') as stream:
+                    record = json.load(stream)
+                records.append({key: value for key, value in record.items() if key != 'blueprint'})
+            except (OSError, ValueError):
+                continue
+        return records
+
+    @classmethod
+    def restore(cls, project_path: str, snapshot_id: str) -> dict:
+        safe_id = os.path.basename(str(snapshot_id or ''))
+        if safe_id != snapshot_id or not safe_id:
+            raise ValueError('快照 ID 无效')
+        path = os.path.join(cls._history_dir(project_path), safe_id + '.json')
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f'快照不存在: {snapshot_id}')
+        with open(path, encoding='utf-8') as stream:
+            record = json.load(stream)
+        blueprint = record.get('blueprint')
+        if not isinstance(blueprint, dict):
+            raise ValueError('快照内容损坏')
+
+        # 先记录当前状态，恢复动作本身可撤回。
+        cls.capture_current(project_path, reason='before_restore')
+        from core.services.blueprint_service import BlueprintService
+
+        auxiliary = blueprint.pop('_auxiliary_files', {}) if isinstance(blueprint.get('_auxiliary_files'), dict) else {}
+        BlueprintService.save_blueprint(project_path, blueprint, create_snapshot=False)
+        for filename, data in auxiliary.items():
+            if filename not in ('form_schema.json', 'context.json'):
+                continue
+            BlueprintService._safe_write(os.path.join(project_path, filename), data)
+        meta = BlueprintService.load_project_meta(project_path)
+        BlueprintService.save_project_meta(
+            project_path,
+            meta,
+            create_snapshot=True,
+            snapshot_reason=f'restore:{snapshot_id}',
+        )
+        restored = cls.list(project_path)[0]
+        return {'status': 'success', 'restored': restored}
+
+    @classmethod
+    def _prune(cls, history_dir: str):
+        files = sorted(
+            (name for name in os.listdir(history_dir) if name.endswith('.json')),
+            reverse=True,
+        )
+        sizes = {}
+        total = 0
+        for name in files:
+            try:
+                sizes[name] = os.path.getsize(os.path.join(history_dir, name))
+            except OSError:
+                sizes[name] = 0
+            total += sizes[name]
+        # ``files`` is newest-first.  Prune oldest first so the most recent
+        # recovery points survive both the count and disk-space policies.
+        retained = len(files)
+        for name in reversed(files):
+            if retained <= cls.MAX_SNAPSHOTS and total <= cls.MAX_BYTES:
+                break
+            try:
+                os.unlink(os.path.join(history_dir, name))
+                total = max(0, total - sizes[name])
+                retained -= 1
+            except FileNotFoundError:
+                retained -= 1

@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from core.db import get_connection, init_db
+from core.logging_model import infer_log_category
 
 logger = logging.getLogger(__name__)
 
@@ -17,16 +18,16 @@ class ExecutionDB:
     """执行记录 SQLite 持久化"""
 
     @staticmethod
-    def _ensure_db():
+    def _ensure_db(project_path: str | None = None):
         """确保数据库已初始化"""
         with contextlib.suppress(Exception):
-            init_db()
+            init_db(project_path)
 
     @staticmethod
     def create_execution(execution_id: str, project_path: str, task_id: str, start_node_id: str = None) -> bool:
         """创建执行记录"""
-        ExecutionDB._ensure_db()
-        conn = get_connection()
+        ExecutionDB._ensure_db(project_path)
+        conn = get_connection(project_path)
         try:
             now = datetime.now().isoformat()
             conn.execute(
@@ -81,7 +82,13 @@ class ExecutionDB:
             conn.close()
 
     @staticmethod
-    def add_log(execution_id: str, message: str, level: str = 'INFO', timestamp: str = None) -> bool:
+    def add_log(
+        execution_id: str,
+        message: str,
+        level: str = 'INFO',
+        timestamp: str = None,
+        category: str | None = None,
+    ) -> bool:
         """添加单条日志"""
         ExecutionDB._ensure_db()
         conn = get_connection()
@@ -94,8 +101,8 @@ class ExecutionDB:
             seq = (row['max_seq'] or 0) + 1 if row else 1
 
             conn.execute(
-                'INSERT INTO execution_logs (execution_id, seq, timestamp, level, message) VALUES (?, ?, ?, ?, ?)',
-                (execution_id, seq, ts, level, message),
+                'INSERT INTO execution_logs (execution_id, seq, timestamp, level, category, message) VALUES (?, ?, ?, ?, ?, ?)',
+                (execution_id, seq, ts, level, infer_log_category(message, category), message),
             )
             conn.commit()
             return True
@@ -121,9 +128,10 @@ class ExecutionDB:
                 ts = log_item.get('time') or datetime.now().isoformat()
                 msg = log_item.get('message', str(log_item)) if isinstance(log_item, dict) else str(log_item)
                 level = log_item.get('level', 'INFO') if isinstance(log_item, dict) else 'INFO'
+                category = log_item.get('category') if isinstance(log_item, dict) else None
                 conn.execute(
-                    'INSERT INTO execution_logs (execution_id, seq, timestamp, level, message) VALUES (?, ?, ?, ?, ?)',
-                    (execution_id, seq, ts, level, msg),
+                    'INSERT INTO execution_logs (execution_id, seq, timestamp, level, category, message) VALUES (?, ?, ?, ?, ?, ?)',
+                    (execution_id, seq, ts, level, infer_log_category(msg, category), msg),
                 )
                 seq += 1
 
@@ -145,7 +153,15 @@ class ExecutionDB:
                 'SELECT * FROM execution_logs WHERE execution_id = ? AND seq > ? ORDER BY seq ASC',
                 (execution_id, after_seq),
             ).fetchall()
-            return [{'time': r['timestamp'], 'level': r['level'], 'message': r['message']} for r in rows]
+            return [
+                {
+                    'time': r['timestamp'],
+                    'level': r['level'],
+                    'category': infer_log_category(r['message'], r['category']),
+                    'message': r['message'],
+                }
+                for r in rows
+            ]
         except Exception as e:
             logger.error(f'获取日志失败: {e}')
             return []

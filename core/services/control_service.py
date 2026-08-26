@@ -150,7 +150,7 @@ def _normalize_text(s) -> str:
 # ------------------------------------------------------------------ 窗口/控件枚举
 
 def _find_top_window(window_title: str):
-    """按标题精确匹配顶层窗口，返回第一个匹配句柄"""
+    """按标题精确匹配唯一顶层窗口；同名歧义时拒绝猜测。"""
     title = (window_title or '').strip()
     found = []
 
@@ -163,7 +163,7 @@ def _find_top_window(window_title: str):
         win32gui.EnumWindows(_top, None)
     except Exception:
         return None
-    return found[0] if found else None
+    return found[0] if len(found) == 1 else None
 
 
 def _enumerate_children(hwnd) -> list:
@@ -226,23 +226,24 @@ def find_control(
     except (TypeError, ValueError):
         index = 0
     deadline = time.time() + max(0, float(timeout_ms or 0)) / 1000.0
-    seen = 0
     tops_cache = None if window_title else _collect_top_windows()  # ⚡ 顶层窗口列表只枚举一次
     while time.time() < deadline:
+        matches_this_snapshot = []
         for hwnd in _collect_windows(window_title, tops_cache):
             info = build_control_info(hwnd)
             if matches(info, by, target):
-                if seen == index:
-                    info['match_index'] = seen
-                    return info
-                seen += 1
+                matches_this_snapshot.append(info)
+        if len(matches_this_snapshot) > index:
+            info = matches_this_snapshot[index]
+            info['match_index'] = index
+            return info
         time.sleep(0.05)
     return None
 
 
 # ------------------------------------------------------------------ 控件操作
 
-def perform_action(info: dict, action: str, text: str = '') -> dict:
+def perform_action(info: dict, action: str, text: str = '', allow_physical_fallback: bool = False) -> dict:
     """对控件执行操作；返回 {ok, value?, message}"""
     hwnd = info.get('hwnd')
     rect = info.get('rect') or [0, 0, 0, 0]
@@ -256,11 +257,38 @@ def perform_action(info: dict, action: str, text: str = '') -> dict:
         clicks = 2 if action == 'double_click' else 1
         result = background_click(hwnd, cx, cy, clicks=clicks)
         if not result.get('ok'):
-            return {'ok': False, 'message': result.get('message', '后台点击失败')}
-        return {'ok': True, 'message': f'{"双击" if clicks == 2 else "点击"}控件中心 ({cx}, {cy})'}
+            if not allow_physical_fallback:
+                return {'ok': False, 'delivery': 'blocked', 'message': result.get('message', '后台点击失败')}
+            try:
+                import pyautogui
+
+                pyautogui.click(int(cx), int(cy), clicks=clicks)
+                return {
+                    'ok': True,
+                    'method': 'physical',
+                    'delivery': 'delivered',
+                    'verified': False,
+                    'message': f'控件后台点击失败，已按项目设置回退物理点击 ({cx}, {cy})',
+                }
+            except Exception as exc:
+                return {'ok': False, 'method': 'physical', 'message': f'物理点击回退失败: {exc}'}
+        return {
+            'ok': True,
+            'delivery': 'delivered_unverified',
+            'verified': False,
+            'message': f'{"双击" if clicks == 2 else "点击"}控件中心 ({cx}, {cy})，效果未验证',
+        }
     if action == 'hover':
-        win32api.SetCursorPos((cx, cy))
-        return {'ok': True, 'message': f'悬停至控件中心 ({cx}, {cy})'}
+        from core.services.background_input import background_hover
+
+        result = background_hover(hwnd, cx, cy)
+        if result.get('ok') or not allow_physical_fallback:
+            return result
+        try:
+            win32api.SetCursorPos((cx, cy))
+            return {'ok': True, 'method': 'physical', 'message': f'后台悬停失败，已回退物理悬停 ({cx}, {cy})'}
+        except Exception as exc:
+            return {'ok': False, 'message': f'物理悬停失败: {exc}'}
     if action in ('get_text', 'get_value'):
         value = _safe_window_text(hwnd)
         return {'ok': True, 'value': value, 'message': f'读取控件文本: {value!r}'}

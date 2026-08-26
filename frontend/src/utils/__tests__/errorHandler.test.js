@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { handleError, ERROR_TYPES, withErrorHandling, confirmAction, safeCall } from '../errorHandler'
+import { handleError, ERROR_TYPES, withErrorHandling, safeCall } from '../errorHandler'
 
 // Mock Element Plus
 vi.mock('element-plus', () => ({

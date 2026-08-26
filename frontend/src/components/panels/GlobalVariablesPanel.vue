@@ -1,863 +1,94 @@
-<!-- frontend/src/components/panels/GlobalVariablesPanel.vue -->
 <template>
-    <div class="global-vars-panel">
-        <div class="accordion-container">
-<!-- 1. 第一行：用户自定义全局变量 -->
-            <div class="accordion-item" :class="{ 'is-expanded': expandedSection === 'user' }">
-                <div class="accordion-header" @click="toggleSection('user')">
-                    <div class="header-left">
-                        <span class="header-title">用户自定义全局变量</span>
-                        <span class="tab-badge">{{ userVarList.length }}</span>
-                    </div>
-                    <ChevronDown class="arrow-icon" :class="{ 'is-rotated': expandedSection === 'user' }" />
-                </div>
+    <section class="variables-panel">
+        <div class="variables-toolbar">
+            <label class="variable-search"><Search :size="14" /><input v-model="query" placeholder="搜索变量、表达式或说明" /><button v-if="query" type="button" title="清空搜索" @click="query = ''"><X :size="13" /></button></label>
+            <button type="button" class="toolbar-button primary" title="新建变量" @click="openCreateDialog"><Plus :size="15" /></button>
+            <el-dropdown trigger="click" @command="handleToolbarCommand"><button type="button" class="toolbar-button" title="更多操作"><MoreHorizontal :size="15" /></button><template #dropdown><el-dropdown-menu><el-dropdown-item command="clear-unused" :disabled="unusedVarCount === 0"><Trash2 :size="14" />清理未引用变量（{{ unusedVarCount }}）</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
+        </div>
 
-                <div v-show="expandedSection === 'user'" class="accordion-content">
-                    <!-- 工具栏：新建变量 + 清理未引用（配置客户表单/导出脚本包已移至顶栏「打包」菜单） -->
-                    <div class="vars-toolbar">
-                        <el-button size="small" type="primary" class="pure-btn btn-create" @click="openCreateDialog">
-                            <Plus class="btn-icon" />
-                            <span>新建变量</span>
-                        </el-button>
+        <div v-if="!query" class="variable-tabs" role="tablist" aria-label="变量分类">
+            <button v-for="tab in tabs" :key="tab.id" type="button" role="tab" :aria-selected="activeTab === tab.id" :class="{ active: activeTab === tab.id }" @click="activeTab = tab.id"><span>{{ tab.label }}</span><small v-if="tab.count !== null">{{ tab.count }}</small></button>
+        </div>
+        <div v-else class="search-summary">跨分类结果 <strong>{{ visibleRows.length }}</strong></div>
 
-                        <el-button
-size="small"
-                                   type="danger"
-                                   plain
-                                   class="pure-btn btn-clear-unused"
-                                   :disabled="unusedVarCount === 0"
-                                   @click="handleClearUnused">
-                            <Trash2 class="btn-icon" />
-                            <span>清理未引用 ({{ unusedVarCount }})</span>
-                        </el-button>
-                    </div>
-
-                    <!-- 用户变量列表 -->
-                    <div class="vars-list-scroll">
-                        <template v-if="userVarList.length">
-                            <div
-v-for="item in userVarList"
-                                 :key="item.key"
-                                 class="var-card-row">
-                                <!-- 左列：类型标识 Badge + 变量名 -->
-                                <div class="var-name-col">
-                                    <span class="type-badge" :class="`type-${item.type}`">{{ item.typeLabel }}</span>
-                                    <span class="var-name-text" :title="item.key">{{ item.key }}</span>
-                                </div>
-
-                                <!-- 中列：静态当前值预览 -->
-                                <div class="var-val-col">
-                                    <span class="static-val-text" :title="item.displayValue">{{ item.displayValue }}</span>
-                                </div>
-
-                                <!-- 右列：默认显示引用次数，悬停淡入操作按钮组 -->
-                                <div class="var-action-col">
-                                    <span class="ref-tag" :class="{ 'is-unused': item.refCount === 0 }">
-                                        {{ item.refCount > 0 ? `${item.refCount} 次引用` : '—' }}
-                                    </span>
-
-                                    <div class="hover-action-group">
-                                        <button type="button" class="icon-action-btn" title="复制表达式 $var{xxx}" @click.stop="copyVarExpr(item.key)">
-                                            <Copy class="lucide-svg" />
-                                        </button>
-                                        <button type="button" class="icon-action-btn" title="编辑变量" @click.stop="openEditDialog(item)">
-                                            <Pencil class="lucide-svg" />
-                                        </button>
-                                        <button type="button" class="icon-action-btn danger" title="删除变量" @click.stop="handleDeleteVar(item.key)">
-                                            <Trash2 class="lucide-svg" />
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </template>
-
-                        <div v-else class="empty-vars-tip">
-                            暂无自定义变量，请点击上方【新建变量】按钮创建
-                        </div>
-                    </div>
+        <div class="variable-list">
+            <div
+                v-for="row in visibleRows"
+                :key="`${row.kind}:${row.key}`"
+                class="variable-row"
+                :tabindex="row.kind === 'user' ? 0 : -1"
+                :role="row.kind === 'user' ? 'button' : undefined"
+                @keydown.enter="row.kind === 'user' && openEditDialog(row.source)"
+                @dblclick="row.kind === 'user' && openEditDialog(row.source)">
+                <div class="row-main"><code>{{ row.expression }}</code><span class="source-tag">{{ sourceLabels[row.kind] }}</span><span v-if="row.type" class="type-tag">{{ row.type }}</span></div>
+                <div class="row-detail"><span :title="row.value">{{ row.value }}</span><small :title="row.description">{{ row.description }}</small></div>
+                <div class="row-actions">
+                    <button type="button" title="复制表达式" @click.stop="copyExpression(row.expression)"><Copy :size="13" /></button>
+                    <button v-if="row.kind === 'user'" type="button" title="编辑变量" @click.stop="openEditDialog(row.source)"><Pencil :size="13" /></button>
+                    <button v-if="row.kind === 'user'" type="button" class="danger" title="删除变量" @click.stop="handleDeleteVar(row.key)"><Trash2 :size="13" /></button>
                 </div>
             </div>
+            <div v-if="!visibleRows.length" class="empty-state"><strong>{{ query ? '没有匹配变量' : emptyLabel }}</strong><span>{{ query ? '尝试名称、表达式或说明中的其他关键词。' : emptyHint }}</span><button v-if="activeTab === 'user' && !query" type="button" @click="openCreateDialog">新建变量</button></div>
+        </div>
 
-            <!-- 2. 第二行：运行上下文变量 ($ctx) -->
-            <div class="accordion-item" :class="{ 'is-expanded': expandedSection === 'ctx' }">
-                <div class="accordion-header" @click="toggleSection('ctx')">
-                    <div class="header-left">
-                        <span class="header-title">运行上下文变量 ($ctx)</span>
-                    </div>
-                    <ChevronDown class="arrow-icon" :class="{ 'is-rotated': expandedSection === 'ctx' }" />
-                </div>
-
-                <div v-show="expandedSection === 'ctx'" class="accordion-content">
-                    <div class="vars-list-scroll">
-                        <!-- 运行上下文只读展示（左键右值 + 复制），工作面板设置统一走顶部「工作面板」入口 -->
-                        <div class="ctx-readonly-hint">由顶部「工作面板」设置，此处只读展示，可复制表达式</div>
-                        <div
-v-for="item in ctxVarList"
-                             :key="item.field"
-                             class="var-card-row readonly-row">
-                            <div class="var-name-col" :title="item.label">
-                                <span class="var-name-text env-key">{{ item.token }}</span>
-                            </div>
-                            <div class="var-val-col">
-                                <span class="static-val-text" :title="item.value">{{ item.value }}</span>
-                            </div>
-                            <div class="var-action-col">
-                                <button type="button" class="icon-action-btn static-copy" title="复制表达式 $ctx{xxx}" @click.stop="copyCtxExpr(item.field)">
-                                    <Copy class="lucide-svg" />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 3. 第三行：系统环境变量 ($env) -->
-            <div class="accordion-item" :class="{ 'is-expanded': expandedSection === 'env' }">
-                <div class="accordion-header" @click="toggleSection('env')">
-                    <div class="header-left">
-                        <span class="header-title">系统环境变量 ($env)</span>
-                    </div>
-                    <ChevronDown class="arrow-icon" :class="{ 'is-rotated': expandedSection === 'env' }" />
-                </div>
-
-                <div v-show="expandedSection === 'env'" class="accordion-content">
-                    <div class="vars-list-scroll">
-                        <div
-v-for="env in systemEnvList"
-                             :key="env.key"
-                             class="var-card-row readonly-row">
-                            <div class="var-name-col">
-                                <span class="var-name-text env-key">{{ env.key }}</span>
-                            </div>
-                            <div class="var-desc-col">
-                                <span>{{ env.desc }}</span>
-                            </div>
-                            <div class="var-action-col">
-                                <button type="button" class="icon-action-btn static-copy" title="复制表达式 $env{xxx}" @click.stop="copyVarName(env.key)">
-                                    <Copy class="lucide-svg" />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-</div>
-
-        <!-- ⚡ 新建/编辑变量弹窗 -->
-        <el-dialog
-v-model="varDialogVisible"
-                   :title="isEditing ? `✏️ 编辑变量 [${editingKey}]` : '➕ 新建全局变量'"
-                   width="460px"
-                   append-to-body
-                   destroy-on-close
-                   :close-on-click-modal="false">
-            <div class="dialog-form-body">
-                <template v-for="(schema, field) in activeFormSchema" :key="field">
-                    <div class="form-item-wrapper">
-                        <ParamRenderer
-:config="schema"
-                                       :value="dialogFormPayload[field]"
-                                       :label="schema.label"
-                                       :context="dialogFormPayload"
-                                       @update="val => handleDialogParamUpdate(field, val)" />
-                    </div>
-                </template>
-            </div>
-
-            <template #footer>
-                <div class="dialog-footer">
-                    <el-button class="pure-btn" @click="varDialogVisible = false">
-                        <X class="btn-icon" />
-                        <span>取消</span>
-                    </el-button>
-                    <el-button type="primary" class="pure-btn" @click="confirmSaveVar">
-                        <Check class="btn-icon" />
-                        <span>确认保存</span>
-                    </el-button>
-                </div>
-            </template>
+        <el-dialog v-model="varDialogVisible" width="480px" append-to-body destroy-on-close :close-on-click-modal="false">
+            <template #header><div class="dialog-heading"><Pencil v-if="isEditing" :size="16" /><Plus v-else :size="16" /><span>{{ isEditing ? '编辑全局变量' : '新建全局变量' }}</span></div></template>
+            <div class="dialog-form-body"><ParamRenderer v-for="(schema, field) in activeFormSchema" :key="field" :config="schema" :value="dialogFormPayload[field]" :label="schema.label" :context="dialogFormPayload" @update="value => dialogFormPayload[field] = value" /></div>
+            <template #footer><el-button @click="varDialogVisible = false">取消</el-button><el-button type="primary" @click="confirmSaveVar">保存变量</el-button></template>
         </el-dialog>
-    </div>
+    </section>
 </template>
 
 <script setup>
-    import { ref, computed, reactive } from 'vue'
-    import { useMainStore } from '@/stores'
-    import { ElMessage, ElMessageBox } from 'element-plus'
-    import { Plus, Trash2, Copy, ChevronDown, Pencil, Check, X } from 'lucide-vue-next'
-    import ParamRenderer from '@/components/ParamRenderer.vue'
+import { computed, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Copy, MoreHorizontal, Pencil, Plus, Search, Trash2, X } from 'lucide-vue-next'
+import { useIdeStore } from '@/stores'
+import ParamRenderer from '@/components/ParamRenderer.vue'
 
-    const store = useMainStore()
-    const expandedSection = ref('user')
-
-    const toggleSection = (key) => {
-        expandedSection.value = expandedSection.value === key ? null : key
-    }
-
-    const varDialogVisible = ref(false)
-    const isEditing = ref(false)
-    const editingKey = ref('')
-
-    const dialogFormPayload = reactive({
-        name: '',
-        type: 'string',
-        value_number: 0,
-        value_string: '',
-        value_bool: false,
-        value_json: ''
-    })
-
-    const openCreateDialog = () => {
-        isEditing.value = false
-        editingKey.value = ''
-        dialogFormPayload.name = ''
-        dialogFormPayload.type = 'number'
-        dialogFormPayload.value_number = 0
-        dialogFormPayload.value_string = ''
-        dialogFormPayload.value_bool = false
-        dialogFormPayload.value_json = '[]'
-        varDialogVisible.value = true
-    }
-
-    const openEditDialog = (item) => {
-        isEditing.value = true
-        editingKey.value = item.key
-        dialogFormPayload.name = item.key
-        dialogFormPayload.type = item.type
-
-        if (item.type === 'number') dialogFormPayload.value_number = Number(item.value) || 0
-        else if (item.type === 'string') dialogFormPayload.value_string = String(item.value ?? '')
-        else if (item.type === 'boolean') dialogFormPayload.value_bool = Boolean(item.value)
-        else dialogFormPayload.value_json = JSON.stringify(item.value ?? (item.type === 'list' ? [] : {}), null, 2)
-
-        varDialogVisible.value = true
-    }
-
-    const activeFormSchema = computed(() => {
-        return {
-            name: {
-                type: 'str',
-                label: '变量名称',
-                placeholder: '仅支持字母、数字、下划线，如 run_count'
-            },
-            type: {
-                type: 'select',
-                label: '数据类型',
-                options: [
-                    { label: '数字 (Number)', value: 'number' },
-                    { label: '文本 (String)', value: 'string' },
-                    { label: '布尔 (Boolean)', value: 'boolean' },
-                    { label: '数组 (List)', value: 'list' },
-                    { label: '字典 (Dict)', value: 'dict' }
-                ]
-            },
-            value_number: {
-                type: 'int',
-                label: '初始数值',
-                default: 0,
-                visible_if: { field: 'type', operator: 'eq', value: 'number' }
-            },
-            value_string: {
-                type: 'str',
-                label: '初始文本',
-                default: '',
-                placeholder: '请输入初始字符串',
-                visible_if: { field: 'type', operator: 'eq', value: 'string' }
-            },
-            value_bool: {
-                type: 'bool',
-                label: '初始开关状态',
-                default: false,
-                visible_if: { field: 'type', operator: 'eq', value: 'boolean' }
-            },
-            value_json: {
-                type: 'textarea',
-                label: '初始 JSON 结构',
-                default: '',
-                placeholder: '列表如 ["a", "b"]；字典如 {"key": "val"}',
-                rows: 3,
-                visible_if: { field: 'type', operator: 'in', value: ['list', 'dict'] }
-            }
-        }
-    })
-
-    const handleDialogParamUpdate = (field, val) => {
-        dialogFormPayload[field] = val
-    }
-
-    const confirmSaveVar = async () => {
-        const name = dialogFormPayload.name ? dialogFormPayload.name.trim() : ''
-        if (!name) return ElMessage.warning('请输入变量名称')
-
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
-            return ElMessage.warning('变量名称只能包含字母、数字和下划线，且不能以数字开头')
-        }
-
-        if (!store.blueprint) store.blueprint = { variables: {} }
-        if (!store.blueprint.variables) store.blueprint.variables = {}
-
-        if (isEditing.value && editingKey.value && editingKey.value !== name) {
-            delete store.blueprint.variables[editingKey.value]
-        } else if (!isEditing.value && store.blueprint.variables[name] !== undefined) {
-            return ElMessage.warning('该变量名称已存在，请勿重复创建')
-        }
-
-        let parsedVal = ''
-        const type = dialogFormPayload.type
-
-        if (type === 'number') parsedVal = Number(dialogFormPayload.value_number) || 0
-        else if (type === 'string') parsedVal = String(dialogFormPayload.value_string ?? '')
-        else if (type === 'boolean') parsedVal = Boolean(dialogFormPayload.value_bool)
-        else if (type === 'list' || type === 'dict') {
-            try {
-                parsedVal = dialogFormPayload.value_json ? JSON.parse(dialogFormPayload.value_json) : (type === 'list' ? [] : {})
-            } catch {
-                return ElMessage.error('JSON 格式解析失败，请检查语法')
-            }
-        }
-
-        store.blueprint.variables[name] = parsedVal
-        await store.saveBlueprintImmediately()
-        ElMessage.success(`变量 [${name}] 保存成功`)
-        varDialogVisible.value = false
-    }
-
-    // ===== 运行上下文变量（$ctx）只读展示 =====
-    const ctxFieldList = [
-        { field: 'work_mode', label: '工作模式', token: '$ctx{work_mode}' },
-        { field: 'title', label: '窗口标题', token: '$ctx{title}' },
-        { field: 'is_emulator', label: '是否为模拟器', token: '$ctx{is_emulator}' },
-        { field: 'content_offset', label: '内容偏移', token: '$ctx{content_offset}' },
-        { field: 'target_content_size', label: '目标内容尺寸', token: '$ctx{target_content_size}' },
-    ]
-
-    const formatCtxValue = (val) => {
-        if (val === undefined || val === null || val === '') return '—'
-        if (Array.isArray(val) || typeof val === 'object') return JSON.stringify(val)
-        if (typeof val === 'boolean') return val ? 'True' : 'False'
-        return String(val)
-    }
-
-    // 工作面板设置统一走顶部「工作面板」入口，此处仅展示当前上下文值并支持复制
-    const ctxVarList = computed(() => ctxFieldList.map(m => ({
-        ...m,
-        value: formatCtxValue(getCtxFieldValue(m.field))
-    })))
-
-    const getCtxFieldValue = (field) => {
-        const ctx = store.currentContext || {}
-        switch (field) {
-            case 'work_mode': return ctx.workMode || 'window'
-            case 'title': return ctx.windowTitle || ''
-            case 'is_emulator': return !!ctx.isEmulator
-            case 'content_offset':
-                if (Array.isArray(ctx.contentOffset)) return ctx.contentOffset
-                return [ctx.offsetTop || 0, ctx.offsetBottom || 0, ctx.offsetLeft || 0, ctx.offsetRight || 0]
-            case 'target_content_size':
-                if (Array.isArray(ctx.targetSize)) return ctx.targetSize
-                return [ctx.targetWidth || 0, ctx.targetHeight || 0]
-            default: return ''
-        }
-    }
-
-    const systemEnvList = [
-        { key: '$env.current_time', desc: '系统当前时间戳 (ms)' },
-        { key: '$env.project_path', desc: '当前自动化项目根目录路径' },
-        { key: '$env.last_error', desc: '最近一次节点的运行报错信息' },
-        { key: '$env.loop_index', desc: '当前循环体内的索引序号' }
-    ]
-
-    const varReferenceCounts = computed(() => {
-        const counts = {}
-        const tasks = store.blueprint?.tasks || []
-
-        const scanObj = (obj) => {
-            if (!obj) return
-            if (typeof obj === 'string') {
-                // 新格式 $var{name} 与旧格式 {$var.name} / 裸 {name} 都计数
-                for (const varName of Object.keys(store.blueprint?.variables || {})) {
-                    if (obj === varName || obj.includes(`$var{${varName}}`) || obj.includes(`{${varName}}`) || obj.includes(`{$var.${varName}}`)) {
-                        counts[varName] = (counts[varName] || 0) + 1
-                    }
-                }
-            } else if (typeof obj === 'object') {
-                for (const val of Object.values(obj)) {
-                    scanObj(val)
-                }
-            }
-        }
-
-        tasks.forEach(t => {
-            (t.nodes || []).forEach(n => {
-                scanObj(n.params)
-            })
-        })
-
-        return counts
-    })
-
-    const getVarType = (val) => {
-        if (typeof val === 'boolean') return { type: 'boolean', label: 'BOOL' }
-        if (typeof val === 'number') return { type: 'number', label: 'NUM' }
-        if (Array.isArray(val)) return { type: 'list', label: 'LIST' }
-        if (typeof val === 'object' && val !== null) return { type: 'dict', label: 'DICT' }
-        return { type: 'string', label: 'STR' }
-    }
-
-    const formatDisplayValue = (val) => {
-        if (Array.isArray(val)) return `${val.length} 项 (List)`
-        if (typeof val === 'object' && val !== null) return `${Object.keys(val).length} 项 (Dict)`
-        if (typeof val === 'boolean') return val ? 'True' : 'False'
-        if (val === '' || val === undefined) return '—'
-        return String(val)
-    }
-
-    const userVarList = computed(() => {
-        const varsObj = store.blueprint?.variables || {}
-        const refs = varReferenceCounts.value
-
-        return Object.keys(varsObj).map(key => {
-            const val = varsObj[key]
-            const typeInfo = getVarType(val)
-            return {
-                key,
-                value: val,
-                type: typeInfo.type,
-                typeLabel: typeInfo.label,
-                displayValue: formatDisplayValue(val),
-                refCount: refs[key] || 0
-            }
-        })
-    })
-
-    const unusedVarCount = computed(() => {
-        return userVarList.value.filter(v => v.refCount === 0).length
-    })
-
-    const copyVarName = async (raw) => {
-        // 输入形如 $env.current_time / $sys.xxx → 复制为新格式 $env{current_time}
-        const m = String(raw || '').match(/^\$(env|sys)\.(.+)$/)
-        const text = m ? `$${m[1]}{${m[2]}}` : String(raw || '')
-        try {
-            await navigator.clipboard.writeText(text)
-            ElMessage.success(`已复制变量表达式: ${text}`)
-        } catch {
-            ElMessage.error('复制失败')
-        }
-    }
-
-    const copyVarExpr = async (varName) => {
-        const expr = `$var{${varName}}`
-        try {
-            await navigator.clipboard.writeText(expr)
-            ElMessage.success(`已复制变量表达式: ${expr}`)
-        } catch {
-            ElMessage.error('复制失败')
-        }
-    }
-
-    const copyCtxExpr = async (field) => {
-        const expr = `$ctx{${field}}`
-        try {
-            await navigator.clipboard.writeText(expr)
-            ElMessage.success(`已复制变量表达式: ${expr}`)
-        } catch {
-            ElMessage.error('复制失败')
-        }
-    }
-
-    const handleDeleteVar = async (varName) => {
-        try {
-            await ElMessageBox.confirm(
-                `确定要删除变量 [${varName}] 吗？删除后画布中对其引用的求值将失效。`,
-                '删除变量确认',
-                { confirmButtonText: '确定删除', cancelButtonText: '取消', type: 'warning' }
-            )
-            delete store.blueprint.variables[varName]
-            await store.saveBlueprintImmediately()
-            ElMessage.success(`已删除变量 [${varName}]`)
-        } catch {
-            /* 取消删除 */
-        }
-    }
-
-    const handleClearUnused = async () => {
-        const unusedList = userVarList.value.filter(v => v.refCount === 0).map(v => v.key)
-        if (unusedList.length === 0) return
-
-        try {
-            await ElMessageBox.confirm(
-                `确定要清理以下 ${unusedList.length} 个未引用的变量吗？\n${unusedList.join(', ')}`,
-                '清理确认',
-                { confirmButtonText: '确定清理', cancelButtonText: '取消', type: 'warning' }
-            )
-
-            unusedList.forEach(key => {
-                delete store.blueprint.variables[key]
-            })
-            await store.saveBlueprintImmediately()
-            ElMessage.success(`成功清理 ${unusedList.length} 个未引用变量`)
-        } catch (err) {
-            if (err !== 'cancel') ElMessage.error('清理失败')
-        }
-    }
+const store=useIdeStore()
+const activeTab=ref('user')
+const query=ref('')
+const varDialogVisible=ref(false)
+const isEditing=ref(false)
+const editingKey=ref('')
+const dialogFormPayload=reactive({name:'',type:'string',value_number:0,value_string:'',value_bool:false,value_json:''})
+const sourceLabels={user:'项目',ctx:'上下文',env:'系统'}
+const systemEnvList=[
+    {key:'current_time',desc:'系统当前时间戳（ms）'},
+    {key:'project_path',desc:'当前自动化项目根目录'},
+    {key:'last_error',desc:'最近一次节点的运行错误'},
+    {key:'loop_index',desc:'当前循环索引'}
+]
+const ctxFieldList=[
+    {field:'work_mode',label:'工作模式'}, {field:'title',label:'窗口标题'}, {field:'is_emulator',label:'模拟器模式'},
+    {field:'content_offset',label:'内容偏移'}, {field:'target_content_size',label:'目标内容尺寸'}
+]
+const getCtxFieldValue=field=>{const ctx=store.currentContext||{}; if(field==='work_mode')return ctx.workMode||'window';if(field==='title')return ctx.windowTitle||'—';if(field==='is_emulator')return !!ctx.isEmulator;if(field==='content_offset')return Array.isArray(ctx.contentOffset)?ctx.contentOffset:[ctx.offsetTop||0,ctx.offsetBottom||0,ctx.offsetLeft||0,ctx.offsetRight||0];if(field==='target_content_size')return Array.isArray(ctx.targetSize)?ctx.targetSize:[ctx.targetWidth||0,ctx.targetHeight||0];return '—'}
+const formatValue=value=>{if(value===undefined||value===null||value==='')return '—';if(typeof value==='boolean')return value?'True':'False';if(Array.isArray(value)||typeof value==='object')return JSON.stringify(value);return String(value)}
+const typeInfo=value=>{if(typeof value==='boolean')return ['boolean','BOOL'];if(typeof value==='number')return ['number','NUM'];if(Array.isArray(value))return ['list','LIST'];if(value&&typeof value==='object')return ['dict','DICT'];return ['string','STR']}
+const referenceCounts=computed(()=>{const counts={};const names=Object.keys(store.blueprint?.variables||{});const scan=value=>{if(typeof value==='string')names.forEach(name=>{if(value===name||value.includes(`$var{${name}}`)||value.includes(`$var.${name}`))counts[name]=(counts[name]||0)+1});else if(value&&typeof value==='object')Object.values(value).forEach(scan)};const graphs=[store.blueprint?.main_graph,...(store.blueprint?.functions||[]).map(item=>item.graph),store.blueprint?.page_map];graphs.forEach(graph=>(graph?.nodes||[]).forEach(node=>scan(node.params)));return counts})
+const userVarList=computed(()=>Object.entries(store.blueprint?.variables||{}).map(([key,value])=>{const [type,typeLabel]=typeInfo(value);return{key,value,type,typeLabel,displayValue:formatValue(value),refCount:referenceCounts.value[key]||0}}))
+const unusedVarCount=computed(()=>userVarList.value.filter(item=>item.refCount===0).length)
+const userRows=computed(()=>userVarList.value.map(item=>({kind:'user',key:item.key,expression:`$var{${item.key}}`,value:item.displayValue,description:item.refCount?`${item.refCount} 次引用`:'未引用',type:item.typeLabel,source:item})))
+const ctxRows=computed(()=>ctxFieldList.map(item=>({kind:'ctx',key:item.field,expression:`$ctx{${item.field}}`,value:formatValue(getCtxFieldValue(item.field)),description:item.label,type:''})))
+const envRows=computed(()=>systemEnvList.map(item=>({kind:'env',key:item.key,expression:`$env{${item.key}}`,value:'运行时提供',description:item.desc,type:''})))
+const allRows=computed(()=>[...userRows.value,...ctxRows.value,...envRows.value])
+const tabs=computed(()=>[{id:'user',label:'用户变量',count:userRows.value.length},{id:'ctx',label:'运行上下文',count:ctxRows.value.length},{id:'env',label:'系统变量',count:envRows.value.length}])
+const visibleRows=computed(()=>{const needle=query.value.trim().toLowerCase();const base=needle?allRows.value:({user:userRows.value,ctx:ctxRows.value,env:envRows.value}[activeTab.value]||[]);return needle?base.filter(row=>[row.expression,row.value,row.description,sourceLabels[row.kind]].join(' ').toLowerCase().includes(needle)):base})
+const emptyLabel=computed(()=>activeTab.value==='user'?'还没有用户变量':'没有可用变量')
+const emptyHint=computed(()=>activeTab.value==='user'?'创建变量后可在节点参数中复用。':'运行上下文建立后会在这里显示。')
+const activeFormSchema=computed(()=>({name:{type:'str',label:'变量名称',placeholder:'例如 run_count'},type:{type:'select',label:'数据类型',options:[{label:'数字',value:'number'},{label:'文本',value:'string'},{label:'布尔',value:'boolean'},{label:'数组',value:'list'},{label:'字典',value:'dict'}]},value_number:{type:'int',label:'初始数值',default:0,visible_if:{field:'type',operator:'eq',value:'number'}},value_string:{type:'str',label:'初始文本',default:'',placeholder:'输入初始字符串',visible_if:{field:'type',operator:'eq',value:'string'}},value_bool:{type:'bool',label:'初始状态',default:false,visible_if:{field:'type',operator:'eq',value:'boolean'}},value_json:{type:'textarea',label:'初始 JSON',default:'',placeholder:'数组如 ["a"]；字典如 {"key":"value"}',rows:4,visible_if:{field:'type',operator:'in',value:['list','dict']}}}))
+const resetDraft=()=>Object.assign(dialogFormPayload,{name:'',type:'string',value_number:0,value_string:'',value_bool:false,value_json:''})
+const openCreateDialog=()=>{isEditing.value=false;editingKey.value='';resetDraft();varDialogVisible.value=true}
+const openEditDialog=item=>{isEditing.value=true;editingKey.value=item.key;resetDraft();dialogFormPayload.name=item.key;dialogFormPayload.type=item.type;if(item.type==='number')dialogFormPayload.value_number=Number(item.value)||0;else if(item.type==='string')dialogFormPayload.value_string=String(item.value??'');else if(item.type==='boolean')dialogFormPayload.value_bool=Boolean(item.value);else dialogFormPayload.value_json=JSON.stringify(item.value??(item.type==='list'?[]:{}),null,2);varDialogVisible.value=true}
+const confirmSaveVar=async()=>{const name=String(dialogFormPayload.name||'').trim();if(!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name))return ElMessage.warning('名称需以字母或下划线开头，只能包含字母、数字和下划线');if(!isEditing.value&&store.blueprint?.variables?.[name]!==undefined)return ElMessage.warning('变量名称已存在');let value;if(dialogFormPayload.type==='number')value=Number(dialogFormPayload.value_number)||0;else if(dialogFormPayload.type==='string')value=String(dialogFormPayload.value_string??'');else if(dialogFormPayload.type==='boolean')value=Boolean(dialogFormPayload.value_bool);else{try{value=dialogFormPayload.value_json?JSON.parse(dialogFormPayload.value_json):(dialogFormPayload.type==='list'?[]:{})}catch{return ElMessage.error('JSON 格式无效')}}if(!store.blueprint.variables)store.blueprint.variables={};if(isEditing.value&&editingKey.value!==name)delete store.blueprint.variables[editingKey.value];store.blueprint.variables[name]=value;await store.saveBlueprintImmediately();varDialogVisible.value=false;ElMessage.success('变量已保存')}
+const copyExpression=async expression=>{try{await navigator.clipboard.writeText(expression);ElMessage.success(`已复制 ${expression}`)}catch{ElMessage.error('复制失败')}}
+const handleDeleteVar=async name=>{try{await ElMessageBox.confirm(`删除变量“${name}”？现有引用将失效。`,'删除变量',{type:'warning'});delete store.blueprint.variables[name];await store.saveBlueprintImmediately()}catch{}}
+const handleClearUnused=async()=>{const names=userVarList.value.filter(item=>item.refCount===0).map(item=>item.key);if(!names.length)return;try{await ElMessageBox.confirm(`删除 ${names.length} 个未引用变量？`,'清理未引用变量',{type:'warning'});names.forEach(name=>delete store.blueprint.variables[name]);await store.saveBlueprintImmediately();ElMessage.success('未引用变量已清理')}catch{}}
+const handleToolbarCommand=command=>{if(command==='clear-unused')handleClearUnused()}
 </script>
 
 <style scoped>
-    .global-vars-panel {
-        width: 100%;
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        background: var(--el-bg-color);
-        box-sizing: border-box;
-        overflow-y: auto;
-    }
-
-    .accordion-container {
-        display: flex;
-        flex-direction: column;
-        gap: 1px;
-        background: var(--el-border-color-light);
-    }
-
-    .accordion-item {
-        background: var(--el-bg-color);
-        display: flex;
-        flex-direction: column;
-    }
-
-    .accordion-header {
-        padding: 10px 12px;
-        background: rgba(25, 26, 38, 0.95);
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        user-select: none;
-        transition: background 0.2s;
-    }
-
-        .accordion-header:hover {
-            background: rgba(38, 40, 61, 0.8);
-        }
-
-    .header-left {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-
-    .header-title {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--el-text-color-primary);
-    }
-
-    .tab-badge {
-        font-size: 10px;
-        background: rgba(78, 209, 156, 0.15);
-        color: var(--el-color-primary);
-        padding: 1px 5px;
-        border-radius: 10px;
-    }
-
-    .arrow-icon {
-        width: 14px;
-        height: 14px;
-        color: var(--el-text-color-secondary);
-        transition: transform 0.2s ease;
-    }
-
-        .arrow-icon.is-rotated {
-            transform: rotate(180deg);
-            color: var(--el-color-primary);
-        }
-
-    .accordion-content {
-        display: flex;
-        flex-direction: column;
-        border-top: 1px solid var(--el-border-color-light);
-        background: var(--el-bg-color);
-    }
-
-    .vars-toolbar {
-        padding: 8px 12px;
-        display: flex;
-        gap: 8px;
-        border-bottom: 1px solid var(--el-border-color-light);
-        flex-shrink: 0;
-        flex-wrap: wrap;
-    }
-
-    /* 通用按钮（对话框 footer 等）基础样式 */
-    .pure-btn {
-        display: flex;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .btn-icon {
-        width: 13px;
-        height: 13px;
-    }
-
-    /* ⚡ 变量工具栏按钮统一风格：等高中距、图标对齐，主按钮实底突出、清理次按钮 */
-    .vars-toolbar .pure-btn {
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        gap: 5px;
-        min-height: 28px;
-        padding: 4px 12px;
-        border-radius: 6px;
-        font-weight: 500;
-        transition: all .15s;
-        margin: 0;
-    }
-
-    .vars-toolbar .btn-create {
-        background: var(--el-color-primary);
-        border-color: var(--el-color-primary);
-        color: #fff;
-        box-shadow: 0 2px 6px rgba(78, 209, 156, 0.25);
-    }
-
-        .vars-toolbar .btn-create:hover:not(:disabled) {
-            background: var(--el-color-primary-light-3);
-            border-color: var(--el-color-primary-light-3);
-            box-shadow: 0 3px 10px rgba(78, 209, 156, 0.35);
-        }
-
-    .vars-toolbar .btn-clear-unused {
-        background: rgba(245, 108, 108, 0.08);
-        border-color: rgba(245, 108, 108, 0.35);
-        color: #f56c6c;
-    }
-
-        .vars-toolbar .btn-clear-unused:hover:not(:disabled) {
-            background: #f56c6c;
-            border-color: #f56c6c;
-            color: #fff;
-        }
-
-    .vars-toolbar .pure-btn:disabled {
-        opacity: .4;
-        cursor: not-allowed;
-        box-shadow: none;
-    }
-
-    .vars-toolbar .btn-icon {
-        width: 13px;
-        height: 13px;
-    }
-
-    .vars-list-scroll {
-        padding: 10px 12px;
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-        max-height: 480px;
-        overflow-y: auto;
-    }
-
-    .var-card-row {
-        position: relative;
-        background: var(--el-fill-color-blank);
-        border: 1px solid var(--el-border-color-light);
-        border-radius: 6px;
-        padding: 8px 10px;
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 8px;
-        transition: border-color 0.2s, background-color 0.2s;
-    }
-
-        .var-card-row:hover {
-            border-color: var(--el-color-primary);
-            background-color: rgba(78, 209, 156, 0.03);
-        }
-
-    .var-name-col {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        width: 130px;
-        flex-shrink: 0;
-    }
-
-    .type-badge {
-        font-size: 9px;
-        font-weight: bold;
-        padding: 1px 4px;
-        border-radius: 3px;
-        color: #fff;
-        line-height: 1.2;
-        flex-shrink: 0;
-    }
-
-    .type-number {
-        background: #409eff;
-    }
-
-    .type-string {
-        background: #67c23a;
-    }
-
-    .type-boolean {
-        background: #e6a23c;
-    }
-
-    .type-list {
-        background: #909399;
-    }
-
-    .type-dict {
-        background: #f56c6c;
-    }
-
-    .var-name-text {
-        font-size: 12px;
-        font-weight: 600;
-        color: var(--el-text-color-primary);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-    }
-
-    .env-key {
-        color: var(--el-color-primary);
-    }
-
-    .var-val-col {
-        flex: 1;
-        text-align: center;
-        padding: 0 8px;
-        overflow: hidden;
-    }
-
-    .static-val-text {
-        font-size: 12px;
-        color: var(--el-text-color-regular);
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        display: block;
-    }
-
-    .var-action-col {
-        display: flex;
-        align-items: center;
-        justify-content: flex-end;
-        width: 90px;
-        flex-shrink: 0;
-    }
-
-    .ref-tag {
-        font-size: 10px;
-        color: var(--el-color-primary);
-        background: rgba(78, 209, 156, 0.1);
-        padding: 2px 6px;
-        border-radius: 4px;
-        white-space: nowrap;
-    }
-
-        .ref-tag.is-unused {
-            color: var(--el-text-color-placeholder);
-            background: transparent;
-        }
-
-    .hover-action-group {
-        display: none;
-        align-items: center;
-        gap: 4px;
-    }
-
-    .var-card-row:hover .ref-tag {
-        display: none;
-    }
-
-    .var-card-row:hover .hover-action-group {
-        display: flex;
-    }
-
-    .icon-action-btn {
-        background: transparent;
-        border: none;
-        color: var(--el-text-color-secondary);
-        cursor: pointer;
-        padding: 3px;
-        border-radius: 4px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        transition: all 0.2s;
-    }
-
-        .icon-action-btn:hover {
-            color: var(--el-color-primary);
-            background: rgba(255, 255, 255, 0.08);
-        }
-
-        .icon-action-btn.danger:hover {
-            color: var(--el-color-danger);
-            background: rgba(245, 108, 108, 0.15);
-        }
-
-        .icon-action-btn.static-copy {
-            opacity: 0;
-        }
-
-    .var-card-row:hover .icon-action-btn.static-copy {
-        opacity: 1;
-    }
-
-    .lucide-svg {
-        width: 13px;
-        height: 13px;
-    }
-
-    .readonly-row {
-        opacity: 0.9;
-    }
-
-    .var-desc-col {
-        flex: 1;
-        font-size: 11px;
-        color: var(--el-text-color-secondary);
-        text-align: right;
-        padding-right: 6px;
-    }
-
-    .empty-vars-tip {
-        font-size: 11px;
-        color: var(--el-text-color-placeholder);
-        text-align: center;
-        padding: 20px 0;
-        line-height: 1.6;
-    }
-
-    .ctx-readonly-hint {
-        font-size: 11px;
-        color: var(--el-text-color-placeholder);
-        padding: 2px 4px 4px;
-        line-height: 1.5;
-    }
-
-    .dialog-form-body {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-
-    .form-item-wrapper {
-        width: 100%;
-    }
-
-    .dialog-footer {
-        display: flex;
-        justify-content: flex-end;
-        gap: 10px;
-    }
+.variables-panel{height:100%;display:flex;flex-direction:column;overflow:hidden;background:var(--app-bg-sidebar)}.variables-toolbar{height:42px;display:flex;align-items:center;gap:5px;padding:7px 8px;border-bottom:1px solid var(--app-separator)}.variable-search{min-width:0;flex:1;height:28px;display:flex;align-items:center;gap:6px;padding:0 7px;border:1px solid var(--app-border-default);border-radius:6px;background:var(--app-bg-input);color:var(--app-text-secondary)}.variable-search:focus-within{border-color:var(--app-color-primary);box-shadow:var(--focus-ring)}.variable-search input{min-width:0;flex:1;border:0;outline:0;background:transparent;color:var(--app-text-primary);font-size:11px}.variable-search button,.toolbar-button,.row-actions button{display:grid;place-items:center;padding:0;border:0;background:transparent;color:var(--app-text-secondary);cursor:pointer}.variable-search button{width:20px;height:20px}.toolbar-button{width:28px;height:28px;border-radius:6px}.toolbar-button:hover{background:var(--app-bg-hover);color:var(--app-text-primary)}.toolbar-button.primary{background:var(--app-color-primary);color:var(--app-color-on-primary)}.variable-tabs{height:36px;display:grid;grid-template-columns:repeat(3,1fr);padding:4px 7px;border-bottom:1px solid var(--app-separator)}.variable-tabs button{min-width:0;display:flex;align-items:center;justify-content:center;gap:5px;border:0;border-radius:5px;background:transparent;color:var(--app-text-secondary);font-size:10.5px;cursor:pointer}.variable-tabs button.active{background:var(--app-bg-raised);color:var(--app-text-primary)}.variable-tabs small{padding:0 4px;border-radius:8px;background:var(--app-bg-hover);font-size:10px}.search-summary{padding:8px 10px;border-bottom:1px solid var(--app-separator);color:var(--app-text-secondary);font-size:10.5px}.search-summary strong{color:var(--app-text-primary)}.variable-list{flex:1;overflow:auto;padding:5px}.variable-row{width:100%;min-height:54px;display:flex;flex-direction:column;gap:5px;position:relative;padding:8px;border:0;border-radius:6px;background:transparent;color:inherit;text-align:left;cursor:default}.variable-row:hover{background:var(--app-bg-hover)}.row-main{min-width:0;display:flex;align-items:center;gap:5px;padding-right:68px}.row-main code{min-width:0;overflow:hidden;color:var(--app-text-primary);font-size:11px;text-overflow:ellipsis;white-space:nowrap}.source-tag,.type-tag{flex:0 0 auto;padding:1px 4px;border-radius:4px;background:var(--app-bg-raised);color:var(--app-text-secondary);font-size:10px}.row-detail{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;color:var(--app-text-secondary);font-size:10px}.row-detail span,.row-detail small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.row-actions{display:none;position:absolute;top:7px;right:7px;align-items:center;gap:2px}.variable-row:hover .row-actions,.variable-row:focus-within .row-actions{display:flex}.row-actions button{width:22px;height:22px;border-radius:4px}.row-actions button:hover{background:var(--app-bg-raised);color:var(--app-text-primary)}.row-actions button.danger:hover{color:var(--app-color-danger)}.empty-state{height:100%;min-height:180px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;padding:20px;text-align:center}.empty-state strong{font-size:12px}.empty-state span{max-width:220px;color:var(--app-text-secondary);font-size:10.5px;line-height:1.5}.empty-state button{margin-top:4px;border:0;background:transparent;color:var(--app-color-primary);cursor:pointer}.dialog-heading{display:flex;align-items:center;gap:7px}.dialog-form-body{display:flex;flex-direction:column;gap:2px}
 </style>

@@ -8,7 +8,7 @@ from .defaults import NODE_DEFAULTS
 PARAM_DEFINITIONS = {
     'control': {
         'label': '控件操作',
-        'modes': ['workflow'],
+        'modes': ['workflow', 'topology'],
         'params': {
             'target': {
                 # ⚡ capture_str：只读 textarea 展示捕获全部信息 + 「捕获控件/重置控件」按钮（前端专用控件）

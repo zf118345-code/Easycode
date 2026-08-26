@@ -26,22 +26,22 @@
             <marker
                 id="arrow-succ-right" viewBox="0 0 10 10" refX="9" refY="5"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="#4ed19c" />
+                <path d="M 0 0 L 10 5 L 0 10 z" fill="#3ba66b" />
             </marker>
             <marker
                 id="arrow-succ-left" viewBox="0 0 10 10" refX="1" refY="5"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 10 0 L 0 5 L 10 10 z" fill="#4ed19c" />
+                <path d="M 10 0 L 0 5 L 10 10 z" fill="#3ba66b" />
             </marker>
             <marker
                 id="arrow-succ-up" viewBox="0 0 10 10" refX="5" refY="1"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 10 L 5 0 L 10 10 z" fill="#4ed19c" />
+                <path d="M 0 10 L 5 0 L 10 10 z" fill="#3ba66b" />
             </marker>
             <marker
                 id="arrow-succ-down" viewBox="0 0 10 10" refX="5" refY="9"
                 markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-                <path d="M 0 0 L 5 10 L 10 0 z" fill="#4ed19c" />
+                <path d="M 0 0 L 5 10 L 10 0 z" fill="#3ba66b" />
             </marker>
 
             <!-- failure markers (red) -->
@@ -78,14 +78,29 @@
         <path v-if="gridPathMinor" :d="gridPathMinor" class="canvas-grid-line" />
         <path v-if="gridPathMajor" :d="gridPathMajor" class="canvas-grid-line canvas-grid-line-major" />
 
-        <!-- Edges group: each edge has 3 layers (hit / visible / flow) plus label -->
-        <g v-for="edge in edges" :key="edge.id" class="edge-group">
+        <!-- Edges group: hit target / base line / current-execution overlay / bridges / waypoints -->
+        <g
+            v-for="edge in edges"
+            :key="edge.id"
+            :class="[
+                'edge-group',
+                `is-focus-${edge.focusState || 'default'}`,
+                {
+                    'is-dimmed': edge.dimmed,
+                    'is-executing': edge.executing,
+                    'is-editing': editingEdgeId === edge.id
+                }
+            ]">
             <!-- Wide transparent hit target for easier clicking -->
             <path
                 v-if="edge.path"
                 :d="edge.path"
                 :class="['edge-hit-area', { 'is-selected': edge.selected }]"
-                @click.stop="$emit('edge-click', edge)" />
+                @click.stop="$emit('edge-click', edge)"
+                @dblclick.stop="$emit('edge-double-click', $event, edge)"
+                @contextmenu.stop.prevent="$emit('edge-contextmenu', $event, edge)"
+                @mouseenter="$emit('edge-hover', edge)"
+                @mouseleave="$emit('edge-hover', null)" />
 
             <!-- Visible edge -->
             <path
@@ -94,16 +109,47 @@
                 :class="['edge-path', {
                     'is-selected': edge.selected,
                     'is-failure': edge.isFail,
-                    'is-port-hovered': hoveredPort && edge.legacyPort === hoveredPort
+                    'is-port-hovered': hoveredPort && edge.sourcePort === hoveredPort
                 }]"
                 :marker-end="edge.markerUrl"
                 @click.stop="$emit('edge-click', edge)" />
 
-            <!-- Flow animation overlay -->
+            <!-- 只有当前真正执行中的边播放流动动画，静态画布不持续消耗合成资源。 -->
             <path
-                v-if="edge.path && !edge.selected"
+                v-if="edge.path && edge.executing"
                 :d="edge.path"
                 :class="['edge-flow-path', { 'is-failure': edge.isFail }]" />
+
+            <!-- Manual reroute points only appear for the edge being edited. -->
+            <g v-if="editingEdgeId === edge.id" class="edge-waypoints">
+                <circle
+                    v-for="(waypoint, waypointIndex) in edge.waypoints || []"
+                    :key="waypoint.id"
+                    :cx="waypoint.x"
+                    :cy="waypoint.y"
+                    r="6"
+                    class="edge-waypoint"
+                    role="button"
+                    tabindex="0"
+                    :aria-label="`转接点 ${waypointIndex + 1}，可拖动，方向键微调，Delete 删除`"
+                    @focus="$emit('waypoint-focus', edge, waypoint)"
+                    @mousedown.stop="$emit('waypoint-mousedown', $event, edge, waypoint, waypointIndex)" />
+            </g>
+        </g>
+
+        <!-- Bridges live in a final overlay so later base edges cannot paint over them. -->
+        <g class="edge-jump-layer" aria-hidden="true">
+            <g
+                v-for="edge in edges"
+                :key="`${edge.id}-jumps`"
+                :class="{ 'is-dimmed': edge.dimmed && !edge.executing }">
+                <template v-for="(jump, jumpIndex) in edge.jumpArcs || []" :key="`${edge.id}-jump-${jumpIndex}`">
+                    <path :d="jump.gapPath" class="edge-jump-gap" />
+                    <path
+                        :d="jump.bridgePath"
+                        :class="['edge-jump-bridge', { 'is-failure': edge.isFail }]" />
+                </template>
+            </g>
         </g>
 
         <!-- Live drag preview：无箭头，终点用连线颜色的发光球（松手后正常边恢复箭头） -->
@@ -131,10 +177,18 @@
         drawingConnection:{ type: Object, default: null },
         viewport:        { type: Object, default: () => ({ x: 0, y: 0, zoom: 1 }) },
         containerSize:   { type: Object, default: () => ({ width: 1200, height: 800 }) },
-        hoveredPort:     { type: String, default: '' }
+        hoveredPort:     { type: String, default: '' },
+        editingEdgeId:   { type: String, default: '' }
     })
 
-    defineEmits(['edge-click'])
+    defineEmits([
+        'edge-click',
+        'edge-hover',
+        'edge-double-click',
+        'edge-contextmenu',
+        'waypoint-focus',
+        'waypoint-mousedown'
+    ])
 
     const GRID_MAJOR_EVERY = 5       // 每 5 格一条主线
 
@@ -213,6 +267,6 @@
     // 预览线颜色：failure 红、其余成功绿（发光球同色）
     const isPreviewFailure = computed(() => {
         const t = props.drawingConnection?.portType
-        return t === 'fail' || t === 'failure'
+        return t === 'failure'
     })
 </script>

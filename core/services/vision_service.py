@@ -2,24 +2,66 @@
 import base64
 import json
 import os
-import re
 
 import pyautogui
 import win32gui
 from fastapi import HTTPException
 
-from core.security import assert_safe_path, atomic_write_json
+from core.security import assert_safe_path
+from core.services.asset_service import AssetService
+from core.services.template_library_service import TemplateLibraryService
+from core.utils import load_image
 
 CONTEXT_FILE = 'context.json'
-REGIONS_FILE_PATH = os.path.join('templates', 'regions.json')
 
 
 class VisionService:
     @staticmethod
+    def _capture_project_workspace(project_path: str | None):
+        """使用与运行引擎相同的目标绑定截取工作面板，失败时拒绝冒充全屏。"""
+        ctx = {}
+        if project_path:
+            from core.services.workspace_service import WorkspaceService
+
+            ctx = WorkspaceService.load_runtime_context(project_path)
+        # 局部导入以避免 WorkspaceService -> VisionService 的模块初始化环。
+        from core.services.workspace_service import WorkspaceService
+
+        image, _ = WorkspaceService._capture_context_image(ctx)
+        return image
+
+    @staticmethod
+    def _scale_region(region_value, reference_size, current_size):
+        """把录制时工作面板像素区域映射到当前工作面板。"""
+        values = list(region_value or [0, 0, 0, 0])
+        if len(values) != 4:
+            raise HTTPException(status_code=400, detail='识别区域必须是 [X, Y, W, H]')
+        try:
+            x, y, width, height = [float(value) for value in values]
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail='识别区域包含非数字坐标') from exc
+
+        ref = list(reference_size or [0, 0])
+        if len(ref) >= 2 and float(ref[0] or 0) > 0 and float(ref[1] or 0) > 0:
+            scale_x = float(current_size[0]) / float(ref[0])
+            scale_y = float(current_size[1]) / float(ref[1])
+            x, width = x * scale_x, width * scale_x
+            y, height = y * scale_y, height * scale_y
+
+        left, top = int(round(x)), int(round(y))
+        right, bottom = int(round(x + width)), int(round(y + height))
+        if left < 0 or top < 0 or right > current_size[0] or bottom > current_size[1] or right <= left or bottom <= top:
+            raise HTTPException(
+                status_code=400,
+                detail=f'识别区域超出当前工作面板: {[left, top, right - left, bottom - top]} / {list(current_size)}',
+            )
+        return left, top, right, bottom
+
+    @staticmethod
     def get_templates_tree(project_path: str) -> dict:
-        templates_dir = os.path.join(project_path, 'templates')
-        if not os.path.exists(templates_dir):
-            return {'tree': []}
+        templates_dir = AssetService.templates_dir(project_path)
+        if not os.path.isdir(templates_dir):
+            raise HTTPException(status_code=422, detail='项目资源目录不存在，请先修复项目')
 
         def build_tree(dir_path, relative_path=''):
             result = []
@@ -28,14 +70,13 @@ class VisionService:
                     item_path = os.path.join(dir_path, item)
                     if os.path.isdir(item_path):
                         child_rel_path = os.path.join(relative_path, item).replace('\\', '/')
-                        result.append(
-                            {
-                                'name': item,
-                                'type': 'directory',
-                                'id': child_rel_path,
-                                'children': build_tree(item_path, child_rel_path),
-                            }
-                        )
+                        result.append({
+                            'name': item,
+                            'type': 'directory',
+                            'id': child_rel_path,
+                            'protected': child_rel_path in TemplateLibraryService.PROTECTED_ROOTS,
+                            'children': build_tree(item_path, child_rel_path),
+                        })
             except Exception as e:
                 print(f'读取目录失败: {dir_path}, 错误: {e}')
             return result
@@ -45,7 +86,9 @@ class VisionService:
 
     @staticmethod
     def get_template_preview(project_path: str, relative_path: str = '') -> dict:
-        templates_dir = os.path.join(project_path, 'templates')
+        templates_dir = AssetService.templates_dir(project_path)
+        if not os.path.isdir(templates_dir):
+            raise HTTPException(status_code=422, detail='项目资源目录不存在，请先修复项目')
         full_target_dir = os.path.join(templates_dir, relative_path or '')
         target_dir = assert_safe_path(templates_dir, full_target_dir)
 
@@ -53,13 +96,20 @@ class VisionService:
             return {'images': []}
 
         images = []
+        registered = AssetService.metadata_for_directory(project_path, relative_path)
         try:
             for item in os.listdir(target_dir):
                 item_path = os.path.join(target_dir, item)
-                if os.path.isfile(item_path) and item.lower().endswith('.png'):
-                    with open(item_path, 'rb') as f:
-                        img_data = base64.b64encode(f.read()).decode('utf-8')
-                        images.append({'name': item, 'data': f'data:image/png;base64,{img_data}'})
+                if os.path.isfile(item_path) and item.lower().endswith(('.png', '.jpg', '.jpeg')):
+                    rel = '/'.join(part for part in (relative_path.strip('/'), item) if part)
+                    asset = registered.get(rel.casefold()) or {}
+                    images.append({
+                        'name': item,
+                        'relative_path': rel,
+                        'asset_id': asset.get('id', ''),
+                        'asset_ref': asset.get('asset_ref', ''),
+                        'kind': asset.get('kind', ''),
+                    })
         except Exception as e:
             print(f'读取预览失败: {e}')
 
@@ -69,32 +119,67 @@ class VisionService:
     def get_image_thumb_path(project_path: str, name: str) -> str:
         if not project_path or not name:
             raise HTTPException(status_code=400, detail='缺少参数')
+        try:
+            return AssetService.resolve(project_path, name)['full_path']
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-        clean_name = re.sub(r'\.png$', '', name, flags=re.IGNORECASE).replace('\\', '/')
-        templates_dir = os.path.join(project_path, 'templates')
+    @staticmethod
+    def register_template(project_path: str, relative_path: str, kind: str = '') -> dict:
+        try:
+            record = AssetService.register_file(project_path, relative_path, kind or None)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return {
+            'asset_id': record['id'],
+            'asset_ref': AssetService.reference(record['id']),
+            'path': record['path'],
+            'kind': record['kind'],
+        }
 
-        full_template_path = os.path.join(templates_dir, f'{clean_name}.png')
-        if os.path.exists(full_template_path):
-            return assert_safe_path(templates_dir, full_template_path)
-
-        file_name_only = os.path.basename(clean_name)
-        alt_paths = [
-            os.path.join(templates_dir, 'ocr', f'{file_name_only}.png'),
-            os.path.join(templates_dir, f'{file_name_only}.png'),
-        ]
-        for alt_path in alt_paths:
-            if os.path.exists(alt_path):
-                return assert_safe_path(templates_dir, alt_path)
-
-        raise HTTPException(status_code=404, detail='缩略图不存在')
+    @staticmethod
+    def resolve_template(project_path: str, reference: str) -> dict:
+        try:
+            resolved = AssetService.resolve(project_path, reference)
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        record = resolved.get('record') or {}
+        capture = record.get('capture') if isinstance(record.get('capture'), dict) else {}
+        return {
+            'asset_id': resolved.get('asset_id', ''),
+            'asset_ref': resolved.get('asset_ref', ''),
+            'path': resolved['relative_path'],
+            'key': resolved['key'],
+            'kind': record.get('kind') or AssetService.infer_kind(resolved['relative_path']),
+            'display_name': record.get('display_name') or os.path.basename(resolved['key']),
+            'width': record.get('width'),
+            'height': record.get('height'),
+            'capture': {
+                'region': list(capture.get('region') or []),
+                'reference_size': list(capture.get('reference_size') or []),
+                'coordinate_space': capture.get('coordinate_space') or 'workspace_px',
+            } if capture else None,
+        }
 
     @staticmethod
     def create_template_folder(project_path: str, parent_path: str, folder_name: str) -> dict:
         if not project_path or not folder_name:
             raise HTTPException(status_code=400, detail='文件夹名称不能为空')
 
-        templates_dir = os.path.join(project_path, 'templates')
-        full_target_dir = os.path.join(templates_dir, parent_path or '', folder_name)
+        try:
+            clean_name = TemplateLibraryService._validate_name(folder_name)
+            clean_parent = TemplateLibraryService._normalize_library_path(parent_path, allow_root=True)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if not clean_parent and clean_name not in TemplateLibraryService.PROTECTED_ROOTS:
+            raise HTTPException(status_code=400, detail='请先选择 image、ocr 或 page 分类，再新建子文件夹')
+        if clean_parent:
+            top = clean_parent.split('/', 1)[0]
+            if top not in TemplateLibraryService.PROTECTED_ROOTS:
+                raise HTTPException(status_code=400, detail='文件夹必须创建在 image、ocr 或 page 分类内')
+
+        templates_dir = AssetService.ensure_structure(project_path)
+        full_target_dir = os.path.join(templates_dir, clean_parent.replace('/', os.sep), clean_name)
         target_dir = assert_safe_path(templates_dir, full_target_dir)
 
         # ⚡ 修复：当文件夹已存在时静默返回 success，不再报 400 Bad Request 错误
@@ -105,33 +190,92 @@ class VisionService:
         return {'status': 'success'}
 
     @staticmethod
-    def get_regions(project_path: str) -> dict:
-        file_path = os.path.join(project_path, REGIONS_FILE_PATH)
-        if not os.path.exists(file_path):
-            return {}
+    def inspect_template_mutation(project_path: str, relative_path: str) -> dict:
         try:
-            with open(file_path, encoding='utf-8') as f:
-                return json.load(f)
-        except Exception:
-            return {}
+            return TemplateLibraryService.inspect(project_path, relative_path)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     @staticmethod
-    def save_region(project_path: str, template_name: str, crop_rect: list[int]) -> dict:
-        clean_name = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace('\\', '/')
-        file_name_only = os.path.basename(clean_name)
-        file_path = os.path.join(project_path, REGIONS_FILE_PATH)
+    def delete_template_entry(project_path: str, relative_path: str) -> dict:
+        try:
+            return TemplateLibraryService.delete(project_path, relative_path)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        regions = {}
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, encoding='utf-8') as f:
-                    regions = json.load(f)
-            except Exception:
-                regions = {}
+    @staticmethod
+    def move_template_entry(
+        project_path: str,
+        relative_path: str,
+        target_parent_path: str,
+        new_name: str = '',
+    ) -> dict:
+        try:
+            return TemplateLibraryService.move(
+                project_path, relative_path, target_parent_path, new_name,
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        regions[clean_name] = crop_rect
-        regions[file_name_only] = crop_rect
-        atomic_write_json(file_path, regions)
+    @staticmethod
+    def list_template_trash(project_path: str) -> dict:
+        return TemplateLibraryService.list_trash(project_path)
+
+    @staticmethod
+    def restore_template_entry(project_path: str, transaction_id: str) -> dict:
+        try:
+            return TemplateLibraryService.restore(project_path, transaction_id)
+        except FileExistsError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @staticmethod
+    def get_regions(project_path: str) -> dict:
+        regions: dict = {}
+        metadata: dict = {}
+        for asset_id, record in AssetService.load_registry(project_path).get('assets', {}).items():
+            capture = record.get('capture') if isinstance(record, dict) else None
+            if not isinstance(capture, dict) or not isinstance(capture.get('region'), list):
+                continue
+            reference = AssetService.reference(asset_id)
+            regions[reference] = capture['region']
+            metadata[reference] = {
+                'reference_size': capture.get('reference_size') or [0, 0],
+                'coordinate_space': capture.get('coordinate_space') or 'workspace_px',
+            }
+        if metadata:
+            regions['__meta__'] = metadata
+        return regions
+
+    @staticmethod
+    def save_region(
+        project_path: str,
+        template_name: str,
+        crop_rect: list[int],
+        reference_size: list[int] | tuple[int, int] | None = None,
+    ) -> dict:
+        if not AssetService.is_asset_reference(template_name):
+            raise ValueError('截图区域只能绑定到 asset:// 稳定资源引用')
+        AssetService.update_capture(project_path, template_name, {
+            'region': crop_rect,
+            'reference_size': list(reference_size or [0, 0])[:2],
+            'coordinate_space': 'workspace_px',
+        })
         return {'status': 'success'}
 
     @staticmethod
@@ -141,6 +285,7 @@ class VisionService:
         gray_scale: bool,
         gray_threshold: int,
         image_source: str | None = '',
+        region_reference_size: list[int] | None = None,
     ) -> dict:
         """
         ⚡ 极简精准测试逻辑：
@@ -156,49 +301,23 @@ class VisionService:
 
         # 1. 优先尝试加载选中的模板图片进行测试
         if project_path and image_source and image_source.strip():
-            clean_name = re.sub(r'\.png$', '', image_source.strip(), flags=re.IGNORECASE).replace('\\', '/')
-            templates_dir = os.path.join(project_path, 'templates')
+            try:
+                template_path = AssetService.resolve(project_path, image_source.strip())['full_path']
+            except (FileNotFoundError, ValueError):
+                template_path = ''
+            if template_path:
+                frame_bgr = load_image(template_path, cv2.IMREAD_COLOR)
 
-            template_path = os.path.join(templates_dir, f'{clean_name}.png')
-            if not os.path.exists(template_path):
-                file_name_only = os.path.basename(clean_name)
-                alt_paths = [
-                    os.path.join(templates_dir, 'ocr', f'{file_name_only}.png'),
-                    os.path.join(templates_dir, f'{file_name_only}.png'),
-                ]
-                for p in alt_paths:
-                    if os.path.exists(p):
-                        template_path = p
-                        break
-
-            if os.path.exists(template_path):
-                frame_bgr = cv2.imread(template_path, cv2.IMREAD_COLOR)
-
-        # 2. 兜底逻辑：如果未选模板图片或文件不存在，去屏幕区域实时截图
+        # 2. 兜底逻辑：如果未选模板图片或文件不存在，严格截取项目绑定的工作面板
         if frame_bgr is None:
-            if len(region_value) == 4 and region_value[2] > 0 and region_value[3] > 0:
-                x, y, w, h = region_value
-                context_path = os.path.join(project_path, CONTEXT_FILE) if project_path else None
-                if context_path and os.path.exists(context_path):
-                    try:
-                        with open(context_path, encoding='utf-8') as f:
-                            ctx = json.load(f)
-                        window_title = ctx.get('window_title')
-                        if window_title:
-                            hwnd = win32gui.FindWindow(None, window_title)
-                            if hwnd:
-                                client_rect = win32gui.GetClientRect(hwnd)
-                                wx, wy = win32gui.ClientToScreen(hwnd, (client_rect[0], client_rect[1]))
-                                x += wx + ctx.get('offset_left', 0)
-                                y += wy + ctx.get('offset_top', 0)
-                    except Exception:
-                        pass
-                region_rect = (int(x), int(y), int(w), int(h))
-            else:
-                screen_w, screen_h = pyautogui.size()
-                region_rect = (0, 0, screen_w, screen_h)
-
-            screenshot = pyautogui.screenshot(region=region_rect)
+            screenshot = VisionService._capture_project_workspace(project_path)
+            if len(region_value or []) == 4 and region_value[2] > 0 and region_value[3] > 0:
+                crop_box = VisionService._scale_region(
+                    region_value,
+                    region_reference_size,
+                    (screenshot.width, screenshot.height),
+                )
+                screenshot = screenshot.crop(crop_box)
             frame_bgr = cv2.cvtColor(np.array(screenshot), cv2.COLOR_RGB2BGR)
 
         # 3. 进行灰度与二值化处理
@@ -224,39 +343,70 @@ class VisionService:
         return {'status': 'success', 'text': detected_text, 'image': img_b64}
 
     @staticmethod
-    def test_image(project_path: str, template_name: str, gray_scale: bool, gray_threshold: int) -> dict:
-        clean_name = re.sub(r'\.png$', '', template_name, flags=re.IGNORECASE).replace('\\', '/')
-        templates_dir = os.path.join(project_path, 'templates')
-
-        template_path = os.path.join(templates_dir, f'{clean_name}.png')
-        if not os.path.exists(template_path):
-            file_name_only = os.path.basename(clean_name)
-            alt_paths = [
-                os.path.join(templates_dir, 'ocr', f'{file_name_only}.png'),
-                os.path.join(templates_dir, f'{file_name_only}.png'),
-            ]
-            template_path = None
-            for p in alt_paths:
-                if os.path.exists(p):
-                    template_path = p
-                    break
-
-            if not template_path:
-                return {'status': 'not_found', 'image': ''}
+    def test_image(
+        project_path: str, template_name: str, gray_scale: bool, gray_threshold: int,
+        region_type: str = 'fullwindow', region_value: list = None,
+        region_reference_size: list[int] | None = None,
+        preview_only: bool = False,
+    ) -> dict:
+        """图像识别测试：模板预览 + 工作区实时匹配（返回置信度与命中位置）。
+        ⚡ 区域匹配与执行引擎一致：优先按项目 context 定位工作区截图（region_value 为工作区相对坐标），
+        无窗口上下文时全屏截图兜底。"""
+        try:
+            template_path = AssetService.resolve(project_path, template_name)['full_path']
+        except (FileNotFoundError, ValueError):
+            return {'status': 'not_found', 'image': ''}
 
         import cv2
 
-        template_bgr = cv2.imread(template_path, cv2.IMREAD_COLOR)
-        if template_bgr is None:
+        try:
+            template_bgr = load_image(template_path, cv2.IMREAD_COLOR)
+        except FileNotFoundError:
             return {'status': 'read_error', 'image': ''}
 
+        # 属性面板中的二值化缩略图只处理模板本身，不读取实时工作窗口。
+        # 最小化检查仅属于主动“测试识别/截图捕获”，不能阻断普通文件选择。
         if gray_scale:
             gray = cv2.cvtColor(template_bgr, cv2.COLOR_BGR2GRAY)
             _, thresh = cv2.threshold(gray, gray_threshold, 255, cv2.THRESH_BINARY)
             processed_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
         else:
             processed_img = template_bgr
-
         _, buffer = cv2.imencode('.png', processed_img)
         img_b64 = 'data:image/png;base64,' + base64.b64encode(buffer).decode('utf-8')
-        return {'status': 'success', 'image': img_b64}
+        if preview_only:
+            return {
+                'status': 'success',
+                'image': img_b64,
+                'confidence': None,
+                'center_pos': None,
+            }
+
+        # ⚡ 实时匹配：工作区截图（与执行引擎坐标系一致）→ 区域裁剪 → 模板匹配
+        confidence = 0.0
+        center_pos = None
+        screen_img = None
+        from core.vision.memory_matcher import MemoryTemplateMatcher
+
+        screen_img = VisionService._capture_project_workspace(project_path)
+        screen_bgr = cv2.cvtColor(np.array(screen_img), cv2.COLOR_RGB2BGR)
+        rt = str(region_type or 'fullwindow').lower()
+        if rt == 'fullwindow':
+            rv = [0, 0, screen_bgr.shape[1], screen_bgr.shape[0]]
+        else:
+            left, top, right, bottom = VisionService._scale_region(
+                region_value,
+                region_reference_size,
+                (screen_bgr.shape[1], screen_bgr.shape[0]),
+            )
+            rv = [left, top, right - left, bottom - top]
+        confidence, center_pos = MemoryTemplateMatcher.match_in_memory(
+            screen_bgr=screen_bgr, template_bgr=template_bgr, region_type='custom', region_value=rv
+        )
+
+        return {
+            'status': 'success',
+            'image': img_b64,
+            'confidence': round(float(confidence or 0.0), 4),
+            'center_pos': list(center_pos) if center_pos else None,
+        }

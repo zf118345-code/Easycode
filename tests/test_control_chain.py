@@ -47,7 +47,7 @@ def test_chain_schema_loads_and_defaults():
     """A：schema 完整（label/modes/关键字段/默认值）"""
     ctrl = _control_schema()
     assert ctrl['label'] == '控件操作'
-    assert ctrl['modes'] == ['workflow']
+    assert ctrl['modes'] == ['workflow', 'topology']
     p = ctrl['params']
     assert set(p.keys()) >= {'action', 'by', 'target', 'window_title', 'index', 'timeout', 'control_info'}
     assert p['by']['default'] == 'uia_name'  # A1：默认 UIA 名称查找
@@ -97,7 +97,7 @@ def test_chain_execute_with_captured_params(monkeypatch):
         lambda **kw: {'name': '开始游戏', 'control_type': 'button', 'rect': [0, 0, 100, 40]})
     monkeypatch.setattr(
         uia_mod, 'perform_uia_action',
-        lambda info, action, text='': {'ok': True, 'message': 'UIA Invoke 触发控件'})
+        lambda info, action, text='', **kwargs: {'ok': True, 'message': 'UIA Invoke 触发控件'})
 
     ctx = FakeCtx()
     result = ControlNodeExecutor().execute(_make_node(params), ctx)
@@ -122,7 +122,7 @@ def test_chain_paste_format_inferred(monkeypatch):
         lambda **kw: {'name': '开始游戏', 'control_type': 'button', 'rect': [0, 0, 100, 40]})
     monkeypatch.setattr(
         uia_mod, 'perform_uia_action',
-        lambda info, action, text='': {'ok': True, 'message': 'ok'})
+        lambda info, action, text='', **kwargs: {'ok': True, 'message': 'ok'})
 
     ctx = FakeCtx()
     result = ControlNodeExecutor().execute(_make_node(params), ctx)
@@ -131,7 +131,7 @@ def test_chain_paste_format_inferred(monkeypatch):
 
 
 def test_chain_not_found_fails_through_failure_port(monkeypatch):
-    """D：查找不到 → 失败口（on_failure 跳转）"""
+    """D：查找不到时返回失败，图执行器随后选择 failure 实体边。"""
     from core.node_executors.base.control import ControlNodeExecutor
     from core.services import uia_service as uia_mod
 
@@ -142,8 +142,6 @@ def test_chain_not_found_fails_through_failure_port(monkeypatch):
     monkeypatch.setattr(uia_mod, 'find_control', lambda **kw: None)
 
     ctx = FakeCtx()
-    node = _make_node(params)
-    node.params['on_failure'] = {'target_node': 'fail_node'}
-    result = ControlNodeExecutor().execute(node, ctx)
+    result = ControlNodeExecutor().execute(_make_node(params), ctx)
     assert result['success'] is False
-    assert result.get('jump', {}).get('target_node') == 'fail_node'
+    assert 'jump' not in result

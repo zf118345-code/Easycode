@@ -1,9 +1,9 @@
 """节点执行器与参数默认值测试
 
 覆盖：
-1. click 执行器：(0,0) 视为未设置 → 告警跳过不点击
-2. wait 执行器：duration_ms（毫秒）与旧 seconds（秒）兼容
-3. variable_op 策略：op_action 单一操作方式（兼容旧 num_op/str_op/list_op）
+1. click 执行器：(0,0) 是合法工作区坐标，统一交给输入路由
+2. wait 执行器：duration_ms（毫秒）
+3. variable_op：自由表达式赋值
 4. schema 默认值：wait ms / variable_op 只读与去类型标签 / 灰度默认关闭
 """
 
@@ -12,9 +12,6 @@ import time
 import pytest
 
 from core.params import ALL_PARAMS
-from core.variables.types.list import ListVariableType
-from core.variables.types.number import NumberVariableType
-from core.variables.types.string import StringVariableType
 
 
 # ========== 测试用假 context ==========
@@ -32,6 +29,9 @@ class FakeCtx:
 
     def get_window_rect(self):
         return (0, 0, 100, 100)
+
+    def get_setting(self, key, default=None):
+        return default
 
     @property
     def is_emulator(self):
@@ -51,12 +51,16 @@ def make_node(params):
 # ========== click 执行器 ==========
 
 class TestClickExecutor:
-    def test_zero_coordinate_skips_click(self, monkeypatch):
-        """坐标 (0,0)（未设置）→ 告警并失败，不执行任何点击"""
+    def test_zero_coordinate_is_valid(self, monkeypatch):
+        """坐标 (0,0) 是合法工作区位置，不能再用它代表“未设置”。"""
         from core.node_executors.base import click as click_mod
 
         clicked = []
-        monkeypatch.setattr(click_mod.pyautogui, 'click', lambda *a, **k: clicked.append(a))
+        monkeypatch.setattr(click_mod, 'click_workspace', lambda ctx, x, y, **kwargs:
+                            clicked.append((x, y)) or {
+                                'ok': True, 'method': 'background', 'message': 'queued',
+                                'workspace_point': [x, y], 'screen_point': [x, y],
+                            })
 
         from core.node_executors.base.click import ClickNodeExecutor
 
@@ -64,16 +68,19 @@ class TestClickExecutor:
         node = make_node({'position': [0, 0]})
         result = ClickNodeExecutor().execute(node, ctx)
 
-        assert result['success'] is False
-        assert clicked == []
-        assert any('点击位置未设置' in m for m in ctx.logs)
+        assert result['success'] is True
+        assert clicked == [(0, 0)]
 
     def test_normal_position_clicks(self, monkeypatch):
-        """正常坐标 → 真实点击"""
+        """正常坐标 → 统一输入路由"""
         from core.node_executors.base import click as click_mod
 
         clicked = []
-        monkeypatch.setattr(click_mod.pyautogui, 'click', lambda *a, **k: clicked.append(a))
+        monkeypatch.setattr(click_mod, 'click_workspace', lambda ctx, x, y, **kwargs:
+                            clicked.append((x, y)) or {
+                                'ok': True, 'method': 'background', 'message': 'queued',
+                                'workspace_point': [x, y], 'screen_point': [x, y],
+                            })
 
         from core.node_executors.base.click import ClickNodeExecutor
 
@@ -83,6 +90,62 @@ class TestClickExecutor:
 
         assert result['success'] is True
         assert clicked == [(100, 200)]
+
+
+class TestImageRecognitionExecutor:
+    def test_missing_execution_mode_fails_before_loading_or_clicking(self):
+        from core.node_executors.base import image_recognition as image_mod
+
+        ctx = FakeCtx()
+        node = make_node({'image_source': 'asset://asset_test'})
+        executor = image_mod.ImageRecognitionNodeExecutor.__new__(image_mod.ImageRecognitionNodeExecutor)
+
+        result = executor.execute(node, ctx)
+
+        assert result['success'] is False
+        assert result['error'] == 'invalid execution mode'
+        assert any('运行模式无效或缺失' in message for message in ctx.logs)
+
+    def test_disk_asset_resolution_continues_to_match_and_returns_success(self, monkeypatch):
+        """asset:// 解析成功后必须继续加载和匹配，不能误报 template not found。"""
+        import numpy as np
+        from core.node_executors.base import image_recognition as image_mod
+
+        template = np.zeros((8, 8, 3), dtype=np.uint8)
+        screen = np.zeros((40, 40, 3), dtype=np.uint8)
+        monkeypatch.setattr(
+            image_mod.AssetService,
+            'resolve',
+            lambda project_dir, reference: {'full_path': r'D:\fake\template.png'},
+        )
+        monkeypatch.setattr(image_mod, 'load_image', lambda path: template)
+        monkeypatch.setattr(
+            image_mod,
+            'capture_workspace_region',
+            lambda context, region, reference_size: (screen, (0, 0, 40, 40)),
+        )
+        monkeypatch.setattr(image_mod, 'match_prepared_template_cv', lambda *args, **kwargs: (1.0, (10, 12)))
+        monkeypatch.setattr(image_mod, 'refresh_work_area', lambda context: (100, 200, 40, 40))
+
+        ctx = FakeCtx()
+        ctx.project_dir = r'D:\project'
+        ctx.image_log_enabled = False
+        ctx._memory_templates = {}
+        node = make_node({
+            'image_source': 'asset://asset_test',
+            'threshold': 85,
+            'timeout': 100,
+            'region_type': 'fullwindow',
+            'execution_mode': 'wait_present',
+        })
+
+        executor = image_mod.ImageRecognitionNodeExecutor.__new__(image_mod.ImageRecognitionNodeExecutor)
+        result = executor.execute(node, ctx)
+
+        assert result['success'] is True
+        assert result['confidence'] == 1.0
+        assert result['workspace_pos'] == (10, 12)
+        assert result['pos'] == (110, 212)
 
 
 # ========== wait 执行器 ==========
@@ -105,63 +168,6 @@ class TestWaitExecutor:
         assert slept == [1.0]
         assert '等待 1000 ms' in ctx.logs[0]
 
-    def test_legacy_seconds_compat(self, monkeypatch):
-        """旧数据 seconds（秒）→ 自动 ×1000 转为毫秒"""
-        from core.node_executors.base import wait as wait_mod
-
-        slept = []
-        monkeypatch.setattr(wait_mod.time, 'sleep', lambda s: slept.append(s))
-
-        from core.node_executors.base.wait import WaitNodeExecutor
-
-        ctx = FakeCtx()
-        node = make_node({'seconds': 2.0})
-        WaitNodeExecutor().execute(node, ctx)
-        assert slept == [2.0]  # 2.0 秒 → sleep 2.0s
-
-
-# ========== variable_op 策略：op_action 单一化 ==========
-
-class TestVariableOpAction:
-    def test_number_op_action(self):
-        ctx = FakeCtx({'base': 10})
-        # op_action=add + num_value 常量
-        assert NumberVariableType.execute('number', 5, {'op_action': 'add', 'num_value': '3'}, ctx) == 8
-        # op_action=set
-        assert NumberVariableType.execute('number', 5, {'op_action': 'set', 'num_value': '7'}, ctx) == 7
-        # 旧字段 num_op 兼容
-        assert NumberVariableType.execute('number', 5, {'num_op': 'mul', 'num_value': '2'}, ctx) == 10
-        # $var{} 前缀语法
-        assert NumberVariableType.execute('number', 1, {'op_action': 'add', 'num_value': '$var{base}'}, ctx) == 11
-        # 裸变量名不再识别
-        assert NumberVariableType.execute('number', 1, {'op_action': 'add', 'num_value': 'base'}, ctx) == 1
-
-    def test_string_op_action(self):
-        ctx = FakeCtx({'name': '世界'})
-        # 输入框自由填写：纯字符串 / {var} 变量
-        assert StringVariableType.execute('string', '你好', {'op_action': 'append', 'str_value': '!'}, ctx) == '你好!'
-        assert StringVariableType.execute('string', '你好', {'op_action': 'append', 'str_value': '$var{name}'}, ctx) == '你好世界'
-        assert StringVariableType.execute('string', '你好', {'op_action': 'set', 'str_value': '123'}, ctx) == '123'
-        # replace
-        assert StringVariableType.execute('string', 'a-b', {'op_action': 'replace', 'replace_find': '-', 'replace_with': '+'}, ctx) == 'a+b'
-        # 旧字段 str_op 兼容
-        assert StringVariableType.execute('string', 'x', {'str_op': 'set', 'str_value': 'y'}, ctx) == 'y'
-
-    def test_list_op_action(self):
-        ctx = FakeCtx()
-        assert ListVariableType.execute('list', [1, 2], {'op_action': 'push', 'list_item_value': '3'}, ctx) == [1, 2, 3]
-        assert ListVariableType.execute('list', [1, 2], {'op_action': 'pop'}, ctx) == [1]
-        assert ListVariableType.execute('list', [1, 2], {'op_action': 'clear'}, ctx) == []
-        join_ctx = FakeCtx({})
-        result = ListVariableType.execute(
-            'list', [1, 2],
-            {'op_action': 'join', 'list_join_delimiter': '-', 'list_join_target_var': 'joined'}, join_ctx)
-        assert result == [1, 2]            # 原数组不变
-        assert join_ctx.variables['joined'] == '1-2'   # 拼接结果写入目标文本变量
-        # 旧字段 list_op 兼容
-        assert ListVariableType.execute('list', [1], {'list_op': 'push', 'list_item_value': '9'}, ctx) == [1, 9]
-
-
 # ========== variable_op 表达式模式（new_value） ==========
 
 class TestVariableOpExpression:
@@ -183,6 +189,12 @@ class TestVariableOpExpression:
         })
         assert result['success'] is True
         assert ctx.variables['a'] == 13
+
+    def test_read_only_parameter_and_environment_cannot_be_assignment_targets(self):
+        for target in ('$param.amount', '$env{PATH}'):
+            ctx, result = self._run({}, {'target_var': target, 'new_value': '1'})
+            assert result['success'] is False
+            assert target not in ctx.variables
 
     def test_free_cross_variable(self):
         # 变量 b/c/d/e 互相加减乘除得到 a
@@ -242,17 +254,6 @@ class TestVariableOpExpression:
         })
         assert result['success'] is False
         assert any('求值失败' in log for log in ctx.logs)
-
-    def test_legacy_op_action_fallback(self):
-        # 旧蓝图节点：无 new_value 但有 op_action → 走旧策略
-        ctx, result = self._run({'x': 5}, {
-            'target_var': '$var{x}',
-            'op_action': 'add',
-            'num_value': '3',
-            'var_type': 'number',
-        })
-        assert result['success'] is True
-        assert ctx.variables['x'] == 8
 
     def test_no_value_skips(self):
         ctx, result = self._run({'x': 5}, {'target_var': '$var{x}'})

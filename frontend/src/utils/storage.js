@@ -114,7 +114,7 @@ export const storage = {
     },
 
     /**
-     * 直接存储原始字符串（不经 JSON 序列化，向后兼容）
+     * 直接存储原始字符串（不经 JSON 序列化）
      */
     setRaw(key, value) {
         try {

@@ -1,7 +1,11 @@
 # main.py
-import os
 import argparse
 import logging
+from pathlib import Path
+from core.services.dpi_service import enable_per_monitor_v2
+
+enable_per_monitor_v2()
+
 from core.executor import GraphExecutor
 from core.project_loader import load_project
 import core.node_executors  # 触发节点注册
@@ -14,19 +18,18 @@ def setup_logging():
 
 def main():
     parser = argparse.ArgumentParser(description="Easycode 自动化脚本 CLI 执行器")
-    parser.add_argument("--project", default="demo", help="项目名称或绝对路径")
-    parser.add_argument("--task", default="main_task", help="要运行的任务 ID")
+    parser.add_argument("--project", required=True, help="EasyCode 项目文件夹的绝对路径")
+    parser.add_argument("--task", required=True, help="要运行的任务 ID")
     args = parser.parse_args()
 
     setup_logging()
 
-    # 解析项目路径
-    if os.path.isabs(args.project) or os.path.exists(args.project):
-        project_dir = args.project
-    else:
-        project_dir = os.path.join("projects", args.project)
-
-    if not os.path.exists(project_dir):
+    supplied = Path(args.project).expanduser()
+    if not supplied.is_absolute():
+        logging.error("--project 必须是绝对路径；CLI 不会扫描工作目录或 projects 文件夹")
+        return
+    project_dir = str(supplied.resolve())
+    if not Path(project_dir).is_dir():
         logging.error(f"项目目录不存在: {project_dir}")
         return
 

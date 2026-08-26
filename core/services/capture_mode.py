@@ -24,14 +24,18 @@ logger = logging.getLogger(__name__)
 SETTINGS_FILE = 'settings.json'
 HOTKEY_DEFAULTS = {
     'enter_capture': 'ctrl+shift+c',      # 进入捕获模式（常驻全局热键）
+    'enter_screenshot': 'alt+q',          # 冻结工作面板（常驻全局热键）
     'copy_generate': 'ctrl+shift+enter',  # 生成节点（仅模式期间注册）
     'exit_mode': 'esc',                   # 退出模式（仅模式期间注册）
 }
 HK_ENTER_ID = 1   # 进入捕获模式
 HK_EXIT_ID = 2    # 退出捕获模式
 HK_COPY_ID = 3    # 复制生成节点
+HK_RECORD_EXIT_ID = 4  # 逐帧录制期间全局吞掉 Esc，并优先停止录制
+HK_SCREENSHOT_ID = 5  # 冻结工作面板截图（常驻）
 WM_APP_APPLY = win32con.WM_APP + 1
 WM_APP_DYN_HK = win32con.WM_APP + 2  # 投递到热键窗口线程：注册/注销模式期间热键（copy/exit）
+WM_APP_RECORD_HK = win32con.WM_APP + 3
 
 # ---------------- 全局状态 ----------------
 
@@ -63,25 +67,10 @@ def get_state() -> dict:
 
 # ------------------------------------------------------------------ 快捷键配置持久化 / 组合键解析
 
-# 项目根（固定路径，避免随启动目录漂移）
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-
 def _settings_path() -> str:
-    # ⚡ H1：固定到项目根（不依赖进程工作目录）；旧 cwd 位置存在时迁移
-    legacy = os.path.join(os.getcwd(), SETTINGS_FILE)
-    fixed = os.path.join(PROJECT_ROOT, SETTINGS_FILE)
-    if os.path.exists(legacy) and not os.path.exists(fixed):
-        try:
-            with open(legacy, encoding='utf-8') as f:
-                data = f.read()
-            with open(fixed, 'w', encoding='utf-8') as f:
-                f.write(data)
-            os.remove(legacy)
-            logger.info('快捷键配置已迁移到固定路径: %s', fixed)
-        except Exception:
-            pass
-    return fixed
+    from core.services.project_workspace_service import project_workspace_manager
+
+    return project_workspace_manager.settings_path
 
 
 # 配置内存缓存：低级钩子回调内绝不允许读磁盘（LL 钩子超时会被系统移除）
@@ -137,7 +126,7 @@ def parse_combo(combo: str):
             mods |= win32con.MOD_ALT
         elif p == 'win':
             mods |= win32con.MOD_WIN
-        elif len(p) == 1 and p.isalpha():
+        elif len(p) == 1 and p.isalnum():
             vk = ord(p.upper())
         else:
             vk = _VK_BY_NAME.get(p, 0)
@@ -158,7 +147,7 @@ def format_combo(mods: int, vk: int) -> str:
         parts.append('win')
     if vk in _VK_NAMES:
         parts.append(_VK_NAMES[vk])
-    elif 0x41 <= vk <= 0x5A:
+    elif 0x30 <= vk <= 0x39 or 0x41 <= vk <= 0x5A:
         parts.append(chr(vk).lower())
     else:
         parts.append(f'vk{vk}')
@@ -232,6 +221,7 @@ class _HotkeyWindow:
             None, None, hinst, None)
         hotkeys = load_hotkeys()
         self._do_register(HK_ENTER_ID, hotkeys.get('enter_capture', ''))
+        self._do_register(HK_SCREENSHOT_ID, hotkeys.get('enter_screenshot', ''))
         while True:
             res = win32gui.GetMessage(self._hwnd, 0, 0)
             if res is None or res[0] == 0 or res[1][2] == win32con.WM_QUIT:
@@ -243,11 +233,29 @@ class _HotkeyWindow:
         if m == win32con.WM_HOTKEY:
             # ⚡ 三热键分发：按 wParam（热键 id）区分
             if w == HK_ENTER_ID:
-                start_mode()
+                result = start_mode()
+                if not result.get('ok'):
+                    publish_event({'event': 'mode-error', 'message': result.get('message') or '控件捕获模式启动失败'})
+            elif w == HK_SCREENSHOT_ID:
+                # 截图和原生宿主启动不能阻塞热键消息窗口线程。
+                def trigger_capture():
+                    try:
+                        from core.services.capture_session_service import capture_session_service
+
+                        capture_session_service.trigger_global_capture()
+                    except Exception as exc:
+                        logger.warning('全局截图捕获启动失败: %s', exc)
+
+                threading.Thread(target=trigger_capture, daemon=True, name='capture-snapshot').start()
             elif w == HK_EXIT_ID:
                 _enqueue('exit')  # 退出在事件 worker 执行（不阻塞热键窗口线程）
             elif w == HK_COPY_ID:
                 _enqueue('copy')
+            elif w == HK_RECORD_EXIT_ID:
+                # 只投递停止信号，不能在热键窗口线程等待截图线程退出。
+                from core.services.frame_recording_service import frame_recording_service
+
+                frame_recording_service.request_stop('esc')
             return 0
         if m == WM_APP_APPLY:
             self._apply()
@@ -259,6 +267,17 @@ class _HotkeyWindow:
             else:
                 self._unregister_dynamic_hotkeys()
             return 0
+        if m == WM_APP_RECORD_HK:
+            if w:
+                self._do_register(HK_RECORD_EXIT_ID, 'esc')
+            else:
+                try:
+                    win32gui.UnregisterHotKey(self._hwnd, HK_RECORD_EXIT_ID)
+                except Exception:
+                    pass
+                with _state_lock:
+                    self._hk_state.pop(HK_RECORD_EXIT_ID, None)
+            return 0
         if m == win32con.WM_CLOSE:
             win32gui.PostQuitMessage(0)
             return 0
@@ -268,6 +287,16 @@ class _HotkeyWindow:
         """任意线程调用：投递到热键窗口线程注册/注销模式期间热键（copy+exit）"""
         if self._hwnd:
             win32gui.PostMessage(self._hwnd, WM_APP_DYN_HK, 1 if enable else 0, 0)
+
+    def request_recording_escape(self, enable: bool):
+        """在热键窗口线程注册/注销录制专用 Esc。"""
+        if self._hwnd:
+            win32gui.PostMessage(self._hwnd, WM_APP_RECORD_HK, 1 if enable else 0, 0)
+
+    def recording_escape_state(self):
+        with _state_lock:
+            value = self._hk_state.get(HK_RECORD_EXIT_ID)
+            return list(value) if value else None
 
     def _register_dynamic_hotkeys(self):
         hotkeys = load_hotkeys()
@@ -314,28 +343,38 @@ class _HotkeyWindow:
         msg = '；'.join(s[2] for s in states if s[2])
         return ok, msg
 
-    def apply_new(self, combo: str):
+    def apply_new(self, combo: str, key: str = 'enter_capture'):
         """外部（API 线程）调用：投递到热键窗口线程重注册 + 冲突检测"""
         with _state_lock:
-            self._apply_pending = combo
+            self._apply_pending = {'key': key, 'combo': combo}
             self._apply_result = None
         if self._hwnd:
             win32gui.PostMessage(self._hwnd, WM_APP_APPLY, 0, 0)
 
     def _apply(self):
-        combo = self._apply_pending
+        pending = self._apply_pending or {}
+        combo = pending.get('combo')
+        key = pending.get('key') or 'enter_capture'
         if not combo:
             return
         hotkeys = load_hotkeys()
-        hotkeys['enter_capture'] = combo
-        save_hotkeys(hotkeys)
-        self._do_register(HK_ENTER_ID, combo)
+        previous_combo = hotkeys.get(key, '')
+        hotkey_id = HK_SCREENSHOT_ID if key == 'enter_screenshot' else HK_ENTER_ID
+        self._do_register(hotkey_id, combo)
         ok, msg = self.hotkey_state()
+        if ok:
+            hotkeys[key] = combo
+            save_hotkeys(hotkeys)
+        else:
+            # RegisterHotKey unregisters the old binding before trying the new
+            # one, so restore it on conflict and keep persisted settings intact.
+            self._do_register(hotkey_id, previous_combo)
         with _state_lock:
             self._apply_result = {
                 'ok': ok,
                 'message': msg or f'已应用快捷键: {combo}',
                 'combo': combo,
+                'key': key,
             }
 
     def get_apply_result(self) -> dict:
@@ -355,7 +394,9 @@ def subscribe_events() -> 'queue.Queue':
     连上后不知道当前是否激活（悬浮窗"未运行也悬浮"的根因之一）。"""
     q = queue.Queue()
     with _state_lock:
-        q.put_nowait({'event': 'mode', 'active': _active})
+        active = _active
+    q.put_nowait({'event': 'mode', 'active': active})
+    with _sub_lock:
         _event_subscribers.append(q)
     return q
 
@@ -639,6 +680,38 @@ def _cancel_auto_exit():
 
 def start_mode() -> dict:
     """启动捕获模式（零模态、零钩子；幂等）。"""
+    try:
+        from core.services.project_workspace_service import project_workspace_manager
+
+        active = project_workspace_manager.active()
+        if not active:
+            return {'ok': False, 'message': '请先打开一个项目'}
+        if active.get('read_only'):
+            return {'ok': False, 'message': '项目以只读方式打开，不能进入捕获模式'}
+    except Exception as exc:
+        return {'ok': False, 'message': f'当前项目状态无法确认: {exc}'}
+    try:
+        from core.services.execution_service import ExecutionService
+
+        if ExecutionService.has_active_execution():
+            return {'ok': False, 'message': '请先停止当前任务'}
+    except Exception:
+        pass
+    try:
+        from core.services.capture_session_service import capture_session_service
+
+        if capture_session_service.is_capture_active():
+            return {'ok': False, 'message': '请先退出截图捕获模式'}
+    except Exception:
+        pass
+    # 录制期间 Esc 必须专属于录制，不能同时进入控件捕获模式争抢热键。
+    try:
+        from core.services.frame_recording_service import frame_recording_service
+
+        if frame_recording_service.get_state().get('active'):
+            return {'ok': False, 'message': '逐帧录制正在运行，请先按 Esc 停止录制'}
+    except Exception:
+        pass
     global _hover_stop, _last_result, _selected, _active
     with _state_lock:
         if _active:
@@ -696,10 +769,35 @@ def ensure_hotkey_thread():
     threading.Thread(target=window.run, daemon=True, name='capture-hotkey').start()
 
 
-def apply_enter_hotkey(combo: str) -> dict:
-    """动态修改「进入捕获」快捷（带冲突检测）；幂等"""
+def set_recording_escape_enabled(enable: bool, timeout: float = 1.0) -> dict:
+    """录制服务使用：同步确认全局 Esc 已注册，确保激活目标窗口前拦截已生效。"""
+    ensure_hotkey_thread()
+    deadline = time.time() + max(0.1, float(timeout))
+    while time.time() < deadline:
+        hw = _hotkey_window
+        if hw is not None and hw._hwnd:
+            break
+        time.sleep(0.01)
+    hw = _hotkey_window
+    if hw is None or not hw._hwnd:
+        return {'ok': False, 'message': '全局热键窗口尚未就绪'}
+
+    hw.request_recording_escape(enable)
+    while time.time() < deadline:
+        state = hw.recording_escape_state()
+        if not enable and state is None:
+            return {'ok': True, 'message': '录制 Esc 已释放'}
+        if enable and state is not None:
+            return {'ok': bool(state[1]), 'message': state[2] or '录制 Esc 已接管'}
+        time.sleep(0.01)
+    action = '释放' if not enable else '注册'
+    return {'ok': False, 'message': f'全局 Esc {action}超时'}
+
+
+def apply_enter_hotkey(combo: str, key: str = 'enter_capture') -> dict:
+    """动态修改常驻快捷键（控件捕获或冻结截图；带冲突检测）。"""
     if _hotkey_window is not None:
-        _hotkey_window.apply_new(combo)
+        _hotkey_window.apply_new(combo, key)
     return {'ok': True, 'pending': True}
 
 

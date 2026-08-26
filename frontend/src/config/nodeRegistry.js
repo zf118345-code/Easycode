@@ -1,5 +1,5 @@
 // frontend/src/config/nodeRegistry.js
-// 统一节点注册表：流程（workflow）与拓扑（topology）两模式共用的一套可配置节点定义。
+// 统一节点注册表：主流程、函数与页面地图共用的一套可配置节点定义。
 // 数据来源分层：
 //   - label / modes（可用画布白名单）：以后端 /api/params 配置为准（单一数据源，部署可配）；
 //   - icon / color / content（外观与内容区渲染规则）：保留前端（icon 是组件引用、content 是渲染规则）。
@@ -13,17 +13,23 @@
 
 export const NODE_REGISTRY = {
     click:             { label: '鼠标点击',       icon: 'MousePointerClick', color: '#409eff', modes: ['workflow', 'topology'], content: null },
+    scroll:            { label: '滚动',           icon: 'Mouse',             color: '#3b82f6', modes: ['workflow', 'topology'], content: null },
+    drag:              { label: '拖拽 / 长按',    icon: 'Move',              color: '#0ea5e9', modes: ['workflow', 'topology'], content: null },
+    text_input:        { label: '文本输入',       icon: 'Keyboard',          color: '#14b8a6', modes: ['workflow', 'topology'], content: null },
     wait:              { label: '等待',           icon: 'Timer',             color: '#e6a23c', modes: ['workflow', 'topology'], content: null },
-    log:               { label: '日志输出',       icon: 'ScrollText',        color: '#909399', modes: ['workflow'],            content: null },
+    log:               { label: '日志输出',       icon: 'ScrollText',        color: '#909399', modes: ['workflow', 'topology'], content: null },
     image_recognition: { label: '图像识别',       icon: 'Image',             color: '#67c23a', modes: ['workflow', 'topology'], content: { kind: 'image', minHeight: 80 } },
     ocr_recognition:   { label: '文字识别 (OCR)', icon: 'Type',              color: '#9b59b6', modes: ['workflow', 'topology'], content: { kind: 'ocr', minHeight: 60 } },
-    branch:            { label: '分支选择',       icon: 'GitBranch',         color: '#f56c6c', modes: ['workflow'],            content: { kind: 'branch-candidates', rowHeight: 24, rowGap: 4, rowPadding: 12 } },
-    logic_check:       { label: '逻辑判断',       icon: 'Filter',            color: '#fd7e14', modes: ['workflow'],            content: null },
-    variable_op:       { label: '变量操作',       icon: 'Variable',          color: '#17a2b8', modes: ['workflow'],            content: null },
-    script_call:       { label: '调用脚本',       icon: 'Code',              color: '#6f42c1', modes: ['workflow'],            content: null },
-    set_window:        { label: '窗口设置',       icon: 'AppWindow',         color: '#20c997', modes: ['workflow'],            content: null },
-    control:           { label: '控件操作',       icon: 'ScanSearch',        color: '#00bcd4', modes: ['workflow'],            content: null },
-    page_state:        { label: '页面状态',       icon: 'MapPin',            color: '#4ed19c', modes: ['topology'],            content: { kind: 'page-info', lineHeight: 20, rowPadding: 12, exitRowHeight: 24, exitRowGap: 4 } },
+    branch:            { label: '分支选择',       icon: 'GitBranch',         color: '#f56c6c', modes: ['workflow', 'topology'], content: { kind: 'branch-candidates', rowHeight: 24, rowGap: 4, rowPadding: 12 } },
+    logic_check:       { label: '逻辑判断',       icon: 'Filter',            color: '#fd7e14', modes: ['workflow', 'topology'], content: null },
+    variable_op:       { label: '变量操作',       icon: 'Variable',          color: '#17a2b8', modes: ['workflow', 'topology'], content: null },
+    script_call:       { label: '调用能力',       icon: 'Code',              color: '#6f42c1', modes: ['workflow', 'topology', 'function'], content: null },
+    call_function:     { label: '调用函数',       icon: 'Braces',            color: '#7c5cff', modes: ['workflow', 'function'], content: null },
+    function_entry:    { label: '函数入口',       icon: 'LogIn',             color: '#16a085', modes: ['function'], content: null },
+    function_return:   { label: '函数返回',       icon: 'CornerDownLeft',    color: '#e67e22', modes: ['function'], content: null },
+    set_window:        { label: '设置窗口',       icon: 'AppWindow',         color: '#20c997', modes: ['workflow', 'topology'], content: null },
+    control:           { label: '控件操作',       icon: 'ScanSearch',        color: '#00bcd4', modes: ['workflow', 'topology'], content: null },
+    page_state:        { label: '页面状态',       icon: 'MapPin',            color: '#3ba66b', modes: ['topology'],            content: { kind: 'page-info', lineHeight: 20, rowPadding: 12, exitRowHeight: 24, exitRowGap: 4 } },
     smart_jump:        { label: '智能跳转',       icon: 'Navigation',        color: '#ff6b6b', modes: ['workflow'],            content: null }
 }
 
@@ -51,7 +57,7 @@ export function getNodeConfig(nodeType, backendDefs) {
 /**
  * 某画布模式可用的节点类型映射 { type: label }（菜单/新建节点用）
  * modes 与 label 以后端 /api/params 配置为准，前端表兜底；后端新增类型自动出现在白名单
- * @param {string} mode 'workflow' | 'topology'
+ * @param {string} mode 'workflow' | 'function' | 'topology'
  * @param {Object} [backendDefs] 后端参数定义（projectStore.paramsDefinitions）
  */
 export function getNodeTypesForMode(mode, backendDefs) {
@@ -64,7 +70,12 @@ export function getNodeTypesForMode(mode, backendDefs) {
         const backend = backendDefs && backendDefs[type]
         const cfg = NODE_REGISTRY[type]
         const modes = backend?.modes || cfg?.modes
-        if (!modes || !modes.includes(mode)) continue
+        const allowed = mode === 'function'
+            ? (modes?.includes('function') || modes?.includes('workflow'))
+            : modes?.includes(mode)
+        if (!modes || !allowed) continue
+        if (mode === 'workflow' && ['function_entry', 'function_return'].includes(type)) continue
+        if (mode === 'function' && type === 'function_entry') continue
         result[type] = backend?.label || cfg?.label || type
     }
     return result

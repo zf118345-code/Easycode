@@ -2,19 +2,22 @@
 <template>
     <div class="activity-bar" :class="position">
         <el-tooltip
-v-for="item in items"
+v-for="(item, index) in items"
                     :key="item.id"
                     effect="dark"
                     :content="item.title"
-                    placement="right"
+                    :placement="position === 'right' ? 'left' : 'right'"
                     :show-after="300"
                     popper-class="ide-sidebar-tooltip">
-            <div
-class="activity-icon-item"
-                 :class="{ 'is-active': activeId === item.id }"
+            <button
+type="button"
+                 class="activity-icon-item"
+                 :class="{ 'is-active': activeId === item.id, 'is-section-start': index > 0 && items[index - 1]?.group !== item.group }"
+                 :aria-label="item.title"
+                 :aria-pressed="activeId === item.id"
                  @click="$emit('select', item.id)">
                 <component :is="item.icon" class="act-svg" />
-            </div>
+            </button>
         </el-tooltip>
     </div>
 </template>
@@ -31,7 +34,7 @@ class="activity-icon-item"
 
 <style scoped>
     .activity-bar {
-        background: #181926;
+        background: var(--app-sidebar-bg);
         display: flex;
         align-items: center;
         flex-shrink: 0;
@@ -40,11 +43,11 @@ class="activity-icon-item"
     }
 
         .activity-bar.left, .activity-bar.right {
-            width: 40px;
+            width: 44px;
             height: 100%;
             flex-direction: column;
-            padding-top: 6px;
-            gap: 4px;
+            padding-top: 7px;
+            gap: 3px;
         }
 
         .activity-bar.bottom {
@@ -56,17 +59,35 @@ class="activity-icon-item"
         }
 
     .activity-icon-item {
+        position: relative;
         width: 32px;
         height: 32px;
         margin: 0 auto;
-        border-radius: 6px;
+        border-radius: 7px;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
+        padding: 0;
+        border: 0;
+        background: transparent;
         color: var(--el-text-color-secondary);
-        transition: all 0.2s ease;
+        transition: background .14s ease, color .14s ease;
     }
+
+        .activity-icon-item.is-section-start {
+            margin-top: 9px;
+        }
+
+        .activity-icon-item.is-section-start::before {
+            content: '';
+            position: absolute;
+            top: -5px;
+            left: 7px;
+            right: 7px;
+            height: 1px;
+            background: var(--app-separator);
+        }
 
         .activity-icon-item:hover {
             background: var(--el-fill-color-light);
@@ -74,8 +95,9 @@ class="activity-icon-item"
         }
 
         .activity-icon-item.is-active {
-            background: rgba(78, 209, 156, 0.15);
+    background: var(--app-color-primary-dim);
             color: var(--el-color-primary);
+            box-shadow: inset 2px 0 var(--el-color-primary);
         }
 
     .act-svg {
@@ -87,17 +109,17 @@ class="activity-icon-item"
 <!-- ⚡ 全局 Popper 气泡美化样式（必须为非 scoped，才能精确修饰 Element Plus 的浮动提示框） -->
 <style>
     .el-popper.ide-sidebar-tooltip {
-        background: #252536 !important;
-        border: 1px solid #353757 !important;
-        color: #ffffff !important;
+    background: var(--app-overlay-bg) !important;
+    border: 1px solid var(--app-overlay-border) !important;
+    color: var(--app-text-primary) !important;
         font-size: 12px !important;
         padding: 6px 10px !important;
-        border-radius: 6px !important;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5) !important;
+        border-radius: 7px !important;
+    box-shadow: var(--app-shadow-md) !important;
     }
 
         .el-popper.ide-sidebar-tooltip .el-popper__arrow::before {
-            background: #252536 !important;
-            border: 1px solid #353757 !important;
+    background: var(--app-overlay-bg) !important;
+    border: 1px solid var(--app-overlay-border) !important;
         }
 </style>

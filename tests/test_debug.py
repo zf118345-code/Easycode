@@ -83,7 +83,9 @@ def test_breakpoint_pauses_and_resumes():
     assert wait_paused(session) > 0, '断点未触发暂停'
     assert session._current_node_id == 'n2', f'应暂停在 n2，实际 {session._current_node_id}'
     assert session._pause_reason == 'breakpoint'
-    assert session.get_state()['is_paused'] is True
+    state = session.get_state()
+    assert state['is_paused'] is True
+    assert state['previous_node_id'] == 'n1', '执行边来源节点没有随调试状态上报'
 
     session.resume()
     t.join(timeout=5)
@@ -271,34 +273,44 @@ def test_executor_logs_capped(monkeypatch, tmp_path):
     assert len(ex.logs) == 50
     assert ex.logs[0]['message'] == '日志第70条'  # 裁剪保留最近 50 条
     assert ex.logs[-1]['message'] == '日志第119条'
+    assert ex.logs[-1]['category'] == 'execution'
 
 
 def test_execution_db_persists_logs(tmp_path, monkeypatch):
     """ExecutionDB 落盘：创建执行 → 写日志 → 查询带回（#7 SQLite 接回）"""
     import os
     import core.db as db_mod
+    import core.services.execution_db as execution_db_mod
     from core.services.execution_db import ExecutionDB
 
     db_path = str(tmp_path / 'exec.db')
-    monkeypatch.setenv('EASYCODE_DB_PATH', db_path)
-    monkeypatch.setattr(db_mod, 'get_db_path', lambda: db_path)
-    monkeypatch.setattr(db_mod, 'DB_PATH', db_path)
-    monkeypatch.setattr(db_mod, 'DB_DIR', str(tmp_path))
+    monkeypatch.setattr(db_mod, 'get_db_path', lambda project_path=None: db_path)
+    monkeypatch.setattr(
+        execution_db_mod,
+        'get_connection',
+        lambda project_path=None: db_mod.get_connection(str(tmp_path)),
+    )
+    monkeypatch.setattr(
+        execution_db_mod,
+        'init_db',
+        lambda project_path=None: db_mod.init_db(str(tmp_path)),
+    )
     ExecutionDB._ensure_db()
 
     eid = 'task_test_1'
     assert ExecutionDB.create_execution(eid, 'D:/proj', 'task_test') is True
     assert ExecutionDB.update_status(eid, 'success', '执行完成') is True
     assert ExecutionDB.add_logs(eid, [
-        {'time': '10:00:00', 'message': '第一条', 'level': 'info', 'image': None},
-        {'time': '10:00:01', 'message': '第二条', 'level': 'warning', 'image': None},
+        {'time': '10:00:00', 'message': '[页面状态] 第一条', 'level': 'info', 'category': 'vision', 'image': None},
+        {'time': '10:00:01', 'message': '[智能跳转] 第二条', 'level': 'warning', 'category': 'navigation', 'image': None},
     ]) is True
 
     status = ExecutionDB.get_status(eid)
     assert status['status']['status'] == 'success'  # 嵌套结构：{status: {status, message}, logs}
     assert status['status']['message'] == '执行完成'
     logs = ExecutionDB.get_logs(eid)
-    assert [l['message'] for l in logs] == ['第一条', '第二条']
+    assert [l['message'] for l in logs] == ['[页面状态] 第一条', '[智能跳转] 第二条']
+    assert [l['category'] for l in logs] == ['vision', 'navigation']
 
     # 变量快照
     assert ExecutionDB.save_variable(eid, 'count', 42, 'int') is True

@@ -10,23 +10,19 @@ from core.utils import resolve_template_string
 class VariableCheckEvaluator(BaseConditionEvaluator):
     @classmethod
     def evaluate(cls, params: dict, context: Any) -> bool:
-        # ⚡ 兼容 variable_name / var_name 两种 Key
-        raw_var_name = str(params.get('variable_name') or params.get('var_name', '')).strip()
+        raw_var_name = str(params.get('variable_name') or '').strip()
         operator = str(params.get('operator', 'eq'))
-        # ⚡ 兼容 compare_value / target_value 两种 Key
-        raw_target_val = (
-            params.get('compare_value') if params.get('compare_value') is not None else params.get('target_value', '')
-        )
+        raw_target_val = params.get('compare_value', '')
 
         if not raw_var_name:
             return False
 
-        # 清洗变量名：新语法 $var{xxx} / $ctx{xxx} / $env{xxx} / $sys{xxx}；旧 {$var.xxx} / {xxx} 兼容
-        m = re.match(r'^\$(?:var|ctx|env|sys)\{([^{}]+)\}$', raw_var_name)
+        # 清洗当前变量语法 $var{xxx} / $ctx{xxx}。
+        m = re.match(r'^\$(?:var|ctx)\{([^{}]+)\}$', raw_var_name)
         if m:
             clean_var_name = m.group(1).strip()
         else:
-            clean_var_name = re.sub(r'^\{?(\$var\.)?([^}]+)\}?$', r'\2', raw_var_name)
+            clean_var_name = raw_var_name
 
         # 1. 获取变量实际值
         var_val = None

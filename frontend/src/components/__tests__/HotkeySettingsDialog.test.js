@@ -4,7 +4,7 @@
 // 2. 点击「修改」进入录制，按键组合 → 预览
 // 3. 保存调用 putHotkeys，冲突提示
 // 4. 保存成功更新状态
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { nextTick } from 'vue'
 import HotkeySettingsDialog from '../HotkeySettingsDialog.vue'
@@ -51,11 +51,12 @@ describe('HotkeySettingsDialog 快捷键设置', () => {
         await settle()
         const text = wrapper.text()
         expect(text).toContain('进入控件捕获模式')
+        expect(text).toContain('冻结工作面板截图')
         expect(text).toContain('复制选择器 + 生成控件节点')
         expect(text).toContain('退出捕获模式')
         expect(text).toContain('鼠标悬停目标 250ms 自动识别（无需快捷键）')
         expect(text).toContain('ctrl')
-        expect(wrapper.findAll('.hk-table .hk-row').length).toBe(4) // 表头 + 3 项
+        expect(wrapper.findAll('.hk-table .hk-row').length).toBe(5) // 表头 + 4 项
         wrapper.unmount()
     })
 

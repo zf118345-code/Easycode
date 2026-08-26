@@ -10,7 +10,7 @@
                popper-class="window-select-popper"
                :loading="loading"
                @visible-change="onVisibleChange"
-               @update:model-value="val => $emit('update:modelValue', val)">
+               @update:model-value="handleSelection">
         <el-option
 v-for="w in windowList"
                    :key="w.hwnd || w.title"
@@ -27,7 +27,7 @@ v-for="w in windowList"
         config: { type: Object, default: () => ({}) },
         modelValue: { type: String, default: '' }
     })
-    defineEmits(['update:modelValue'])
+    const emit = defineEmits(['update:modelValue', 'window-selected'])
 
     const windowList = ref([])
     const loading = ref(false)
@@ -48,6 +48,12 @@ v-for="w in windowList"
         if (visible) {
             fetchWindows()
         }
+    }
+
+    const handleSelection = value => {
+        emit('update:modelValue', value)
+        const matches = windowList.value.filter(window => window.title === value)
+        emit('window-selected', matches.length === 1 ? matches[0] : { title: value, ambiguous: matches.length > 1 })
     }
 </script>
 

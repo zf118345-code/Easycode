@@ -7,6 +7,8 @@ EXPRESSION_HELP = [
     '  $var{变量名}    用户全局变量',
     '  $ctx{字段名}    运行上下文变量',
     '  $env{字段名}    系统环境变量',
+    '  $param.参数名    函数形参（函数内只读）',
+    '  $local.变量名    函数局部变量',
     '',
     '算术：  +  -  *  /  //  %  **   （自由嵌套括号）',
     '比较：  >  >=  <  <=  ==  !=   （结果 true/false）',
@@ -44,7 +46,8 @@ def build_variable_op_params() -> dict:
                 '格式（严格前缀）：',
                 '  $var{变量名}    用户全局变量',
                 '  $ctx{字段名}    运行上下文变量',
-                '  $env{字段名}    系统环境变量',
+                '  $local.变量名   函数局部变量（仅函数画布）',
+                '形参 $param 与环境变量 $env 只读，不能作为写入目标。',
                 '示例：$var{run_count}',
             ],
         },
@@ -65,7 +68,7 @@ def build_variable_op_params() -> dict:
 PARAM_DEFINITIONS: dict = {
     'variable_op': {
         'label': '变量操作',
-        'modes': ['workflow'],
+        'modes': ['workflow', 'topology', 'function'],
         'params': build_variable_op_params(),
     }
 }

@@ -12,6 +12,14 @@ from core.services import capture_mode
 @pytest.fixture(autouse=True)
 def _reset_state(monkeypatch, tmp_path):
     """复位全局状态；测试绝不触碰真实 settings.json"""
+    from core.services.project_workspace_service import project_workspace_manager
+
+    original_app_data_dir = project_workspace_manager.app_data_dir
+    project_workspace_manager.shutdown()
+    project_workspace_manager.app_data_dir = str(tmp_path / 'app-state')
+    project = tmp_path / 'capture-project'
+    project_workspace_manager.initialize(str(project), '捕获测试')
+    project_workspace_manager.open(str(project))
     capture_mode._last_result = None
     capture_mode._selected = None
     capture_mode._active = False
@@ -39,6 +47,8 @@ def _reset_state(monkeypatch, tmp_path):
     capture_mode._cancel_auto_exit()
     capture_mode._hotkey_window = None
     capture_mode._hotkey_started = False
+    project_workspace_manager.shutdown()
+    project_workspace_manager.app_data_dir = original_app_data_dir
 
 
 def _wait_events_idle():
@@ -76,6 +86,7 @@ def test_parse_combo():
     assert capture_mode.parse_combo('esc') == (0, 0x1B)
     assert capture_mode.parse_combo('ctrl+alt+enter') == (win32con.MOD_CONTROL | win32con.MOD_ALT, 0x0D)
     assert capture_mode.parse_combo('f5') == (0, 0x74)
+    assert capture_mode.parse_combo('alt+1') == (win32con.MOD_ALT, ord('1'))
     assert capture_mode.parse_combo('bad??') is None
     assert capture_mode.parse_combo('') is None
 
@@ -187,6 +198,43 @@ def test_hotkey_window_dispatches_by_id(monkeypatch):
 
     hw._wnd_proc(0, win32con.WM_HOTKEY, capture_mode.HK_COPY_ID, 0)
     assert events == ['exit', 'copy']
+
+
+def test_recording_escape_is_swallowed_and_requests_recording_stop(monkeypatch):
+    """录制期间 Esc 由隐藏热键窗口消费，只发停止信号，不转交目标页面。"""
+    from core.services.frame_recording_service import frame_recording_service
+
+    stopped = []
+    monkeypatch.setattr(frame_recording_service, 'request_stop', lambda reason: stopped.append(reason) or {})
+    hw = _make_hotkey_window()
+
+    result = hw._wnd_proc(0, win32con.WM_HOTKEY, capture_mode.HK_RECORD_EXIT_ID, 0)
+
+    assert result == 0
+    assert stopped == ['esc']
+
+
+def test_recording_escape_registration_and_release_are_confirmed(monkeypatch):
+    class FakeHotkeyWindow:
+        _hwnd = 12345
+
+        def __init__(self):
+            self.state = None
+
+        def request_recording_escape(self, enable):
+            self.state = ['esc', True, ''] if enable else None
+
+        def recording_escape_state(self):
+            return self.state
+
+    fake = FakeHotkeyWindow()
+    capture_mode._hotkey_window = fake
+    capture_mode._hotkey_started = True
+    monkeypatch.setattr(capture_mode, 'ensure_hotkey_thread', lambda: None)
+
+    assert capture_mode.set_recording_escape_enabled(True)['ok'] is True
+    released = capture_mode.set_recording_escape_enabled(False)
+    assert released == {'ok': True, 'message': '录制 Esc 已释放'}
 
 
 def test_hotkey_register_multiple(monkeypatch):
@@ -438,6 +486,7 @@ def test_hotkeys_get_api():
     d = r.json()
     assert d['success'] is True
     assert d['hotkeys']['enter_capture'] == 'ctrl+shift+c'
+    assert d['hotkeys']['enter_screenshot'] == 'alt+q'
     assert 'registration' in d
 
 
@@ -447,8 +496,8 @@ def test_hotkeys_put_api(monkeypatch):
     from api.app import app
 
     apply_called = []
-    monkeypatch.setattr(capture_mode, 'apply_enter_hotkey', lambda c: apply_called.append(c) or {'ok': True})
-    monkeypatch.setattr(capture_mode, 'get_hotkey_apply_result', lambda: {'ok': True, 'message': '已应用', 'combo': 'ctrl+shift+x'})
+    monkeypatch.setattr(capture_mode, 'apply_enter_hotkey', lambda c, key='enter_capture': apply_called.append(c) or {'ok': True})
+    monkeypatch.setattr(capture_mode, 'get_hotkey_apply_result', lambda: {'ok': True, 'message': '已应用', 'combo': 'ctrl+shift+x', 'key': 'enter_capture'})
     # 不真的落盘 settings.json（避免污染 GET 测试与其他用例）
     monkeypatch.setattr(capture_mode, 'save_hotkeys', lambda hotkeys: {**capture_mode.HOTKEY_DEFAULTS, **hotkeys})
 
@@ -460,7 +509,7 @@ def test_hotkeys_put_api(monkeypatch):
     assert d['hotkeys']['enter_capture'] == 'ctrl+shift+x'
 
     # 冲突场景：注册失败
-    monkeypatch.setattr(capture_mode, 'get_hotkey_apply_result', lambda: {'ok': False, 'message': '组合键已被其他软件占用', 'combo': 'ctrl+alt+x'})
+    monkeypatch.setattr(capture_mode, 'get_hotkey_apply_result', lambda: {'ok': False, 'message': '组合键已被其他软件占用', 'combo': 'ctrl+alt+x', 'key': 'enter_capture'})
     r2 = c.put('/api/settings/hotkeys', json={'hotkeys': {'enter_capture': 'ctrl+alt+x'}})
     d2 = r2.json()
     assert d2['ok'] is False
@@ -478,7 +527,7 @@ def test_hotkeys_put_rejects_duplicate(monkeypatch):
     })
     d = r.json()
     assert d['ok'] is False
-    assert '相同' in d['message']
+    assert '重复' in d['message']
 
 
 def test_copy_attaches_ancestor_path(monkeypatch):

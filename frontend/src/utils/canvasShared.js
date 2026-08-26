@@ -79,10 +79,10 @@ export function getNodePortTop(node, portType) {
     const h = node?.h || node?.size?.h || NODE_MIN_HEIGHT
 
     if (portType === 'entry') return PORT_GRID_TOP * GRID_SIZE
-    if (portType === 'success' || portType === 'succ') return PORT_GRID_TOP * GRID_SIZE
-    if (portType === 'failure' || portType === 'fail') return h - PORT_GRID_BOTTOM * GRID_SIZE
+    if (portType === 'success') return PORT_GRID_TOP * GRID_SIZE
+    if (portType === 'failure') return h - PORT_GRID_BOTTOM * GRID_SIZE
 
-    const m = typeof portType === 'string' ? portType.match(/^(?:branch|exit)_(\d+)$/) : null
+    const m = typeof portType === 'string' ? portType.match(/^(?:branch|exit|outcome)_(\d+)$/) : null
     if (m) {
         const idx = parseInt(m[1], 10) || 0
         return Math.min(getRowAlignedPortTop(node, idx), h - PORT_GRID_BOTTOM * GRID_SIZE - 4)
@@ -139,10 +139,10 @@ export function getArrowDirection(points) {
 }
 
 export function getMarkerId(portType, direction) {
-    const isFailure = portType === 'failure' || portType === 'fail'
-    const isSuccess = portType === 'success' || portType === 'succ' ||
+    const isFailure = portType === 'failure'
+    const isSuccess = portType === 'success' ||
                       portType === 'exit' || portType.startsWith('exit_') ||
-                      portType.startsWith('branch_')
+                      portType.startsWith('branch_') || portType.startsWith('outcome_')
     const prefix = isFailure ? 'arrow-fail' : (isSuccess ? 'arrow-succ' : 'arrow-default')
     if (prefix === 'arrow-default') return 'arrow-default'
     return `${prefix}-${direction}`
@@ -204,34 +204,6 @@ export function resolveCollisionsAndPushOthers(nodes, draggedNode, maxIterations
     return nodes.filter(n => pushed.has(n.node_id))
 }
 
-// ========== 组包围盒 / 创建避让（新建节点与新建组自动推开，不再重叠） ==========
-
-export const GROUP_PADDING_GRIDS = 3      // 组内边距（格）
-export const GROUP_TITLE_H = 24           // 组标题高度 (px)
-export const GROUP_MIN_W = 220
-export const GROUP_MIN_H = 140
-
-/** 组包围盒（与 CanvasView.dynamicGroups 的推导规则一致：成员包围盒 + 内边距 + 标题） */
-export function computeGroupBox(nodes, paddingGrids = GROUP_PADDING_GRIDS) {
-    const list = Array.isArray(nodes) ? nodes : []
-    const padding = paddingGrids * GRID_SIZE
-    if (!list.length) return { x: 60, y: 60, w: GROUP_MIN_W, h: GROUP_MIN_H }
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
-    for (const n of list) {
-        const x = n.position?.x ?? 0
-        const y = n.position?.y ?? 0
-        const w = n.size?.w ?? NODE_WIDTH
-        const h = n.size?.h ?? NODE_MIN_HEIGHT
-        if (x < minX) minX = x
-        if (y < minY) minY = y
-        if (x + w > maxX) maxX = x + w
-        if (y + h > maxY) maxY = y + h
-    }
-    const w = Math.max(maxX - minX + padding * 2, GROUP_MIN_W)
-    const h = Math.max(maxY - minY + padding * 2 + GROUP_TITLE_H, GROUP_MIN_H)
-    return { x: minX - padding, y: minY - padding, w, h }
-}
-
 /**
  * 新建节点避让：从给定位置开始，若与现有矩形集合碰撞则沿右下方向逐格外移，
  * 返回第一个无碰撞的网格对齐坐标（不移动任何现有对象——新节点被挤开，旧布局不动）。
@@ -240,7 +212,6 @@ export function computeGroupBox(nodes, paddingGrids = GROUP_PADDING_GRIDS) {
  * @param {{w:number,h:number}} size 新节点尺寸
  */
 export function findFreePosition(others, pos, size = { w: NODE_WIDTH, h: NODE_MIN_HEIGHT }) {
-    const MIN_GAP = GRID_SIZE * 2
     let x = pos?.x ?? 0
     let y = pos?.y ?? 0
     const step = GRID_SIZE
@@ -262,6 +233,65 @@ export function findFreePosition(others, pos, size = { w: NODE_WIDTH, h: NODE_MI
     return { x: snapToGrid(x), y: snapToGrid(y) }
 }
 
+/**
+ * 大画布节点虚拟化：几何和连线仍使用完整节点集，仅挂载视口附近卡片。
+ * 选中/拖动节点始终保留，避免交互中途被卸载。
+ */
+export function filterNodesToViewport(
+    nodes,
+    viewport,
+    containerSize,
+    selectedIds = new Set(),
+    draggingId = null,
+    threshold = 250
+) {
+    if (nodes.length <= threshold || !containerSize?.width || !containerSize?.height) return nodes
+    const zoom = Math.max(0.05, Number(viewport?.zoom || 1))
+    const margin = 500 / zoom
+    const left = -Number(viewport?.x || 0) / zoom - margin
+    const top = -Number(viewport?.y || 0) / zoom - margin
+    const right = (containerSize.width - Number(viewport?.x || 0)) / zoom + margin
+    const bottom = (containerSize.height - Number(viewport?.y || 0)) / zoom + margin
+    const selected = selectedIds instanceof Set ? selectedIds : new Set(selectedIds || [])
+    return nodes.filter(node => (
+        selected.has(node.node_id)
+        || node.node_id === draggingId
+        || (
+            node.position.x + node.w >= left
+            && node.position.x <= right
+            && node.position.y + node.h >= top
+            && node.position.y <= bottom
+        )
+    ))
+}
+
+export function filterEdgesToViewport(edges, viewport, containerSize, threshold = 250) {
+    if (edges.length <= threshold || !containerSize?.width || !containerSize?.height) return edges
+    const zoom = Math.max(0.05, Number(viewport?.zoom || 1))
+    const margin = 360 / zoom
+    const box = {
+        left: -Number(viewport?.x || 0) / zoom - margin,
+        top: -Number(viewport?.y || 0) / zoom - margin,
+        right: (containerSize.width - Number(viewport?.x || 0)) / zoom + margin,
+        bottom: (containerSize.height - Number(viewport?.y || 0)) / zoom + margin
+    }
+    return edges.filter(edge => {
+        if (edge.selected || edge.id === 'temp_drawing') return true
+        const points = Array.isArray(edge.rawPixelPoints) ? edge.rawPixelPoints : []
+        if (!points.length) return true
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity
+        for (const point of points) {
+            const x = Number(point?.x || 0)
+            const y = Number(point?.y || 0)
+            minX = Math.min(minX, x)
+            minY = Math.min(minY, y)
+            maxX = Math.max(maxX, x)
+            maxY = Math.max(maxY, y)
+        }
+        return maxX >= box.left && minX <= box.right && maxY >= box.top && minY <= box.bottom
+    })
+}
+
 // ========== 共享边 CSS ==========
 
 export const SHARED_EDGE_CSS = `
@@ -278,38 +308,61 @@ export const SHARED_EDGE_CSS = `
 /* Edge base styles */
 .edge-path {
     fill: none;
-    stroke: #4ed19c;
+    stroke: var(--app-color-success);
     stroke-width: ${EDGE_STROKE_WIDTH};
     stroke-linecap: round;
     stroke-linejoin: round;
     pointer-events: stroke;
     cursor: pointer;
     filter: drop-shadow(0 0 0 transparent);
-    transition: stroke-width 0.15s ease, filter 0.15s ease, stroke 0.15s ease;
+    transition: filter 0.15s ease, stroke 0.15s ease;
 }
-.edge-path.is-failure { stroke: #f56c6c; }
-.edge-path.is-default { stroke: #8b93a7; }
+.edge-path.is-failure { stroke: var(--app-color-danger); }
+.edge-path.is-default { stroke: var(--app-edge-default); }
 
 .edge-path:hover {
     stroke-width: ${EDGE_HOVER_STROKE_WIDTH};
-    filter: drop-shadow(0 0 8px rgba(78, 209, 156, 0.7));
+    filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--app-color-success) 45%, transparent));
 }
+
 .edge-path.is-failure:hover {
-    filter: drop-shadow(0 0 8px rgba(245, 108, 108, 0.7));
+    filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--app-color-danger) 45%, transparent));
 }
 .edge-path.is-selected {
     stroke-width: 3.5;
-    stroke: #ffffff !important;
-    filter: drop-shadow(0 0 10px rgba(255, 255, 255, 0.8));
+    stroke: var(--app-edge-selected) !important;
+    filter: drop-shadow(0 1px 3px color-mix(in srgb, var(--app-edge-selected) 45%, transparent));
+}
+.edge-group {
+    opacity: 1;
+    transition: opacity 120ms ease;
+}
+.edge-group.is-focus-boundary .edge-path,
+.edge-group.is-focus-internal .edge-path,
+.edge-group.is-editing .edge-path {
+    stroke-width: 2.5;
+}
+.edge-group.is-focus-internal .edge-path,
+.edge-group.is-editing .edge-path {
+    filter: drop-shadow(0 0 3px color-mix(in srgb, var(--app-accent) 42%, transparent));
+}
+.edge-group.is-dimmed {
+    opacity: 0.14;
+}
+.edge-group.is-dimmed .edge-hit-area {
+    pointer-events: stroke;
+}
+.edge-group.is-executing {
+    opacity: 1;
 }
 
 /* 悬停联动：候选行/出口行悬停时，对应端口的所有出边高亮 */
 .edge-path.is-port-hovered {
     stroke-width: 3.5;
-    filter: drop-shadow(0 0 8px rgba(78, 209, 156, 0.7));
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--app-color-success) 70%, transparent));
 }
 .edge-path.is-port-hovered.is-failure {
-    filter: drop-shadow(0 0 8px rgba(245, 108, 108, 0.7));
+    filter: drop-shadow(0 0 8px color-mix(in srgb, var(--app-color-danger) 70%, transparent));
 }
 
 /* Edge hit area for easier clicking */
@@ -321,13 +374,13 @@ export const SHARED_EDGE_CSS = `
     cursor: pointer;
 }
 .edge-hit-area.is-selected {
-    stroke: rgba(255, 255, 255, 0.08);
+    stroke: var(--app-overlay-separator);
 }
 
 /* Flow animation overlay */
 .edge-flow-path {
     fill: none;
-    stroke: rgba(78, 209, 156, 0.85);
+    stroke: color-mix(in srgb, var(--app-color-success) 85%, transparent);
     stroke-width: 1.8;
     stroke-dasharray: ${EDGE_FLOW_DASH};
     animation: edgeFlow ${EDGE_FLOW_DURATION} linear infinite;
@@ -335,60 +388,101 @@ export const SHARED_EDGE_CSS = `
     opacity: 0.6;
 }
 .edge-flow-path.is-failure {
-    stroke: rgba(245, 108, 108, 0.85);
+    stroke: color-mix(in srgb, var(--app-color-danger) 85%, transparent);
+}
+.edge-jump-gap {
+    fill: none;
+    stroke: var(--app-canvas-bg, var(--app-bg));
+    stroke-width: 7;
+    stroke-linecap: round;
+    pointer-events: none;
+}
+.edge-jump-layer,
+.edge-jump-layer g {
+    pointer-events: none;
+}
+.edge-jump-layer .is-dimmed {
+    opacity: 0.14;
+}
+.edge-jump-bridge {
+    fill: none;
+    stroke: var(--app-color-success);
+    stroke-width: 2;
+    stroke-linecap: round;
+    pointer-events: none;
+}
+.edge-jump-bridge.is-failure {
+    stroke: var(--app-color-danger);
+}
+.edge-waypoint {
+    fill: var(--app-bg-panel);
+    stroke: var(--app-accent);
+    stroke-width: 2;
+    cursor: move;
+    pointer-events: all;
+    filter: drop-shadow(0 1px 3px rgb(0 0 0 / 35%));
+}
+.edge-waypoint:hover,
+.edge-waypoint:focus-visible {
+    fill: var(--app-accent);
+    stroke: var(--app-text-primary);
+    outline: none;
 }
 @keyframes edgeFlow {
     from { stroke-dashoffset: 20; }
     to   { stroke-dashoffset: 0; }
 }
+@media (prefers-reduced-motion: reduce) {
+    .edge-flow-path,
+    .edge-path.preview-path {
+        animation: none;
+    }
+}
 
 /* Preview / drag-time path */
 .edge-path.preview-path {
-    stroke: #4ed19c;
+    stroke: var(--app-color-success);
     stroke-dasharray: 6 4;
     opacity: 0.9;
     pointer-events: none;
     animation: edgeFlow 1s linear infinite;
 }
 .edge-path.preview-path.is-failure {
-    stroke: #f56c6c;
+    stroke: var(--app-color-danger);
 }
 
 /* 拖动连线预览终点：连线颜色的发光球（无箭头，松手后恢复箭头） */
 .preview-drawing .preview-drag-ball {
-    fill: #4ed19c;
-    filter: drop-shadow(0 0 5px rgba(78, 209, 156, 0.9)) drop-shadow(0 0 14px rgba(78, 209, 156, 0.6));
+    fill: var(--app-color-success);
+    filter: drop-shadow(0 0 5px rgba(59, 166, 107, 0.9)) drop-shadow(0 0 14px rgba(59, 166, 107, 0.6));
     pointer-events: none;
 }
 .preview-drawing.is-failure .preview-drag-ball {
-    fill: #f56c6c;
+    fill: var(--app-color-danger);
     filter: drop-shadow(0 0 5px rgba(245, 108, 108, 0.9)) drop-shadow(0 0 14px rgba(245, 108, 108, 0.6));
 }
 .preview-drawing.is-failure .edge-path.preview-path {
-    stroke: #f56c6c;
+    stroke: var(--app-color-danger);
 }
 
 /* Context / spawn menu */
 .spawn-menu {
     position: fixed;
     min-width: 200px;
-    background: rgba(24, 26, 40, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
-    padding: 8px 0;
+    background: var(--app-overlay-bg);
+    border: 1px solid var(--app-overlay-border);
+    border-radius: var(--app-radius-md);
+    padding: 5px;
     z-index: 1000;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: var(--app-shadow-md);
 }
 .spawn-menu-header {
-    padding: 8px 16px 6px;
+    padding: 7px 9px 6px;
     font-size: 11px;
-    color: #8b93a7;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--app-text-secondary);
+    border-bottom: 1px solid var(--app-overlay-separator);
     margin-bottom: 4px;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
+    letter-spacing: 0;
     font-weight: 600;
 }
 .spawn-menu-list {
@@ -396,19 +490,24 @@ export const SHARED_EDGE_CSS = `
     flex-direction: column;
 }
 .spawn-menu-item {
-    padding: 9px 16px;
-    font-size: 13px;
-    color: #e0e0e0;
+    width: 100%;
+    min-height: 30px;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: var(--app-radius-sm);
+    background: transparent;
+    font-size: 12px;
+    color: var(--app-text-regular);
+    text-align: left;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s, padding-left 0.12s;
+    transition: background-color 0.12s ease, color 0.12s ease;
     display: flex;
     align-items: center;
     gap: 10px;
 }
 .spawn-menu-item:hover {
-    background: rgba(78, 209, 156, 0.12);
-    color: #4ed19c;
-    padding-left: 20px;
+    background: var(--app-color-primary-dim);
+    color: var(--app-color-primary-hover);
 }
 .spawn-menu-item .menu-icon {
     width: 14px;
@@ -419,19 +518,23 @@ export const SHARED_EDGE_CSS = `
 .custom-context-menu {
     position: fixed;
     min-width: 200px;
-    background: rgba(24, 26, 40, 0.96);
-    border: 1px solid rgba(255, 255, 255, 0.12);
-    border-radius: 12px;
-    padding: 6px 0;
+    background: var(--app-overlay-bg);
+    border: 1px solid var(--app-overlay-border);
+    border-radius: var(--app-radius-md);
+    padding: 5px;
     z-index: 1000;
-    backdrop-filter: blur(12px);
-    -webkit-backdrop-filter: blur(12px);
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    box-shadow: var(--app-shadow-md);
 }
 .menu-item {
-    padding: 8px 16px;
-    font-size: 13px;
-    color: #e0e0e0;
+    width: 100%;
+    min-height: 30px;
+    padding: 6px 9px;
+    border: 0;
+    border-radius: var(--app-radius-sm);
+    background: transparent;
+    font-size: 12px;
+    color: var(--app-text-regular);
+    text-align: left;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
     display: flex;
@@ -439,17 +542,17 @@ export const SHARED_EDGE_CSS = `
     gap: 10px;
 }
 .menu-item:hover {
-    background: rgba(78, 209, 156, 0.12);
-    color: #4ed19c;
+    background: var(--app-color-primary-dim);
+    color: var(--app-color-primary-hover);
 }
-.menu-item.danger { color: #f56c6c; }
+.menu-item.danger { color: var(--app-color-danger); }
 .menu-item.danger:hover {
-    background: rgba(245, 108, 108, 0.15);
-    color: #ffffff;
+    background: var(--app-color-danger-soft);
+    color: var(--app-text-primary);
 }
 .menu-divider {
     height: 1px;
-    background: rgba(255, 255, 255, 0.08);
+    background: var(--app-overlay-separator);
     margin: 4px 8px;
 }
 .menu-item-icon {
@@ -461,8 +564,8 @@ export const SHARED_EDGE_CSS = `
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: #e5484d;
-    box-shadow: 0 0 6px rgba(229, 72, 77, 0.8);
+    background: var(--app-color-danger);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--app-color-danger) 70%, transparent);
 }
 `
 
@@ -479,7 +582,7 @@ export const SHARED_NODE_CSS = `
     overflow: hidden;
     overflow: clip;
     user-select: none;
-    background: #1a1b2e;
+    background: var(--app-canvas-bg);
 }
 .custom-canvas-container {
     cursor: grab;
@@ -499,26 +602,26 @@ export const SHARED_NODE_CSS = `
 /* 矢量网格线（由世界图层 SVG 绘制） */
 .canvas-grid-line {
     fill: none;
-    stroke: rgba(255, 255, 255, 0.04);
+    stroke: rgba(255, 255, 255, 0.035);
     stroke-width: 1;
     pointer-events: none;
 }
 .canvas-grid-line-major {
-    stroke: rgba(255, 255, 255, 0.07);
+    stroke: rgba(255, 255, 255, 0.065);
 }
 
 /* ---------- Node Card ---------- */
 .canvas-node-card {
-    --node-accent: #409eff;
+    --node-accent: var(--app-color-info);
     position: absolute;
-    background: var(--node-card-bg, rgba(30, 32, 50, 0.92));
-    border: 1px solid var(--node-card-border, rgba(255, 255, 255, 0.08));
+    background: var(--node-card-bg);
+    border: 1px solid var(--node-card-border);
     border-radius: var(--node-card-radius, 10px);
     overflow: visible;
     cursor: grab;
     user-select: none;
-    transition: box-shadow 0.2s ease, border-color 0.2s ease, transform 0.05s ease;
-    box-shadow: var(--node-card-shadow, 0 4px 20px rgba(0, 0, 0, 0.5));
+    transition: box-shadow 0.16s ease, border-color 0.16s ease, transform 0.05s ease;
+    box-shadow: var(--node-card-shadow);
     display: flex;
     flex-direction: column;
     z-index: 2;
@@ -527,14 +630,14 @@ export const SHARED_NODE_CSS = `
     cursor: grabbing;
 }
 .canvas-node-card:hover {
-    border-color: rgba(78, 209, 156, 0.5);
-    box-shadow: var(--node-card-shadow-hover, 0 8px 28px rgba(0, 0, 0, 0.55));
+    border-color: var(--app-border-strong);
+    box-shadow: var(--node-card-shadow-hover);
 }
 .canvas-node-card.is-selected {
-    border: 2px solid #4ed19c;
+    border: 1px solid var(--app-color-primary);
     box-shadow:
-        0 0 0 3px rgba(78, 209, 156, 0.25),
-        0 4px 20px rgba(0, 0, 0, 0.5);
+        0 0 0 3px rgba(217, 84, 23, 0.18),
+        0 6px 18px rgba(0, 0, 0, 0.34);
 }
 .canvas-node-card.is-active-debug {
     border: 2px solid #ffb020 !important;
@@ -560,7 +663,7 @@ export const SHARED_NODE_CSS = `
     border-radius: 10px 10px 0 0;
     font-size: 12px;
     font-weight: 600;
-    color: #fff;
+    color: var(--app-text-primary);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -579,14 +682,14 @@ export const SHARED_NODE_CSS = `
 .node-type-icon {
     width: 15px;
     height: 15px;
-    color: #fff;
+    color: var(--node-accent);
     flex-shrink: 0;
-    filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.4));
+    filter: none;
 }
 .node-title {
     font-size: 12px;
     font-weight: 600;
-    color: #fff;
+    color: var(--app-text-primary);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -599,17 +702,17 @@ export const SHARED_NODE_CSS = `
 .node-body {
     padding: 0;
     font-size: 11px;
-    color: #c4c9d4;
+    color: var(--app-text-regular);
     flex: 1;
     display: flex;
     flex-direction: column;
     justify-content: flex-start;
     overflow: hidden;
-    background: var(--node-content-bg, rgba(0, 0, 0, 0.15));
+    background: var(--node-content-bg);
     gap: 0;
 }
 .node-info { line-height: 18px; }
-.info-label { color: #7a8296; margin-right: 4px; }
+.info-label { color: var(--app-text-secondary); margin-right: 4px; }
 
 /* ---------- Node Footer ---------- */
 .node-footer-bar {
@@ -617,16 +720,16 @@ export const SHARED_NODE_CSS = `
     justify-content: flex-start;
     align-items: center;
     gap: 6px;
-    border-top: 1px solid rgba(255, 255, 255, 0.06);
+    border-top: 1px solid var(--app-border-subtle);
     padding: 6px 12px;
     margin-top: auto;
     flex-shrink: 0;
-    background: var(--node-footer-bg, rgba(0, 0, 0, 0.1));
+    background: var(--node-footer-bg);
     border-radius: 0 0 10px 10px;
 }
 .footer-tag {
     font-size: 10px;
-    color: #8b93a7;
+    color: var(--app-text-secondary);
     font-weight: 500;
 }
 
@@ -638,10 +741,10 @@ export const SHARED_NODE_CSS = `
     border-radius: 50%;
     cursor: crosshair;
     z-index: 8;
-    border: 2px solid var(--port-ring, #12131e);
+    border: 2px solid var(--port-ring);
     box-sizing: border-box;
-    background: var(--port-color, #3a3d52);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+    background: var(--port-color, var(--port-entry));
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
     transform: translateY(-50%);
     transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease, opacity 0.15s ease;
 }
@@ -657,7 +760,7 @@ export const SHARED_NODE_CSS = `
 }
 .node-handle:hover {
     transform: translateY(-50%) scale(1.3);
-    box-shadow: 0 0 10px var(--port-glow, rgba(78, 209, 156, 0.8));
+    box-shadow: 0 0 0 4px rgba(217, 84, 23, 0.16);
     z-index: 10;
 }
 
@@ -670,15 +773,15 @@ export const SHARED_NODE_CSS = `
 }
 .node-handle.is-unconnected:hover {
     opacity: 1;
-    box-shadow: 0 0 10px var(--port-glow, rgba(78, 209, 156, 0.8));
+    box-shadow: 0 0 10px var(--port-glow, rgba(59, 166, 107, 0.8));
 }
 
 /* Entry port (left, 1 grid from top) - gray, where edges land */
 .entry-handle {
     left: -7px;
     cursor: default;
-    --port-color: var(--port-entry, #4a4d62);
-    border-color: var(--port-entry-border, #6b7090);
+    --port-color: var(--port-entry);
+    border-color: var(--port-entry-border);
     z-index: 5;
 }
 .entry-handle:hover {
@@ -689,32 +792,37 @@ export const SHARED_NODE_CSS = `
 /* Success port (right, 1 grid from top) - green, primary exit */
 .succ-handle {
     right: -7px;
-    --port-color: var(--port-success, #4ed19c);
-    --port-glow: rgba(78, 209, 156, 0.8);
-    border-color: var(--port-success-border, #2a8565);
+    --port-color: var(--port-success);
+    --port-glow: rgba(59, 166, 107, 0.8);
+    border-color: var(--port-success-border);
 }
 
 /* Failure port (right, 1 grid from bottom) - red, failure exit */
 .fail-handle {
     right: -7px;
-    --port-color: var(--port-failure, #f56c6c);
+    --port-color: var(--port-failure);
     --port-glow: rgba(245, 108, 108, 0.8);
-    border-color: var(--port-failure-border, #a03838);
+    border-color: var(--port-failure-border);
 }
 
 /* Dynamic ports (right, 1 grid step, stacked between success and failure) - green */
 .dyn-handle {
     right: -7px;
-    --port-color: var(--port-success, #4ed19c);
-    --port-glow: rgba(78, 209, 156, 0.8);
-    border-color: var(--port-success-border, #2a8565);
+    --port-color: var(--port-success);
+    --port-glow: rgba(59, 166, 107, 0.8);
+    border-color: var(--port-success-border);
+}
+.dyn-handle.is-danger {
+    --port-color: var(--port-failure);
+    --port-glow: rgba(218, 83, 83, 0.8);
+    border-color: var(--port-failure-border);
 }
 
 /* Pending 虚线占位口（page_state 尾部“新出口”槽位）：虚线空心 + 呼吸脉冲邀请连线 */
 .node-handle.is-pending {
     background: transparent;
     border-style: dashed;
-    border-color: var(--port-success-border, #2a8565);
+    border-color: var(--port-success-border);
     opacity: 0.8;
     animation: pending-pulse 1.6s ease-in-out infinite;
 }
@@ -722,15 +830,15 @@ export const SHARED_NODE_CSS = `
     opacity: 1;
 }
 @keyframes pending-pulse {
-    0%, 100% { box-shadow: 0 0 0 rgba(78, 209, 156, 0); transform: translateY(-50%) scale(1); }
-    50%      { box-shadow: 0 0 12px rgba(78, 209, 156, 0.7); transform: translateY(-50%) scale(1.12); }
+    0%, 100% { box-shadow: 0 0 0 rgba(59, 166, 107, 0); transform: translateY(-50%) scale(1); }
+    50%      { box-shadow: 0 0 12px rgba(59, 166, 107, 0.7); transform: translateY(-50%) scale(1.12); }
 }
 
 /* 行 ↔ 端口悬停联动：悬停任一侧，另一侧同步高亮 */
 .branch-candidate-item.is-port-hovered,
 .page-exit-item.is-port-hovered {
-    background: rgba(78, 209, 156, 0.16) !important;
-    border-color: rgba(78, 209, 156, 0.55) !important;
+    background: rgba(59, 166, 107, 0.16) !important;
+    border-color: rgba(59, 166, 107, 0.55) !important;
 }
 .page-exit-item {
     position: relative;
@@ -749,8 +857,8 @@ export const SHARED_NODE_CSS = `
     transition: background 0.12s, border-color 0.12s;
 }
 .page-exit-item:hover {
-    background: rgba(78, 209, 156, 0.08);
-    border-color: rgba(78, 209, 156, 0.3);
+    background: rgba(59, 166, 107, 0.08);
+    border-color: rgba(59, 166, 107, 0.3);
 }
 .page-exit-item.is-pending-row {
     border-style: dashed;
@@ -770,41 +878,58 @@ export const SHARED_NODE_CSS = `
 /* 断点槽：标题栏右侧；三态样式——
    未设置：空心圆环（hover 变亮）；已设置：实心红点 + 外发光；命中：脉冲放大 */
 .node-breakpoint-gutter {
-    width: 12px;
-    height: 12px;
+    width: 24px;
+    height: 24px;
     flex-shrink: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    margin-left: 8px;
+    display: grid;
+    place-items: center;
+    margin-left: 2px;
+    padding: 0;
     cursor: pointer;
     user-select: none;
     border-radius: 50%;
-    border: 2px solid rgba(255, 255, 255, 0.15);
+    border: 0;
+    background: transparent;
     box-sizing: border-box;
-    transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
+    position: relative;
 }
-.node-breakpoint-gutter:hover {
-    border-color: rgba(255, 255, 255, 0.3);
+.node-breakpoint-gutter::before {
+    content: '';
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid color-mix(in srgb, var(--app-text-primary) 18%, transparent);
+    box-sizing: border-box;
+    transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+}
+.node-breakpoint-gutter:hover::before {
+    border-color: color-mix(in srgb, var(--app-text-primary) 38%, transparent);
+}
+.node-breakpoint-gutter:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
 }
 .node-breakpoint-gutter .bp-dot {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #e5484d;
-    box-shadow: 0 0 8px rgba(229, 72, 77, 0.6);
+    background: var(--app-color-danger);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--app-color-danger) 60%, transparent);
     transition: box-shadow 0.15s;
+    position: relative;
+    z-index: 1;
 }
-.node-breakpoint-gutter.active {
-    border-color: rgba(229, 72, 77, 0.6);
+.node-breakpoint-gutter.active::before {
+    border-color: color-mix(in srgb, var(--app-color-danger) 65%, transparent);
 }
-.node-breakpoint-gutter.active:hover {
-    border-color: rgba(229, 72, 77, 0.9);
+.node-breakpoint-gutter.active:hover::before {
+    border-color: var(--app-color-danger);
 }
 /* 断点命中（调试暂停于此节点）：脉冲呼吸灯 + 发光放大 */
 .canvas-node-card.is-active-debug .node-breakpoint-gutter.active .bp-dot {
     animation: breakpoint-pulse 0.9s ease-in-out infinite;
-    box-shadow: 0 0 16px rgba(229, 72, 77, 0.9);
+    box-shadow: 0 0 16px color-mix(in srgb, var(--app-color-danger) 90%, transparent);
 }
 @keyframes breakpoint-pulse {
     0%, 100% { transform: scale(1); }
@@ -854,8 +979,8 @@ export const SHARED_NODE_CSS = `
     transition: background 0.12s, border-color 0.12s;
 }
 .branch-candidate-item:hover {
-    background: rgba(78, 209, 156, 0.08);
-    border-color: rgba(78, 209, 156, 0.3);
+    background: rgba(59, 166, 107, 0.08);
+    border-color: rgba(59, 166, 107, 0.3);
 }
 .branch-cand-text {
     white-space: nowrap;
@@ -974,55 +1099,11 @@ export const SHARED_NODE_CSS = `
     text-overflow: ellipsis;
 }
 
-/* ---------- Group Box ---------- */
-.canvas-group-box {
-    position: absolute;
-    box-sizing: border-box;
-    border: 2px dashed rgba(78, 209, 156, 0.4);
-    border-radius: 14px;
-    background: rgba(78, 209, 156, 0.025);
-    pointer-events: none;
-    transition: border-color 0.2s ease, background 0.2s ease;
-}
-.canvas-group-box.is-focused {
-    border: 2.5px solid #4ed19c;
-    background: rgba(78, 209, 156, 0.05);
-}
-.group-title-badge {
-    position: absolute;
-    top: -28px;
-    left: 14px;
-    right: 14px;
-    background: #262840;
-    padding: 5px 12px;
-    color: #4ed19c;
-    border: 1px solid rgba(78, 209, 156, 0.4);
-    border-radius: 8px;
-    pointer-events: auto;
-    cursor: grab;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-    backdrop-filter: blur(6px);
-    -webkit-backdrop-filter: blur(6px);
-}
-.group-name-text {
-    font-size: 12px;
-    font-weight: 600;
-}
-.group-sub-info {
-    font-size: 10px;
-    color: #8b93a7;
-    display: flex;
-    gap: 10px;
-}
-
 /* ---------- Drag Preview ---------- */
 .node-drag-preview-box {
     position: absolute;
-    border: 2px dashed rgba(78, 209, 156, 0.6);
-    background: rgba(78, 209, 156, 0.08);
+    border: 2px dashed rgba(217, 84, 23, 0.6);
+    background: rgba(217, 84, 23, 0.08);
     border-radius: 12px;
     pointer-events: none;
     z-index: 9;
@@ -1039,18 +1120,21 @@ export const SHARED_NODE_CSS = `
     left: 10px;
     font-size: 11px;
     font-weight: 600;
-    color: #4ed19c;
-    background: rgba(26, 27, 46, 0.9);
+    color: #e66a31;
+    background: rgba(32, 32, 30, 0.96);
     padding: 3px 8px;
     border-radius: 5px;
     backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    gap: 5px;
 }
 
 /* ---------- Selection Box ---------- */
 .selection-box {
     position: absolute;
-    background: rgba(78, 209, 156, 0.1);
-    border: 1px solid #4ed19c;
+    background: rgba(217, 84, 23, 0.1);
+    border: 1px solid #d95417;
     border-radius: 4px;
     pointer-events: none;
     z-index: 999;
@@ -1063,12 +1147,12 @@ export const SHARED_NODE_CSS = `
     bottom: 16px;
     width: 160px;
     height: 120px;
-    background: rgba(20, 22, 34, 0.8);
+    background: rgba(29, 30, 33, 0.88);
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    border-radius: 8px;
+    box-shadow: 0 8px 22px rgba(0, 0, 0, 0.34);
     z-index: 998;
     overflow: hidden;
 }
@@ -1076,19 +1160,19 @@ export const SHARED_NODE_CSS = `
 /* ---------- Canvas Toolbar ---------- */
 .canvas-toolbar {
     position: absolute;
-    bottom: 16px;
-    left: 16px;
+    top: 14px;
+    right: 14px;
     display: flex;
     align-items: center;
     gap: 4px;
     padding: 5px 10px;
-    background: rgba(26, 27, 46, 0.92);
+    background: rgba(36, 37, 40, 0.94);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 10px;
+    border-radius: 7px;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
     z-index: 100;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.3);
 }
 .toolbar-btn {
     display: flex;

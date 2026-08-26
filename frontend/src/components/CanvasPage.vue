@@ -1,63 +1,180 @@
 <!-- frontend/src/components/CanvasPage.vue
   唯一画布页面（业务流程与页面拓扑完全共用一个页面/一套逻辑）：
-  - 画布渲染/交互（节点卡片、连线、端口、拖拽、碰撞、组、断点、缩放、快捷键）全部复用 CanvasView
+  - 画布渲染/交互（节点卡片、连线、端口、拖拽、碰撞、断点、缩放、快捷键）全部复用 CanvasView
   - 「模式」只存在于数据读写层：canvasMode 决定读取哪个 JSON（workflow.json / topology.json）
     与显示哪些节点类型（nodeRegistry 白名单）；两数据源结构完全同构（{tasks, edges}）
 -->
 <template>
-    <CanvasView
-        :mode="canvasMode"
-        :tasks="canvasData.tasks"
-        :edges="canvasData.edges"
-        :available-node-types="availableNodeTypes"
-        :has-groups="true"
-        :has-breakpoints="true"
-        :on-save="handleSave"
-        :on-delete="handleDelete"
-        :on-select-all="handleSelectAll"
-        :on-undo="activeUndoRedo.undo"
-        :on-redo="activeUndoRedo.redo"
-        @update-tasks="handleUpdateTasks"
-        @add-edge="handleAddEdge"
-        @remove-edge="handleRemoveEdge"
-        @create-node="handleCreateNode"
-        @delete-node="handleDeleteNode"
-        @delete-group="handleDeleteGroup" />
+    <div class="canvas-page-shell">
+        <nav v-if="!isTopology" class="flow-breadcrumb" aria-label="当前画布位置">
+            <button type="button" class="breadcrumb-root" title="返回项目主流程" @click="openMainFlow">
+                {{ store.currentProjectName || '当前项目' }}
+            </button>
+            <ChevronRight />
+            <template v-if="isFunctionCanvas">
+                <button type="button" class="breadcrumb-root" @click="openMainFlow">函数库</button>
+                <ChevronRight />
+            </template>
+            <span class="breadcrumb-current">{{ activeGraphLabel }}</span>
+            <span v-if="isFunctionCanvas" class="flow-context-note">函数画布</span>
+        </nav>
+        <CanvasView
+            ref="canvasViewRef"
+            :mode="canvasMode"
+            :tasks="renderCanvasData.tasks"
+            :edges="renderCanvasData.edges"
+            :blocks="renderCanvasData.blocks"
+            :available-node-types="availableNodeTypes"
+            :has-breakpoints="true"
+            :on-save="handleSave"
+            :on-delete="handleDelete"
+            :on-select-all="handleSelectAll"
+            :on-undo="activeUndoRedo.undo"
+            :on-redo="activeUndoRedo.redo"
+            @update-tasks="handleUpdateTasks"
+            @update-blocks="handleUpdateBlocks"
+            @update-geometry="handleUpdateGeometry"
+            @add-edge="handleAddEdge"
+            @remove-edge="handleRemoveEdge"
+            @update-edge-routing="handleUpdateEdgeRouting"
+            @create-node="handleCreateNode"
+            @paste-subgraph="handlePasteSubgraph"
+            @delete-node="handleDeleteNode"
+            @request-delete-block="handleDeleteBlock" />
+    </div>
+    <el-dialog v-model="layoutDialogVisible" title="自动布局预览" width="460px" append-to-body @closed="cancelLayoutPreview">
+        <el-form label-width="90px">
+            <el-form-item label="布局范围">
+                <el-radio-group v-model="layoutScope">
+                    <el-radio-button value="whole">整个画布</el-radio-button>
+                    <el-radio-button value="selection">选中节点</el-radio-button>
+                </el-radio-group>
+            </el-form-item>
+            <el-alert type="info" :closable="false" title="预览不会写入项目；确认后保存，取消则恢复原布局。" />
+        </el-form>
+        <template #footer>
+            <el-button @click="cancelLayoutPreview">取消</el-button>
+            <el-button @click="previewAutoLayout">生成预览</el-button>
+            <el-button type="primary" :disabled="!layoutPreviewActive" @click="confirmAutoLayout">确认布局</el-button>
+        </template>
+    </el-dialog>
 </template>
 
 <script setup>
-    import { computed, onMounted } from 'vue'
-    import { useMainStore, useUiStore } from '@/stores'
-    import { ElMessage } from 'element-plus'
+    import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+    import { useIdeStore, useUiStore } from '@/stores'
+    import { ElMessage, ElMessageBox } from 'element-plus'
     import { createCanvasUndoRedo } from '@/composables/useUndoRedo'
     import { getNodeTypesForMode } from '@/config/nodeRegistry'
     import {
         applyEdge,
+        reconcileGraphIntegrity,
         removeEdge,
-        disconnectPort,
-        removeNode
+        removeNode,
+        findEdgeAtPort
     } from '@/utils/workflowEdgeModel'
     import { buildNodeDefaultParams, NODE_DEFAULTS } from '@/utils/nodeDefaults'
     import { buildControlParamsFromInfo, buildControlNodeName } from '@/utils/captureNode'
     import {
         NODE_WIDTH, NODE_MIN_HEIGHT, computeCanvasNodeHeight,
-        computeGroupBox, findFreePosition, isColliding
+        findFreePosition
     } from '@/utils/canvasShared'
     import CanvasView from '@/components/canvas/CanvasView.vue'
+    import { autoLayoutGraphGeometry } from '@/utils/autoLayout'
+    import { getPrimarySourcePort, getSourcePortDescriptors } from '@/utils/portModel'
+    import { getGraph, getGraphLabel, MAIN_GRAPH_ID } from '@/utils/flowModel'
+    import {
+        normalizeEdgeRouting,
+        reconcileEdgeWaypoints,
+        translateInternalEdgeWaypoints
+    } from '@/utils/edgePresentation'
+    import { ChevronRight } from 'lucide-vue-next'
 
-    const store = useMainStore()
+    const store = useIdeStore()
     const uiStore = useUiStore()
+    const layoutDialogVisible = ref(false)
+    const layoutScope = ref('whole')
+    const layoutPreviewActive = ref(false)
+    const layoutOriginal = ref(null)
+    const canvasViewRef = ref(null)
+
+    function nextUniqueName(items, base, field) {
+        const names = new Set((items || []).map(item => String(item?.[field] || '')))
+        if (!names.has(base)) return base
+        let suffix = 1
+        while (names.has(`${base}${suffix}`)) suffix += 1
+        return `${base}${suffix}`
+    }
+
+    function settlePeerCollisions(nodes, maxIterations = 20) {
+        const list = nodes || []
+        const gap = 24
+        for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+            let changed = false
+            for (let i = 0; i < list.length; i += 1) {
+                for (let j = i + 1; j < list.length; j += 1) {
+                    const a = list[i]
+                    const b = list[j]
+                    const aw = a.size?.w || NODE_WIDTH
+                    const ah = a.size?.h || NODE_MIN_HEIGHT
+                    const bw = b.size?.w || NODE_WIDTH
+                    const bh = b.size?.h || NODE_MIN_HEIGHT
+                    const ax = a.position?.x || 0
+                    const ay = a.position?.y || 0
+                    const bx = b.position?.x || 0
+                    const by = b.position?.y || 0
+                    const overlapX = Math.min(ax + aw + gap, bx + bw + gap) - Math.max(ax, bx)
+                    const overlapY = Math.min(ay + ah + gap, by + bh + gap) - Math.max(ay, by)
+                    if (overlapX <= 0 || overlapY <= 0) continue
+                    changed = true
+                    if (overlapX < overlapY) {
+                        const push = Math.ceil(overlapX / 2 / 20) * 20
+                        const direction = ax <= bx ? -1 : 1
+                        a.position.x += direction * push
+                        b.position.x -= direction * push
+                    } else {
+                        const push = Math.ceil(overlapY / 2 / 20) * 20
+                        const direction = ay <= by ? -1 : 1
+                        a.position.y += direction * push
+                        b.position.y -= direction * push
+                    }
+                }
+            }
+            if (!changed) break
+        }
+    }
 
     const canvasMode = computed(() => store.canvasMode || 'workflow')
     const isTopology = computed(() => canvasMode.value === 'topology')
+    const isFunctionCanvas = computed(() => canvasMode.value === 'function')
+    const activeGraph = computed(() => (
+        isTopology.value
+            ? store.blueprint.page_map
+            : getGraph(store.blueprint, isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID)
+    ))
+    const activeGraphLabel = computed(() => isTopology.value ? '页面地图' : getGraphLabel(store.blueprint, isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID))
+
+    async function openMainFlow() {
+        uiStore.clearSelection()
+        await store.loadTaskData(MAIN_GRAPH_ID)
+        await store.setCanvasMode('workflow')
+        uiStore.setFocusTarget({ type: 'graph', id: MAIN_GRAPH_ID, timestamp: Date.now() })
+    }
 
     // 节点可用类型：modes/label 来自后端 /api/params 配置（单一数据源），前端表兜底
     const availableNodeTypes = computed(() => getNodeTypesForMode(canvasMode.value, store.paramsDefinitions))
 
     // ===== 当前数据源（唯一模式判断点 1：读取哪个 JSON） =====
-    const canvasData = computed(() => (
-        isTopology.value ? store.topologyData : store.workflowData
-    ))
+    const renderCanvasData = computed(() => {
+        const graph = activeGraph.value
+        if (!graph) return { tasks: [], edges: [], blocks: [] }
+        const graphId = isTopology.value ? 'page_map' : (isFunctionCanvas.value ? store.currentTaskId : MAIN_GRAPH_ID)
+        return {
+            tasks: [{ task_id: graphId, task_name: activeGraphLabel.value, role: isFunctionCanvas.value ? 'function' : canvasMode.value, nodes: graph.nodes }],
+            edges: graph.edges || [],
+            blocks: graph.blocks || []
+        }
+    })
 
     const canvasName = computed(() => (isTopology.value ? 'topology' : 'workflow'))
 
@@ -65,9 +182,11 @@
     const workflowUndoRedo = createCanvasUndoRedo('workflow')
     const topologyUndoRedo = createCanvasUndoRedo('topology')
     const activeUndoRedo = computed(() => (isTopology.value ? topologyUndoRedo : workflowUndoRedo))
+    watch(() => store.currentTaskId, () => workflowUndoRedo.clear())
 
     // ===== 保存路由（唯一模式判断点 2：写入哪个 JSON） =====
     async function saveCanvas() {
+        reconcileGraphIntegrity(renderCanvasData.value.tasks, activeGraph.value?.edges || [])
         if (isTopology.value) {
             await store.saveTopologyData()
         } else {
@@ -79,40 +198,86 @@
 
     async function handleUpdateTasks(tasks) {
         activeUndoRedo.value.commit()
-        if (isTopology.value) {
-            store.blueprint.topology = {
-                tasks: JSON.parse(JSON.stringify(tasks || [])),
-                edges: store.blueprint.topology?.edges || []
-            }
-        } else {
-            store.blueprint.tasks = JSON.parse(JSON.stringify(tasks || []))
-        }
+        if (activeGraph.value) activeGraph.value.nodes = JSON.parse(JSON.stringify(tasks?.[0]?.nodes || []))
+        const repaired = reconcileEdgeWaypoints(activeGraph.value?.edges || [], activeGraph.value?.nodes || [])
         await saveCanvas()
+        if (repaired.moved || repaired.removed) {
+            ElMessage.info(`${repaired.moved + repaired.removed} 个转接点已自动避让节点`)
+        }
+    }
+
+    async function handleUpdateBlocks(blocks) {
+        activeUndoRedo.value.commit()
+        if (activeGraph.value) activeGraph.value.blocks = JSON.parse(JSON.stringify(blocks || []))
+        await saveCanvas()
+    }
+
+    async function handleUpdateGeometry({ tasks, blocks, movedNodeIds = [], delta = null }) {
+        activeUndoRedo.value.commit()
+        if (activeGraph.value && tasks) activeGraph.value.nodes = JSON.parse(JSON.stringify(tasks?.[0]?.nodes || []))
+        if (activeGraph.value) activeGraph.value.blocks = JSON.parse(JSON.stringify(blocks || []))
+        if (activeGraph.value && delta) {
+            translateInternalEdgeWaypoints(activeGraph.value.edges || [], movedNodeIds, delta)
+        }
+        const repaired = reconcileEdgeWaypoints(activeGraph.value?.edges || [], activeGraph.value?.nodes || [])
+        await saveCanvas()
+        if (repaired.moved || repaired.removed) {
+            ElMessage.info(`${repaired.moved + repaired.removed} 个转接点已自动避让节点`)
+        }
     }
 
     async function handleAddEdge(payload) {
         activeUndoRedo.value.commit()
-        const edges = canvasData.value.edges
-        applyEdge(edges, { ...payload, canvas: canvasName.value })
+        const edges = renderCanvasData.value.edges
+        const sourceNode = (renderCanvasData.value.tasks || [])
+            .flatMap(task => task.nodes || [])
+            .find(node => node.node_id === payload.source)
+        const normalizedPort = payload.source_port
+        const descriptor = sourceNode
+            ? getSourcePortDescriptors(sourceNode, edges).find(port => port.key === normalizedPort)
+            : null
+        const isNewPageExit = (sourceNode?.node_type || sourceNode?.type) === 'page_state'
+            && String(normalizedPort || '').startsWith('exit_')
+            && !descriptor
+        const generatedExitId = isNewPageExit
+            ? `exit_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 9)}`}`
+            : ''
+        applyEdge(edges, {
+            ...payload,
+            source_port_id: payload.source_port_id || descriptor?.stableId || generatedExitId || normalizedPort,
+            canvas: canvasName.value,
+            tasks: renderCanvasData.value.tasks
+        })
         await saveCanvas()
     }
 
     async function handleRemoveEdge(edge) {
         if (!edge || !edge.sourceNodeId) return
         activeUndoRedo.value.commit()
-        const edges = canvasData.value.edges
-        const removed = removeEdge(edges, edge) || disconnectPort(edges, edge.sourceNodeId, edge.legacyPort)
+        const edges = renderCanvasData.value.edges
+        const removed = removeEdge(edges, edge)
         if (removed) {
             await saveCanvas()
         }
     }
 
+    async function handleUpdateEdgeRouting({ edgeId, routing }) {
+        if (!edgeId || !activeGraph.value) return
+        const edge = (activeGraph.value.edges || []).find(item => item.edge_id === edgeId)
+        if (!edge) return
+        activeUndoRedo.value.commit()
+        const normalized = normalizeEdgeRouting(routing)
+        if (normalized.waypoints.length) edge.routing = normalized
+        else delete edge.routing
+        await saveCanvas()
+    }
+
     async function handleCreateNode(payload) {
         activeUndoRedo.value.commit()
-        const tasks = canvasData.value.tasks
+        const tasks = renderCanvasData.value.tasks
+        const graphBefore = JSON.parse(JSON.stringify(activeGraph.value || { nodes: [], edges: [], blocks: [] }))
         let targetTask = null
         let sourceNodeObj = null
-        let isNewGroup = false   // ⚡ 本次是否新建组（组级避让只作用于新组，不惊动已有组）
 
         if (payload.sourceNodeId) {
             for (const t of tasks) {
@@ -123,26 +288,26 @@
             targetTask = tasks.find(t => t.task_id === payload.groupId)
         }
 
-        if (!targetTask) {
-            const newTaskId = `task_${Date.now()}`
-            targetTask = {
-                task_id: newTaskId,
-                task_name: '新建组',
-                loop_count: 1,
-                loop_interval: 0,
-                nodes: []
-            }
-            isNewGroup = true
-            tasks.push(targetTask)
+        if (!targetTask && !isTopology.value && store.currentTaskId) {
+            targetTask = tasks.find(task => task.task_id === store.currentTaskId) || null
         }
+        if (!targetTask) targetTask = tasks[0] || null
+        if (!targetTask) return { error: 'active graph missing' }
 
         if (!targetTask.nodes) targetTask.nodes = []
 
+        const defaultNames = {
+            click: '点击节点',
+            image_recognition: '图像识别节点',
+            ocr_recognition: 'OCR识别节点',
+            page_state: '页面节点',
+            control: '控件节点'
+        }
         const chineseLabel = (availableNodeTypes.value[payload.type] || payload.type).replace(/^[^\u4e00-\u9fa5]+/, '').trim()
-        const sameTypeCount = targetTask.nodes.filter(n => n.node_type === payload.type).length + 1
+        const defaultBase = defaultNames[payload.type] || `${chineseLabel || payload.type}节点`
         const newNode = {
             node_id: payload.nodeId,
-            node_name: payload.nodeName || `${chineseLabel}_${sameTypeCount}`,
+            node_name: payload.nodeName || nextUniqueName(targetTask.nodes, defaultBase, 'node_name'),
             node_type: payload.type,
             // 复制粘贴：沿用源节点参数；新建：从后端 schema default 填充（集中默认值，见 utils/nodeDefaults.js）
             params: payload.params
@@ -158,90 +323,279 @@
             newNode.params.page_id = `page_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
         }
 
-        // ⚡ 新建避让：新节点被身边节点/组挤开，不再重叠（所有创建入口统一经过此处）
+        // 新节点只在当前流程/集合内避让；流程之间不共享画布空间。
         const newNodeSize = {
             w: NODE_WIDTH,
             h: computeCanvasNodeHeight(newNode.params ? Object.keys(newNode.params).length : 0, 0)
         }
-        // 1) 节点级避让：避开同组已有节点（把新节点推到无碰撞位置，旧布局不动）
+        // 避开当前流程已有节点（把新节点推到无碰撞位置，旧布局不动）
         const sameGroupNodes = (targetTask.nodes || []).map(n => ({
             position: n.position, size: { w: NODE_WIDTH, h: NODE_MIN_HEIGHT }
         }))
         const freePos = findFreePosition(sameGroupNodes, newNode.position, newNodeSize)
         newNode.position = { x: freePos.x, y: freePos.y }
-        // 2) 组级避让：新建组若与已有组重叠，整体平移新组（组内所有成员同偏移）——只作用于新组
-        if (isNewGroup) {
-            const groupBoxes = new Map()  // task_id -> box（只算一次）
-            const boxOf = (task) => {
-                if (!groupBoxes.has(task.task_id)) {
-                    groupBoxes.set(task.task_id, computeGroupBox(task.nodes || []))
-                }
-                return groupBoxes.get(task.task_id)
-            }
-            const newGroupBox = computeGroupBox([...targetTask.nodes, newNode])
-            let shiftX = 0, shiftY = 0
-            let guard = 0
-            while (guard < 100) {
-                const cand = {
-                    position: { x: newGroupBox.x + shiftX, y: newGroupBox.y + shiftY },
-                    size: { w: newGroupBox.w, h: newGroupBox.h }
-                }
-                const overlaps = tasks.some(t => {
-                    if (t.task_id === targetTask.task_id) return false
-                    const b = boxOf(t)
-                    return isColliding(cand, { position: { x: b.x, y: b.y }, size: { w: b.w, h: b.h } })
-                })
-                if (!overlaps) break
-                shiftX += 40
-                shiftY += 40
-                guard += 1
-            }
-            if (shiftX || shiftY) {
-                for (const n of targetTask.nodes) {
-                    n.position = { x: (n.position.x || 0) + shiftX, y: (n.position.y || 0) + shiftY }
-                }
-                newNode.position = { x: (newNode.position.x || 0) + shiftX, y: (newNode.position.y || 0) + shiftY }
-            }
-        }
-
+        const displacedEdge = sourceNodeObj
+            ? findEdgeAtPort(renderCanvasData.value.edges, payload.sourceNodeId, payload.portType, payload.sourcePortId)
+            : null
+        // 新节点必须先成为图中的正式成员，再建立连线。否则跨组归属无法
+        // 解析，且会产生“节点已创建但连线半提交”的中间状态。
+        targetTask.nodes.push(newNode)
         if (sourceNodeObj) {
-            applyEdge(canvasData.value.edges, {
+            const connected = applyEdge(renderCanvasData.value.edges, {
                 source: payload.sourceNodeId,
                 target: payload.nodeId,
                 source_port: payload.portType,
-                canvas: canvasName.value
+                source_port_id: payload.sourcePortId,
+                canvas: canvasName.value,
+                tasks: renderCanvasData.value.tasks
             })
+            if (!connected) {
+                targetTask.nodes = targetTask.nodes.filter(node => node.node_id !== newNode.node_id)
+                if (targetTask.nodes.length === 0 && targetTask.role !== 'main') {
+                    const index = tasks.findIndex(task => task.task_id === targetTask.task_id)
+                    if (index >= 0) tasks.splice(index, 1)
+                }
+                ElMessage.error('节点与连线未能原子创建，请重新拉线')
+                return { error: 'edge creation failed' }
+            }
+            // 插入语义必须保留原出口的显示/运行元数据。出口名称属于
+            // A 的端口，因此留在 A → X；跨任务返回语义属于通往原下游
+            // 的跳转，因此稍后转移到 X → B。
+            if (displacedEdge) {
+                const upstreamEdge = findEdgeAtPort(
+                    renderCanvasData.value.edges,
+                    payload.sourceNodeId,
+                    payload.portType,
+                    payload.sourcePortId
+                )
+                if (upstreamEdge && displacedEdge.label != null) {
+                    upstreamEdge.label = displacedEdge.label
+                }
+            }
         }
 
-        targetTask.nodes.push(newNode)
+        if (displacedEdge) {
+            const downstreamPort = getPrimarySourcePort(newNode, [])
+            applyEdge(renderCanvasData.value.edges, {
+                source: payload.nodeId,
+                target: displacedEdge.target_node,
+                source_port: downstreamPort.key,
+                source_port_id: downstreamPort.stableId,
+                canvas: canvasName.value,
+                tasks: renderCanvasData.value.tasks
+            })
+        }
+        // Initial placement avoids direct overlap; after insertion all peers in
+        // this group participate with equal weight, while other groups stay put.
+        settlePeerCollisions(targetTask.nodes)
+        try {
+            await saveCanvas()
+        } catch (error) {
+            if (activeGraph.value) {
+                activeGraph.value.nodes = graphBefore.nodes || []
+                activeGraph.value.edges = graphBefore.edges || []
+                activeGraph.value.blocks = graphBefore.blocks || []
+            }
+            ElMessage.error(`节点创建失败，画布已恢复：${error?.message || '保存失败'}`)
+            return { error: error?.message || 'save failed' }
+        }
+        uiStore.selectNodes([newNode.node_id], { primaryId: newNode.node_id, anchorId: newNode.node_id })
+        uiStore.setFocusTarget({ type: 'node', id: newNode.node_id, timestamp: Date.now() })
+        if (payload.announce !== false) ElMessage.success(`已创建节点“${newNode.node_name}”`)
+        return { node: newNode, taskId: targetTask.task_id, displacedEdge }
+    }
+
+    function createIndependentId(prefix) {
+        return `${prefix}_${globalThis.crypto?.randomUUID?.() || `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`}`
+    }
+
+    async function handlePasteSubgraph(payload) {
+        const snapshot = payload?.snapshot
+        if (!Array.isArray(snapshot?.nodes) || snapshot.nodes.length === 0) {
+            ElMessage.warning('剪贴板中没有可粘贴的节点')
+            return
+        }
+        activeUndoRedo.value.commit()
+        const tasks = renderCanvasData.value.tasks
+        const edges = renderCanvasData.value.edges
+        let targetTask = null
+        let sourceNode = null
+        if (payload.sourceNodeId) {
+            for (const task of tasks) {
+                const found = (task.nodes || []).find(node => node.node_id === payload.sourceNodeId)
+                if (!found) continue
+                sourceNode = found
+                targetTask = task
+                break
+            }
+        }
+        if (!targetTask && payload.groupId) {
+            targetTask = tasks.find(task => task.task_id === payload.groupId) || null
+        }
+        if (!targetTask && !isTopology.value && store.currentTaskId) {
+            targetTask = tasks.find(task => task.task_id === store.currentTaskId) || null
+        }
+        if (!targetTask) targetTask = tasks[0] || null
+        if (!targetTask) return
+        if (!targetTask.nodes) targetTask.nodes = []
+
+        const sourcePrimaryId = snapshot.selectionOrder?.find(id => snapshot.nodes.some(node => node.node_id === id))
+            || snapshot.nodes[0].node_id
+        const sourcePrimaryNode = snapshot.nodes.find(node => node.node_id === sourcePrimaryId) || snapshot.nodes[0]
+        const targetPosition = payload.position || sourcePrimaryNode.position || { x: 0, y: 0 }
+        const delta = {
+            x: Number(targetPosition.x || 0) - Number(sourcePrimaryNode.position?.x || 0),
+            y: Number(targetPosition.y || 0) - Number(sourcePrimaryNode.position?.y || 0)
+        }
+        const nodeIdMap = new Map()
+        const clonedNodes = snapshot.nodes.map(source => {
+            const node = JSON.parse(JSON.stringify(source))
+            const nextId = createIndependentId('node')
+            nodeIdMap.set(source.node_id, nextId)
+            node.node_id = nextId
+            node.position = {
+                x: Math.round((Number(source.position?.x || 0) + delta.x) / 20) * 20,
+                y: Math.round((Number(source.position?.y || 0) + delta.y) / 20) * 20
+            }
+            if ((node.node_type || node.type) === 'page_state' && node.params) {
+                node.params.page_id = createIndependentId('page')
+            }
+            return node
+        })
+        targetTask.nodes.push(...clonedNodes)
+
+        const copiedEdges = []
+        for (const sourceEdge of snapshot.edges || []) {
+            const mappedSource = nodeIdMap.get(sourceEdge.source_node)
+            const mappedTarget = nodeIdMap.get(sourceEdge.target_node)
+            if (!mappedSource || !mappedTarget) continue
+            const edge = JSON.parse(JSON.stringify(sourceEdge))
+            edge.source_node = mappedSource
+            edge.target_node = mappedTarget
+            edge.edge_id = `e_${mappedSource}_${edge.source_port}_${mappedTarget}`
+            edge.canvas = canvasName.value
+            if (edge.routing?.waypoints?.length) {
+                edge.routing = {
+                    mode: 'manual',
+                    waypoints: edge.routing.waypoints.map(point => ({
+                        ...point,
+                        id: createIndependentId('waypoint'),
+                        x: Number(point.x || 0) + delta.x,
+                        y: Number(point.y || 0) + delta.y
+                    }))
+                }
+            }
+            copiedEdges.push(edge)
+        }
+        edges.push(...copiedEdges)
+
+        const mappedPrimaryId = nodeIdMap.get(sourcePrimaryId)
+        if (sourceNode && mappedPrimaryId) {
+            const sourcePort = payload.sourcePort || getPrimarySourcePort(sourceNode, edges).key
+            const sourcePortId = payload.sourcePortId || sourcePort
+            const displacedEdge = findEdgeAtPort(edges, sourceNode.node_id, sourcePort, sourcePortId)
+            applyEdge(edges, {
+                source: sourceNode.node_id,
+                target: mappedPrimaryId,
+                source_port: sourcePort,
+                source_port_id: sourcePortId,
+                canvas: canvasName.value,
+                tasks
+            })
+            if (displacedEdge) {
+                const outgoing = new Map()
+                for (const edge of copiedEdges) {
+                    if (!outgoing.has(edge.source_node)) outgoing.set(edge.source_node, [])
+                    outgoing.get(edge.source_node).push(edge)
+                }
+                for (const list of outgoing.values()) {
+                    list.sort((a, b) => String(a.source_port).localeCompare(String(b.source_port), 'zh-CN', { numeric: true }))
+                }
+                let tailId = mappedPrimaryId
+                const visited = new Set()
+                while (!visited.has(tailId) && (outgoing.get(tailId) || []).length) {
+                    visited.add(tailId)
+                    tailId = outgoing.get(tailId)[0].target_node
+                }
+                const tailNode = clonedNodes.find(node => node.node_id === tailId)
+                const downstreamPort = getPrimarySourcePort(tailNode, edges)
+                applyEdge(edges, {
+                    source: tailId,
+                    target: displacedEdge.target_node,
+                    source_port: downstreamPort.key,
+                    source_port_id: downstreamPort.stableId || downstreamPort.key,
+                    canvas: canvasName.value,
+                    tasks
+                })
+            }
+        }
+
+        settlePeerCollisions(targetTask.nodes)
+        const orderedIds = (snapshot.selectionOrder || snapshot.nodes.map(node => node.node_id))
+            .map(id => nodeIdMap.get(id))
+            .filter(Boolean)
+        uiStore.selectNodes(orderedIds, {
+            primaryId: mappedPrimaryId,
+            anchorId: mappedPrimaryId
+        })
         await saveCanvas()
+        ElMessage.success(`已粘贴 ${clonedNodes.length} 个独立节点及 ${copiedEdges.length} 条内部连线`)
     }
 
     async function handleDeleteNode(payload) {
+        const owner = renderCanvasData.value.tasks.find(task => (task.nodes || []).some(node => node.node_id === payload?.nodeId))
+        const target = owner?.nodes?.find(node => node.node_id === payload?.nodeId)
+        if (target?.fixed) return ElMessage.warning('函数入口是固定节点，不能删除')
+        try {
+            await ElMessageBox.confirm(
+                `确定删除节点“${target?.node_name || payload?.nodeId || '未命名节点'}”吗？相关连线也会删除，可使用撤销恢复。`,
+                '删除节点',
+                { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+            )
+        } catch { return }
         activeUndoRedo.value.commit()
-        const tasks = canvasData.value.tasks
-        const edges = canvasData.value.edges
+        const tasks = renderCanvasData.value.tasks
+        const edges = renderCanvasData.value.edges
         const nextTasks = removeNode(tasks, edges, payload?.nodeId)
-        if (isTopology.value) {
-            store.blueprint.topology = { tasks: nextTasks, edges }
-        } else {
-            store.blueprint.tasks = nextTasks
+        if (activeGraph.value) activeGraph.value.nodes = nextTasks[0]?.nodes || []
+        if (activeGraph.value) activeGraph.value.edges = edges
+        uiStore.clearSelection()
+        await saveCanvas()
+        ElMessage.success('节点已删除')
+    }
+
+    async function handleDeleteBlock({ block, containedNodeIds = [] }) {
+        if (!block?.block_id || !activeGraph.value) return
+        let deleteContained = false
+        try {
+            await ElMessageBox.confirm(
+                `区块“${block.name}”当前完整包含 ${containedNodeIds.length} 个节点。默认只删除区块，节点和连线都会保留。`,
+                '删除区块',
+                {
+                    type: 'warning',
+                    distinguishCancelAndClose: true,
+                    confirmButtonText: '仅删除区块',
+                    cancelButtonText: containedNodeIds.length ? '区块和节点一起删除' : '取消',
+                    closeOnClickModal: false
+                }
+            )
+        } catch (action) {
+            if (action !== 'cancel' || !containedNodeIds.length) return
+            deleteContained = true
+        }
+        activeUndoRedo.value.commit()
+        activeGraph.value.blocks = (activeGraph.value.blocks || []).filter(item => item.block_id !== block.block_id)
+        if (deleteContained) {
+            const fixedIds = new Set((activeGraph.value.nodes || []).filter(node => node.fixed).map(node => node.node_id))
+            const removableIds = containedNodeIds.filter(id => !fixedIds.has(id))
+            let tasks = renderCanvasData.value.tasks
+            for (const id of removableIds) tasks = removeNode(tasks, activeGraph.value.edges || [], id)
+            activeGraph.value.nodes = tasks[0]?.nodes || []
+            if (removableIds.length !== containedNodeIds.length) ElMessage.warning('固定入口节点已保留')
         }
         uiStore.clearSelection()
         await saveCanvas()
-    }
-
-    async function handleDeleteGroup(payload) {
-        activeUndoRedo.value.commit()
-        const tasks = canvasData.value.tasks
-        const nextTasks = tasks.filter(t => t.task_id !== payload.taskId)
-        if (isTopology.value) {
-            store.blueprint.topology = { tasks: nextTasks, edges: canvasData.value.edges }
-        } else {
-            store.blueprint.tasks = nextTasks
-        }
-        await saveCanvas()
-        ElMessage.success('任务组已删除')
+        ElMessage.success(deleteContained ? '区块及其中可删除节点已删除' : '区块已删除，节点保持原位')
     }
 
     // ===== 通用操作（两 Tab 共用） =====
@@ -251,30 +605,102 @@
         ElMessage.success('蓝图已保存')
     }
 
-    function handleDelete() {
+    function openAutoLayout() {
+        layoutOriginal.value = JSON.parse(JSON.stringify({
+            nodes: activeGraph.value?.nodes || [],
+            blocks: activeGraph.value?.blocks || []
+        }))
+        layoutPreviewActive.value = false
+        layoutDialogVisible.value = true
+    }
+
+    function previewAutoLayout() {
+        const selectedNodeIds = uiStore.selectedNodeIds || []
+        if (layoutScope.value === 'selection' && !selectedNodeIds.length) {
+            ElMessage.warning('请先选中要布局的节点')
+            return
+        }
+        const original = layoutOriginal.value || JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [], blocks: activeGraph.value?.blocks || [] }))
+        const preview = autoLayoutGraphGeometry({
+            nodes: original.nodes || [],
+            edges: renderCanvasData.value.edges,
+            blocks: original.blocks || []
+        }, {
+            scope: layoutScope.value,
+            selectedNodeIds
+        })
+        if (activeGraph.value) {
+            activeGraph.value.nodes = preview.nodes
+            activeGraph.value.blocks = preview.blocks
+        }
+        layoutPreviewActive.value = true
+    }
+
+    async function confirmAutoLayout() {
+        if (!layoutPreviewActive.value) return
+        const preview = JSON.parse(JSON.stringify({ nodes: activeGraph.value?.nodes || [], blocks: activeGraph.value?.blocks || [] }))
+        const original = JSON.parse(JSON.stringify(layoutOriginal.value || { nodes: [], blocks: [] }))
+        if (activeGraph.value) {
+            activeGraph.value.nodes = original.nodes || []
+            activeGraph.value.blocks = original.blocks || []
+        }
+        activeUndoRedo.value.commit()
+        if (activeGraph.value) {
+            activeGraph.value.nodes = preview.nodes || []
+            activeGraph.value.blocks = preview.blocks || []
+        }
+        await saveCanvas()
+        layoutOriginal.value = null
+        layoutPreviewActive.value = false
+        layoutDialogVisible.value = false
+        ElMessage.success('自动布局已保存，可使用撤销恢复')
+    }
+
+    function cancelLayoutPreview() {
+        if (layoutPreviewActive.value && layoutOriginal.value) {
+            const original = JSON.parse(JSON.stringify(layoutOriginal.value))
+            if (activeGraph.value) {
+                activeGraph.value.nodes = original.nodes || []
+                activeGraph.value.blocks = original.blocks || []
+            }
+        }
+        layoutOriginal.value = null
+        layoutPreviewActive.value = false
+        layoutDialogVisible.value = false
+    }
+
+    async function handleDelete() {
         const ids = uiStore.selectedNodeIds || []
         if (!ids.length) {
             ElMessage.warning('请先选中要删除的节点')
             return
         }
-        const tasks = canvasData.value.tasks
-        const edges = canvasData.value.edges
+        const tasks = renderCanvasData.value.tasks
+        const edges = renderCanvasData.value.edges
+        const fixedIds = new Set((tasks[0]?.nodes || []).filter(node => node.fixed).map(node => node.node_id))
+        const removableIds = ids.filter(id => !fixedIds.has(id))
+        if (!removableIds.length) return ElMessage.warning('选中的节点不可删除')
+        try {
+            await ElMessageBox.confirm(
+                `确定删除选中的 ${removableIds.length} 个节点吗？相关连线也会删除，可使用撤销恢复。`,
+                '删除选中节点',
+                { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' }
+            )
+        } catch { return }
         let nextTasks = tasks
-        for (const id of [...ids]) {
+        for (const id of removableIds) {
             nextTasks = removeNode(nextTasks, edges, id)
         }
-        if (isTopology.value) {
-            store.blueprint.topology = { tasks: nextTasks, edges }
-        } else {
-            store.blueprint.tasks = nextTasks
-        }
+        if (activeGraph.value) activeGraph.value.nodes = nextTasks[0]?.nodes || []
+        if (activeGraph.value) activeGraph.value.edges = edges
         activeUndoRedo.value.commit()
         uiStore.clearSelection()
-        saveCanvas()
+        await saveCanvas()
+        ElMessage.success(`已删除 ${removableIds.length} 个节点`)
     }
 
     function handleSelectAll() {
-        const allIds = (canvasData.value.tasks || []).flatMap(t => (t.nodes || []).map(n => n.node_id))
+        const allIds = (renderCanvasData.value.tasks || []).flatMap(t => (t.nodes || []).map(n => n.node_id))
         if (!allIds.length) return
         // 已全选 -> 取消全选
         if (uiStore.selectedNodeIds.length === allIds.length &&
@@ -284,12 +710,6 @@
         }
         uiStore.selectNodes(allIds)
     }
-
-    onMounted(async () => {
-        if (store.currentProjectPath) {
-            await store.loadProjectData()
-        }
-    })
 
     // ===== 控件捕获模式：一键生成控件节点（由 IdeLayout 经 ref 调用） =====
     async function createControlNodeFromCapture(info) {
@@ -313,30 +733,13 @@
             control_info: info || null
         }
         const nodeName = buildControlNodeName(info)
-        let position = null
-        let sourceNodeId = null
-
-        // 选中单个节点 → 在其 success 线后新建（与粘贴逻辑一致）
-        const selectedIds = uiStore.selectedNodeIds?.length ? uiStore.selectedNodeIds
-            : (uiStore.selectedNodeId ? [uiStore.selectedNodeId] : [])
-        if (selectedIds.length === 1) {
-            const tasks = canvasData.value.tasks
-            for (const t of tasks) {
-                const found = (t.nodes || []).find(n => n.node_id === selectedIds[0])
-                if (found) {
-                    sourceNodeId = found.node_id
-                    const w = found.w || 180
-                    position = {
-                        x: Math.round((found.position.x + w + 40) / 20) * 20,
-                        y: found.position.y
-                    }
-                    break
-                }
-            }
-        }
-        if (!position) {
-            position = { x: 0, y: 0 }
-        }
+        const context = getCaptureContext()
+        const sourceNodeId = context.anchorKind === 'node' ? context.anchorNodeId : null
+        const sourceNode = sourceNodeId
+            ? (renderCanvasData.value.tasks || []).flatMap(task => task.nodes || []).find(node => node.node_id === sourceNodeId)
+            : null
+        const port = context.selectedPort || (sourceNode ? getPrimarySourcePort(sourceNode, renderCanvasData.value.edges) : null)
+        const position = sourceNode ? positionAfterNode(sourceNode) : { ...(context.viewportCenter || { x: 0, y: 0 }) }
 
         await handleCreateNode({
             nodeId,
@@ -345,11 +748,317 @@
             params,
             position,
             sourceNodeId,
-            portType: 'succ',
+            groupId: sourceNode ? null : context.groupId,
+            portType: port?.key || 'success',
+            sourcePortId: port?.stableId || port?.key || 'success',
+            announce: false,
         })
         uiStore.selectNodes([nodeId])
         ElMessage.success(`已生成控件节点 [${nodeName}]（${by} = ${target}）`)
     }
 
-    defineExpose({ createControlNodeFromCapture })
+    const captureChains = new Map()
+
+    function getCaptureContext() {
+        const tasks = renderCanvasData.value.tasks || []
+        const edges = renderCanvasData.value.edges || []
+        const selectedIds = uiStore.selectedNodeIds?.length
+            ? [...uiStore.selectedNodeIds]
+            : (uiStore.selectedNodeId ? [uiStore.selectedNodeId] : [])
+        const viewportCenter = canvasViewRef.value?.getViewportCenter?.() || { x: 0, y: 0 }
+        if (selectedIds.length === 1) {
+            for (const task of tasks) {
+                const node = (task.nodes || []).find(item => item.node_id === selectedIds[0])
+                if (!node) continue
+                const primary = getPrimarySourcePort(node, edges)
+                const described = getSourcePortDescriptors(node, edges)
+                const ports = described.length ? described : [primary]
+                return {
+                    canvasMode: canvasMode.value,
+                    anchorKind: 'node',
+                    anchorNodeId: node.node_id,
+                    groupId: task.task_id,
+                    viewportCenter,
+                    ports,
+                    selectedPort: primary
+                }
+            }
+        }
+        const activeTask = isTopology.value
+            ? tasks.find(task => uiStore.selectedGroupId === `group_${task.task_id}`)
+            : tasks.find(task => task.task_id === store.currentTaskId)
+        if (activeTask) {
+            return {
+                canvasMode: canvasMode.value,
+                anchorKind: isTopology.value ? 'page_map' : (isFunctionCanvas.value ? 'function' : 'main'),
+                groupId: activeTask.task_id,
+                viewportCenter,
+                ports: [],
+                selectedPort: null
+            }
+        }
+        return {
+            canvasMode: canvasMode.value,
+            anchorKind: isTopology.value ? 'page_map' : 'project',
+            groupId: tasks[0]?.task_id || null,
+            viewportCenter,
+            ports: [],
+            selectedPort: null
+        }
+    }
+
+    function positionAfterNode(node) {
+        return {
+            x: Math.round(((node?.position?.x || 0) + NODE_WIDTH + 60) / 20) * 20,
+            y: Math.round((node?.position?.y || 0) / 20) * 20
+        }
+    }
+
+    function resolveCaptureChain(snapshotId, initialContext = {}) {
+        if (!captureChains.has(snapshotId)) {
+            captureChains.set(snapshotId, {
+                snapshotId,
+                anchorKind: initialContext.anchorKind || 'project',
+                tailNodeId: initialContext.anchorNodeId || null,
+                groupId: initialContext.groupId || null,
+                viewportCenter: initialContext.viewportCenter || { x: 0, y: 0 },
+                transactions: []
+            })
+        }
+        return captureChains.get(snapshotId)
+    }
+
+    async function executeCaptureCommand(command) {
+        const snapshotId = command.snapshot_id
+        const chain = resolveCaptureChain(command.capture_chain_id || snapshotId, command.capture_context || {})
+        if (command.kind === 'rollback_operation') {
+            const transaction = chain.transactions.at(-1)
+            if (!transaction || transaction.operationId !== command.operation_id) {
+                return { ok: true, skipped: true, message: '操作未提交或已被其他操作取代' }
+            }
+            if (transaction.canvasMutated) {
+                activeUndoRedo.value.undo()
+                try {
+                    await saveCanvas()
+                } catch (error) {
+                    activeUndoRedo.value.redo()
+                    await saveCanvas().catch(() => {})
+                    throw error
+                }
+                chain.tailNodeId = transaction.previousTail || null
+                chain.groupId = transaction.previousGroup || chain.groupId
+            }
+            chain.transactions.pop()
+            return { ok: true, rolledBack: true }
+        }
+        if (command.kind === 'undo') {
+            const transaction = chain.transactions.at(-1)
+            if (!transaction) return { ok: false, message: '当前捕获会话没有可撤销操作' }
+            if (transaction.canvasMutated) {
+                activeUndoRedo.value.undo()
+                try {
+                    await saveCanvas()
+                } catch (error) {
+                    activeUndoRedo.value.redo()
+                    await saveCanvas().catch(() => {})
+                    throw error
+                }
+                chain.tailNodeId = transaction.previousTail || null
+                chain.groupId = transaction.previousGroup || chain.groupId
+            }
+            chain.transactions.pop()
+            return {
+                ok: true,
+                undo_asset_transaction: transaction.assetTransaction || '',
+                tailNodeId: chain.tailNodeId,
+                ports: chain.tailNodeId ? getCaptureTailPorts(chain.tailNodeId) : [],
+                selectedPort: transaction.previousPort || null
+            }
+        }
+        if (command.kind === 'record') {
+            chain.transactions.push({
+                canvasMutated: false,
+                assetTransaction: command.asset_transaction || '',
+                previousTail: chain.tailNodeId,
+                previousGroup: chain.groupId,
+                previousPort: command.port || null,
+                operationId: command.operation_id || ''
+            })
+            return { ok: true, tailNodeId: chain.tailNodeId, ports: getCaptureTailPorts(chain.tailNodeId) }
+        }
+
+        const allowed = canvasMode.value === 'topology'
+            ? ['click', 'image', 'ocr', 'page']
+            : ['click', 'image', 'ocr']
+        if (!allowed.includes(command.kind)) {
+            throw new Error(command.kind === 'page' ? '页面节点只能在页面拓扑画布创建' : '当前画布不允许该捕获节点')
+        }
+        const referenceSize = command.reference_size || [0, 0]
+        const rects = command.rects || []
+        const templateKeys = command.template_keys || []
+        const assetRefs = command.asset_refs || templateKeys
+        let type = 'click'
+        let params = buildNodeDefaultParams('click', store.paramsDefinitions)
+        if (command.kind === 'click') {
+            if (!Array.isArray(command.point) || command.point.length !== 2) throw new Error('缺少有效坐标点')
+            params = {
+                ...params,
+                position: command.point.map(Number),
+                position_reference_size: referenceSize,
+                coordinate_space: 'workspace_px'
+            }
+        } else if (command.kind === 'image') {
+            if (rects.length !== 1 || assetRefs.length !== 1) throw new Error('图像识别要求恰好一个框选范围')
+            type = 'image_recognition'
+            params = {
+                ...buildNodeDefaultParams(type, store.paramsDefinitions),
+                image_source: assetRefs[0],
+                region_type: 'recorded',
+                region_value: rects[0],
+                region_reference_size: referenceSize,
+                coordinate_space: 'workspace_px'
+            }
+        } else if (command.kind === 'ocr') {
+            if (rects.length !== 1 || assetRefs.length !== 1) throw new Error('OCR识别要求恰好一个框选范围')
+            type = 'ocr_recognition'
+            params = {
+                ...buildNodeDefaultParams(type, store.paramsDefinitions),
+                image_source: assetRefs[0],
+                region_type: 'recorded',
+                region_value: rects[0],
+                region_reference_size: referenceSize,
+                coordinate_space: 'workspace_px'
+            }
+        } else if (command.kind === 'page') {
+            if (!rects.length || rects.length !== assetRefs.length) throw new Error('页面特征资源与框选数量不一致')
+            type = 'page_state'
+            params = {
+                ...buildNodeDefaultParams(type, store.paramsDefinitions),
+                page_id: `page_${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+                feature_mode: 'and',
+                features: assetRefs.map((key, index) => ({
+                    condition_type: 'image_exists',
+                    exist_mode: 'exists',
+                    image_source: key,
+                    gray_scale: true,
+                    gray_threshold: 127,
+                    threshold: 85,
+                    region_type: 'recorded',
+                    region_value: rects[index],
+                    region_reference_size: referenceSize,
+                    coordinate_space: 'workspace_px',
+                    negate: false
+                }))
+            }
+        }
+
+        const previousTail = chain.tailNodeId
+        const previousGroup = chain.groupId
+        let sourceNode = null
+        if (chain.tailNodeId) {
+            sourceNode = (renderCanvasData.value.tasks || [])
+                .flatMap(task => task.nodes || [])
+                .find(node => node.node_id === chain.tailNodeId)
+        }
+        const port = command.port || (sourceNode ? getPrimarySourcePort(sourceNode, renderCanvasData.value.edges) : null)
+        const nodeId = `node_${Date.now()}${Math.random().toString(36).slice(2, 7)}`
+        const position = sourceNode
+            ? positionAfterNode(sourceNode)
+            : { ...chain.viewportCenter }
+        try {
+            const created = await handleCreateNode({
+                nodeId,
+                type,
+                params,
+                position,
+                sourceNodeId: sourceNode?.node_id || null,
+                groupId: sourceNode ? null : chain.groupId,
+                portType: port?.key || 'success',
+                sourcePortId: port?.stableId || port?.key || 'success',
+                announce: false
+            })
+            if (created?.error) return { ok: false, message: created.error }
+            chain.tailNodeId = nodeId
+            chain.groupId = created?.taskId || chain.groupId
+            chain.transactions.push({
+                canvasMutated: true,
+                assetTransaction: command.asset_transaction || '',
+                previousTail,
+                previousGroup,
+                previousPort: command.port || null,
+                operationId: command.operation_id || ''
+            })
+            return {
+                ok: true,
+                nodeId,
+                nodeName: created?.node?.node_name || '',
+                tailNodeId: nodeId,
+                groupId: chain.groupId,
+                ports: getCaptureTailPorts(nodeId),
+                // 页面节点尚未连线时也有一个稳定的“出口 1”，CaptureHost
+                // 必须显示它，不能等第一条线生成后才出现下拉项。
+                selectedPort: getPrimarySourcePort(created.node, renderCanvasData.value.edges)
+            }
+        } catch (error) {
+            activeUndoRedo.value.undo()
+            await saveCanvas().catch(() => {})
+            throw error
+        }
+    }
+
+    function getCaptureTailPorts(nodeId) {
+        if (!nodeId) return []
+        const node = (renderCanvasData.value.tasks || []).flatMap(task => task.nodes || []).find(item => item.node_id === nodeId)
+        if (!node) return []
+        const ports = getSourcePortDescriptors(node, renderCanvasData.value.edges)
+        return ports.length ? ports : [getPrimarySourcePort(node, renderCanvasData.value.edges)]
+    }
+
+    const navigateToFlow = async event => {
+        const taskId = event?.detail?.taskId
+        if (!taskId || (taskId !== MAIN_GRAPH_ID && !(store.blueprint.functions || []).some(item => item.function_id === taskId))) return
+        uiStore.clearSelection()
+        await store.loadTaskData(taskId)
+        await store.setCanvasMode(taskId === MAIN_GRAPH_ID ? 'workflow' : 'function')
+        uiStore.setFocusTarget({ type: 'graph', id: taskId, timestamp: Date.now() })
+    }
+    onMounted(() => {
+        window.addEventListener('easycode:navigate-flow', navigateToFlow)
+    })
+    onUnmounted(() => {
+        window.removeEventListener('easycode:navigate-flow', navigateToFlow)
+    })
+
+    const undoCanvas = () => {
+        if (!activeUndoRedo.value.canUndo.value) return false
+        activeUndoRedo.value.undo()
+        return true
+    }
+    const redoCanvas = () => {
+        if (!activeUndoRedo.value.canRedo.value) return false
+        activeUndoRedo.value.redo()
+        return true
+    }
+
+    defineExpose({
+        createControlNodeFromCapture,
+        executeCaptureCommand,
+        getCaptureContext,
+        undoCanvas,
+        redoCanvas,
+        saveCanvas,
+        openAutoLayout
+    })
 </script>
+
+<style scoped>
+.canvas-page-shell{width:100%;height:100%;min-height:0;display:flex;flex-direction:column;background:var(--el-bg-color-page)}
+.canvas-page-shell :deep(.custom-canvas-container){min-height:0;flex:1}
+.flow-breadcrumb{height:32px;min-height:32px;padding:0 10px;border-bottom:1px solid var(--el-border-color-lighter);display:flex;align-items:center;gap:4px;color:var(--el-text-color-secondary);background:var(--el-bg-color);font-size:11px}
+.flow-breadcrumb>svg{width:12px;height:12px;color:var(--el-text-color-placeholder)}
+.breadcrumb-root{max-width:180px;padding:3px 5px;border:0;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--el-text-color-secondary);background:transparent;cursor:pointer}
+.breadcrumb-root:hover{color:var(--el-text-color-primary);background:var(--el-fill-color-light)}
+.breadcrumb-root:focus-visible{outline:0;box-shadow:var(--focus-ring)}
+.breadcrumb-current{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--el-text-color-primary);font-weight:620}
+.flow-context-note{margin-left:auto;color:var(--el-text-color-placeholder)}
+</style>

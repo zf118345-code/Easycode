@@ -10,8 +10,8 @@
     <div
         ref="editorRef"
         class="var-aware-input"
-        :class="{ 'is-multiline': isMultiline, 'is-empty': isEmpty }"
-        contenteditable="true"
+        :class="{ 'is-multiline': isMultiline, 'is-empty': isEmpty, 'is-readonly': config.readonly }"
+        :contenteditable="config.readonly ? 'false' : 'true'"
         :data-placeholder="placeholder"
         spellcheck="false"
         @input="onInput"
@@ -104,15 +104,6 @@
     }
 
     // ===== 光标管理（基于 DOM 文本偏移） =====
-
-    function getCaretOffset() {
-        const sel = window.getSelection()
-        if (!sel || !sel.rangeCount || !editorRef.value.contains(sel.anchorNode)) return -1
-        const range = sel.getRangeAt(0).cloneRange()
-        range.selectNodeContents(editorRef.value)
-        range.setEnd(sel.anchorNode, sel.anchorOffset)
-        return range.toString().length
-    }
 
     function setCaretOffset(offset) {
         const el = editorRef.value
@@ -233,6 +224,11 @@
         resize: vertical;
         overflow-y: auto;
     }
+    .var-aware-input.is-readonly {
+        cursor: default;
+        background: var(--el-disabled-bg-color);
+        color: var(--el-disabled-text-color);
+    }
     .var-aware-input.is-empty::before {
         content: attr(data-placeholder);
         color: var(--el-text-color-placeholder);
@@ -247,16 +243,16 @@
         margin: 0 4px;   /* 视觉间距由 margin 提供，不产生空格文本节点，避免值污染 */
         padding: 0 5px;
         border-radius: 4px;
-        background: rgba(78, 209, 156, 0.16);
-        color: #4ed19c;
+    background: rgba(217, 84, 23, 0.16);
+    color: var(--app-color-primary);
         font-weight: 600;
-        box-shadow: 0 0 0 1px rgba(78, 209, 156, 0.35), 0 0 8px rgba(78, 209, 156, 0.28);
+    box-shadow: 0 0 0 1px rgba(217, 84, 23, 0.35), 0 0 8px rgba(217, 84, 23, 0.24);
         cursor: pointer;
         user-select: none;
         white-space: nowrap;
         transition: background 0.15s;
     }
     .var-aware-input .var-chip:hover {
-        background: rgba(78, 209, 156, 0.3);
+    background: rgba(217, 84, 23, 0.3);
     }
 </style>

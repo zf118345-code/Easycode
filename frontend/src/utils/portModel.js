@@ -13,15 +13,15 @@
  */
 export function parseDynamicPortIndex(name) {
     if (typeof name !== 'string') return null
-    const m = name.match(/^(?:branch|exit)_(\d+)$/)
+    const m = name.match(/^(?:branch|exit|outcome)_(\d+)$/)
     return m ? parseInt(m[1], 10) : null
 }
 
 /**
- * 是否为动态端口名（branch_N / exit_N / 旧 exit 别名）
+ * 是否为动态端口名（branch_N / exit_N）
  */
 export function isDynamicPortName(name) {
-    return name === 'exit' || parseDynamicPortIndex(name) !== null
+    return parseDynamicPortIndex(name) !== null
 }
 
 /**
@@ -31,7 +31,17 @@ export function getDefinedDynamicPorts(node, nodeType) {
     if (nodeType === 'branch') {
         return (node?.params?.candidates || []).map((c, i) => ({
             name: `branch_${i}`,
-            label: `分支 ${i + 1}`
+            label: `分支 ${i + 1}`,
+            stableId: c.candidate_id
+        }))
+    }
+    if (nodeType === 'call_function') {
+        return (node?._functionOutcomes || []).map((outcome, index) => ({
+            name: `outcome_${index}`,
+            label: outcome.name || `结果 ${index + 1}`,
+            stableId: outcome.outcome_id,
+            role: 'outcome',
+            color: outcome.color === 'danger' || outcome.outcome_id === 'system_exception' ? 'red' : 'green'
         }))
     }
     return []
@@ -47,17 +57,13 @@ export function getPageStateExitPorts(node, edges) {
     for (const e of edges || []) {
         if (e.source_node !== node?.node_id) continue
         const port = e.source_port || ''
-        if (port === 'exit') {
-            list.push({ name: 'exit_0', label: e.label || '出口 1', rawIndex: 0 })
-            continue
-        }
         const idx = parseDynamicPortIndex(port)
         if (idx !== null && port.startsWith('exit_')) {
-            list.push({ name: `exit_${idx}`, label: e.label || `出口 ${idx + 1}`, rawIndex: idx })
+            list.push({ name: `exit_${idx}`, label: e.label || `出口 ${idx + 1}`, rawIndex: idx, stableId: e.source_port_id })
         }
     }
     list.sort((a, b) => a.rawIndex - b.rawIndex)
-    return list.map(({ rawIndex, ...rest }) => rest)
+    return list.map(item => ({ name: item.name, label: item.label, stableId: item.stableId }))
 }
 
 /**
@@ -71,7 +77,10 @@ export function buildNodePorts(node, edges = [], failurePortTypes = []) {
     const nodeType = node?.type || node?.node_type
     const connectedSet = new Set()
     for (const e of edges || []) {
-        if (e.source_node === node?.node_id) connectedSet.add(e.source_port || 'success')
+        if (e.source_node === node?.node_id) {
+            connectedSet.add(e.source_port)
+            connectedSet.add(e.source_port_id)
+        }
     }
     const has = (p) => connectedSet.has(p)
 
@@ -93,14 +102,9 @@ export function buildNodePorts(node, edges = [], failurePortTypes = []) {
             ...exits.map(p => ({ ...p, status: 'bound' })),
             { name: `exit_${maxIdx + 1}`, label: '+ 新出口', status: 'pending' }
         ]
-    } else {
-        // 兜底：其他类型已连的动态边（branch_/exit_）补进端口（历史数据兼容）
-        for (const p of connectedSet) {
-            if (isDynamicPortName(p) && !dynamic.some(d => d.name === p)) {
-                const name = p === 'exit' ? 'exit_0' : p
-                dynamic.push({ name, label: name === 'exit_0' ? '出口 1' : name })
-            }
-        }
+    } else if (nodeType === 'call_function') {
+        successVisible = false
+        dynamic = getDefinedDynamicPorts(node, nodeType)
     }
 
     dynamic.sort((a, b) => {
@@ -110,14 +114,69 @@ export function buildNodePorts(node, edges = [], failurePortTypes = []) {
     })
 
     return {
-        success: { visible: successVisible, connected: has('succ') || has('success') },
+        success: { visible: successVisible, connected: has('success') },
         failure: {
-            visible: failurePortTypes.includes(nodeType) || has('fail') || has('failure'),
-            connected: has('fail') || has('failure')
+            visible: failurePortTypes.includes(nodeType) || has('failure'),
+            connected: has('failure')
         },
         dynamic: dynamic.map(d => ({
             ...d,
-            connected: has(d.name) || (d.name === 'exit_0' && has('exit'))
+            connected: has(d.name) || has(d.stableId)
         }))
+    }
+}
+
+export const FAILURE_PORT_TYPES = [
+    'image_recognition', 'ocr_recognition', 'branch', 'logic_check'
+]
+
+/**
+ * A single semantic source-port list consumed by the canvas and CaptureHost.
+ * stableId 与 branch_N/exit_N 的显示位置分开存储，因此重排不会改变连线身份。
+ */
+export function getSourcePortDescriptors(node, edges = [], failurePortTypes = FAILURE_PORT_TYPES) {
+    if (!node) return []
+    const ports = buildNodePorts(node, edges, failurePortTypes)
+    const descriptors = []
+    if (ports.success.visible) {
+        descriptors.push({
+            key: 'success', stableId: 'success', role: 'success', label: '成功',
+            order: 1, connected: ports.success.connected, color: 'green'
+        })
+    }
+    for (const item of ports.dynamic) {
+        if (item.status === 'pending') continue
+        const index = (parseDynamicPortIndex(item.name) ?? 0) + 1
+        const role = item.role || (item.name.startsWith('branch_') ? 'branch' : item.name.startsWith('exit_') ? 'exit' : 'outcome')
+        descriptors.push({
+            key: item.name,
+            stableId: item.stableId,
+            role,
+            label: item.label || `${role === 'branch' ? '分支' : role === 'exit' ? '出口' : '结果'} ${index}`,
+            order: index,
+            connected: Boolean(item.connected),
+            color: item.color || 'green'
+        })
+    }
+    if (ports.failure.visible) {
+        descriptors.push({
+            key: 'failure', stableId: 'failure', role: 'failure', label: '失败',
+            order: 1, connected: ports.failure.connected, color: 'red'
+        })
+    }
+    return descriptors
+}
+
+export function getPrimarySourcePort(node, edges = []) {
+    const nodeType = node?.node_type || node?.type
+    if (nodeType === 'page_state') {
+        return {
+            key: 'exit_0', stableId: `exit_${node?.node_id || 'pending'}_0`,
+            role: 'exit', label: '出口 1', order: 1, color: 'green'
+        }
+    }
+    const descriptors = getSourcePortDescriptors(node, edges)
+    return descriptors.find(port => port.role !== 'failure') || descriptors[0] || {
+        key: 'success', stableId: 'success', role: 'success', label: '成功', order: 1, color: 'green'
     }
 }

@@ -1,52 +1,108 @@
 /* frontend/src/assets/theme.css */
-/* ==========================================================================
-   ⚡ Easycode 全局暗黑主题样式表 (Deep Indigo Theme & Design Tokens)
+/* ===========================================================================
+   EasyCode Grok-inspired Graphite design system
+   Warm graphite, restrained orange accent, compact native-desktop density.
    ========================================================================== */
 :root {
-    /* 核心背景色系 */
-    --el-bg-color-page: #1f2033 !important;
-    --el-bg-color: #26283d !important;
-    --el-bg-color-overlay: #26283d !important;
-    --el-fill-color-blank: #181926 !important;
-    --el-fill-color: #1d1e30 !important;
-    --el-fill-color-light: #2a2c45 !important;
-    --el-fill-color-lighter: #313352 !important;
-    /* 文本色系 */
-    --el-text-color-primary: #ffffff !important;
-    --el-text-color-regular: #cfd3e6 !important;
-    --el-text-color-secondary: #8c8fa8 !important;
-    --el-text-color-placeholder: #5c5f78 !important;
-    /* 边框与主题色 */
-    --el-border-color: transparent !important;
-    --el-border-color-light: #313352 !important;
-    --el-border-color-lighter: #282a44 !important;
-    --el-color-primary: #4ed19c !important;
-    --el-mask-color: rgba(15, 16, 26, 0.8) !important;
-    /* ⚡ Design Tokens (设计令牌收敛) */
-    --app-btn-secondary-bg: #26283d;
-    --app-btn-secondary-border: #313352;
-    --app-btn-secondary-hover-bg: #2b2d3d;
-    --app-btn-secondary-hover-border: #4ed19c;
-    --app-card-bg: #181926;
-    --app-card-border: #313352;
-    --app-radius-sm: 4px;
+    color-scheme: dark;
+    /* warm graphite material hierarchy */
+    --el-bg-color-page: #0f0f0e !important;
+    --el-bg-color: #1a1a18 !important;
+    --el-bg-color-overlay: #20201e !important;
+    --el-fill-color-blank: #111110 !important;
+    --el-fill-color: #1d1d1b !important;
+    --el-fill-color-light: #262623 !important;
+    --el-fill-color-lighter: #30302c !important;
+    --el-fill-color-extra-light: #393934 !important;
+    --el-fill-color-dark: #0b0b0a !important;
+    /* warm-neutral text hierarchy */
+    --el-text-color-primary: #f7f7f2 !important;
+    --el-text-color-regular: #d8d8d0 !important;
+    --el-text-color-secondary: #9c9c93 !important;
+    --el-text-color-placeholder: #6d6d66 !important;
+    /* hairline separators + restrained orange identity */
+    --el-border-color: #41413b !important;
+    --el-border-color-light: #30302c !important;
+    --el-border-color-lighter: #292926 !important;
+    --el-border-color-extra-light: #222220 !important;
+    --el-color-primary: #d95417 !important;
+    --el-color-primary-light-3: #e66a31 !important;
+    --el-color-primary-light-5: #ed8e64 !important;
+    --el-color-primary-light-7: #f4b79b !important;
+    --el-color-primary-light-9: rgba(217, 84, 23, 0.14) !important;
+    --el-color-primary-dark-2: #b94312 !important;
+    --el-color-success: #3ba66b !important;
+    --el-color-warning: #d89a32 !important;
+    --el-color-danger: #d84a4a !important;
+    --el-color-info: #5c83c7 !important;
+    --el-mask-color: rgba(7, 7, 6, 0.74) !important;
+    --el-box-shadow-light: 0 12px 32px rgba(0, 0, 0, 0.34) !important;
+    --el-box-shadow: 0 24px 64px rgba(0, 0, 0, 0.46) !important;
+    --app-color-primary-hover: #e66a31;
+    --app-color-primary-pressed: #b94312;
+    --app-color-on-primary: #fff8f2;
+    --app-bg-base: #0f0f0e;
+    --app-bg-chrome: #121211;
+    --app-bg-sidebar: #151514;
+    --app-bg-panel: #1a1a18;
+    --app-bg-raised: #20201e;
+    --app-bg-input: #111110;
+    --app-bg-hover: #262623;
+    --app-border-subtle: rgba(255, 251, 242, 0.08);
+    --app-border-default: #30302c;
+    --app-border-strong: #41413b;
+    --app-text-primary: #f7f7f2;
+    --app-text-regular: #d8d8d0;
+    --app-text-secondary: #9c9c93;
+    --app-text-placeholder: #6d6d66;
+    --app-text-disabled: #555550;
+    --app-overlay-bg: rgba(32, 32, 30, 0.98);
+    --app-overlay-border: rgba(255, 251, 242, 0.12);
+    --app-overlay-separator: rgba(255, 251, 242, 0.08);
+    --app-scrollbar-thumb: #41413b;
+    --app-scrollbar-thumb-hover: #5a5a53;
+    --app-chrome-bg: var(--app-bg-chrome);
+    --app-sidebar-bg: var(--app-bg-sidebar);
+    --app-canvas-bg: var(--app-bg-base);
+    --app-surface-raised: var(--app-bg-raised);
+    --app-surface-hover: var(--app-bg-hover);
+    --app-separator: var(--app-border-subtle);
+    --app-btn-secondary-bg: var(--app-bg-raised);
+    --app-btn-secondary-border: var(--app-border-default);
+    --app-btn-secondary-hover-bg: var(--app-bg-hover);
+    --app-btn-secondary-hover-border: var(--el-color-primary);
+    --app-card-bg: var(--app-bg-panel);
+    --app-card-border: var(--app-border-default);
+    --app-radius-sm: 6px;
     --app-radius-md: 8px;
     --app-radius-lg: 12px;
-    /* ⚡ 节点卡片与端口 Design Tokens（Step 4 网格化端口布局） */
-    --node-card-bg: rgba(30, 32, 50, 0.92);
-    --node-card-border: rgba(255, 255, 255, 0.08);
-    --node-card-radius: 10px;
-    --node-card-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
-    --node-card-shadow-hover: 0 8px 28px rgba(0, 0, 0, 0.55);
-    --node-content-bg: rgba(0, 0, 0, 0.15);
-    --node-footer-bg: rgba(0, 0, 0, 0.1);
-    --port-ring: #12131e;
-    --port-entry: #4a4d62;
-    --port-entry-border: #6b7090;
-    --port-success: #4ed19c;
-    --port-success-border: #2a8565;
-    --port-failure: #f56c6c;
-    --port-failure-border: #a03838;
+    --app-control-compact: 28px;
+    --app-control-default: 32px;
+    --app-control-player: 38px;
+    --app-font-sans: Inter, "SF Pro Text", "SF Pro Display", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif;
+    --app-font-mono: "JetBrains Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+    --focus-ring: 0 0 0 3px rgba(217, 84, 23, 0.20);
+    /* node cards stay opaque and calm; only selection carries the accent */
+    --node-card-bg: #20201e;
+    --node-card-border: #383833;
+    --node-card-radius: 8px;
+    --node-card-shadow: 0 3px 12px rgba(0, 0, 0, 0.28);
+    --node-card-shadow-hover: 0 6px 18px rgba(0, 0, 0, 0.34);
+    --node-content-bg: #1a1a18;
+    --node-footer-bg: #171716;
+    --port-ring: #0f0f0e;
+    --port-entry: #5b5b55;
+    --port-entry-border: #85857c;
+    --port-success: #3ba66b;
+    --port-success-border: #26794c;
+    --port-failure: #d84a4a;
+    --port-failure-border: #963434;
+    --app-edge-default: #8b938d;
+    --app-edge-selected: #f7f7f2;
+    --app-color-favorite: #d89a32;
+    --app-color-success-soft: rgba(59, 166, 107, 0.14);
+    --app-color-danger-soft: rgba(216, 74, 74, 0.14);
+    --app-color-warning-soft: rgba(216, 154, 50, 0.14);
 }
 
 /* --------------------------------------------------------------------------
@@ -66,7 +122,7 @@
     align-items: center;
     gap: 6px;
     cursor: pointer;
-    transition: all 0.2s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.15s ease;
     user-select: none;
 }
 
@@ -75,6 +131,8 @@
         border-color: var(--app-btn-secondary-hover-border) !important;
         color: var(--el-color-primary) !important;
     }
+
+    .app-btn-secondary:active { transform: translateY(1px); }
 
 .app-btn-icon {
     width: 14px !important;
@@ -89,7 +147,7 @@
     border: 1px solid var(--app-card-border);
     border-radius: var(--app-radius-md);
     padding: 12px;
-    transition: all 0.2s ease;
+    transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
     .app-card-dark:hover {
@@ -102,7 +160,7 @@
 html, body, #app {
     background-color: var(--el-bg-color-page) !important;
     color: var(--el-text-color-primary) !important;
-    font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif !important;
+    font-family: var(--app-font-sans) !important;
     margin: 0;
     padding: 0;
     height: 100%;
@@ -110,6 +168,19 @@ html, body, #app {
     overflow: hidden;
     cursor: default;
     user-select: none;
+    font-size: 13px;
+    line-height: 1.5;
+    text-rendering: optimizeLegibility;
+    font-variant-numeric: tabular-nums;
+    font-synthesis: none;
+}
+
+::selection { background: var(--app-color-primary-dim); color: var(--app-text-primary); }
+input, textarea, [contenteditable="true"] { caret-color: var(--app-color-primary); }
+button, input, textarea, select { font: inherit; }
+button:focus-visible, [role="button"]:focus-visible, [role="menuitem"]:focus-visible, [role="treeitem"]:focus-visible, [role="option"]:focus-visible {
+    outline: 0;
+    box-shadow: var(--focus-ring);
 }
 
 input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-textarea__inner {
@@ -128,16 +199,20 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
 }
 
 ::-webkit-scrollbar-track {
-    background: var(--el-bg-color-page);
+    background: transparent;
 }
 
+code, pre, kbd, samp, .app-mono { font-family: var(--app-font-mono); font-variant-numeric: tabular-nums; }
+
 ::-webkit-scrollbar-thumb {
-    background: #353757;
+    background: var(--app-scrollbar-thumb);
     border-radius: 3px;
+    border: 1px solid transparent;
+    background-clip: padding-box;
 }
 
     ::-webkit-scrollbar-thumb:hover {
-        background: var(--el-color-primary);
+        background: var(--app-scrollbar-thumb-hover);
     }
 
 /* --------------------------------------------------------------------------
@@ -150,16 +225,16 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
 .el-select .el-input__wrapper {
     background-color: var(--el-fill-color-blank) !important;
     box-shadow: none !important;
-    border: 1px solid transparent !important;
+    border: 1px solid var(--app-border-default) !important;
     border-radius: var(--app-radius-md) !important;
-    transition: all 0.2s ease !important;
+    transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease !important;
 }
 
-    .el-input__inner,
+        .el-input__inner,
     .el-textarea__inner,
     .el-select .el-input__inner {
         color: var(--el-text-color-primary) !important;
-        font-weight: 500;
+        font-weight: 400;
         background-color: transparent !important;
     }
 
@@ -176,9 +251,9 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
 .el-message-box,
 .el-popover.el-popper {
     background-color: var(--el-bg-color-overlay) !important;
-    border: 1px solid #353757 !important;
+    border: 1px solid var(--app-overlay-border) !important;
     border-radius: var(--app-radius-lg) !important;
-    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5) !important;
+    box-shadow: var(--app-shadow-lg) !important;
 }
 
 .el-dialog__title,
@@ -220,24 +295,24 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
     --app-transition-slow: 0.4s ease;
 
     /* 阴影 Token */
-    --app-shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.2);
-    --app-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.3);
-    --app-shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.4);
-    --app-shadow-glow: 0 0 12px rgba(78, 209, 156, 0.3);
+    --app-shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.24);
+    --app-shadow-md: 0 6px 18px rgba(0, 0, 0, 0.28);
+    --app-shadow-lg: 0 16px 48px rgba(0, 0, 0, 0.4);
+    --app-shadow-glow: 0 0 0 3px rgba(217, 84, 23, 0.2);
 
     /* 状态色 Token */
-    --app-color-success: #4ed19c;
-    --app-color-warning: #e6a23c;
-    --app-color-danger: #f56c6c;
-    --app-color-info: #909399;
-    --app-color-primary: #4ed19c;
-    --app-color-primary-dim: rgba(78, 209, 156, 0.15);
+    --app-color-success: #3ba66b;
+    --app-color-warning: #d89a32;
+    --app-color-danger: #d84a4a;
+    --app-color-info: #5c83c7;
+    --app-color-primary: #d95417;
+    --app-color-primary-dim: rgba(217, 84, 23, 0.14);
 
     /* 面板色系 Token */
-    --app-panel-bg: #1d1e30;
-    --app-panel-header-bg: #26283d;
-    --app-panel-border: #313352;
-    --app-panel-hover-bg: #2a2c45;
+    --app-panel-bg: var(--app-bg-panel);
+    --app-panel-header-bg: var(--app-bg-sidebar);
+    --app-panel-border: var(--app-border-default);
+    --app-panel-hover-bg: var(--app-bg-hover);
 }
 
 /* --------------------------------------------------------------------------
@@ -361,9 +436,9 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
         background: var(--app-panel-hover-bg);
     }
 
-    .app-panel-list-item.is-active {
-        background: var(--app-color-primary-dim);
-        border-left: 2px solid var(--app-color-primary);
+.app-panel-list-item.is-active {
+    background: var(--app-color-primary-dim);
+    box-shadow: inset 2px 0 var(--app-color-primary);
     }
 
     .app-panel-list-item.is-disabled {
@@ -383,7 +458,7 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
 }
 
 .app-badge-success {
-    background: rgba(78, 209, 156, 0.15);
+    background: rgba(59, 166, 107, 0.14);
     color: var(--app-color-success);
 }
 
@@ -400,4 +475,201 @@ input, textarea, [contenteditable="true"], .log-content, .el-input__inner, .el-t
 .app-badge-info {
     background: rgba(144, 147, 153, 0.15);
     color: var(--app-color-info);
+}
+
+/* --------------------------------------------------------------------------
+   Native desktop controls: compact, semantic and consistent
+   -------------------------------------------------------------------------- */
+button, input, textarea, select { font: inherit; }
+
+:focus-visible {
+    outline: 2px solid rgba(217, 84, 23, 0.86);
+    outline-offset: 2px;
+}
+
+.el-button {
+    min-height: 28px !important;
+    padding: 5px 11px !important;
+    border-radius: 6px !important;
+    border-color: var(--app-border-default) !important;
+    background: var(--app-bg-raised) !important;
+    color: var(--el-text-color-regular) !important;
+    box-shadow: none !important;
+    font-weight: 500 !important;
+    transition: background .14s ease, border-color .14s ease, color .14s ease, transform .08s ease !important;
+}
+
+.el-button:hover:not(.is-disabled) {
+    background: var(--app-bg-hover) !important;
+    border-color: var(--app-border-strong) !important;
+    color: var(--el-text-color-primary) !important;
+}
+
+.el-button:active:not(.is-disabled) { transform: translateY(1px); }
+.el-button.is-text,
+.el-button.is-link { background: transparent !important; border-color: transparent !important; box-shadow: none !important; }
+
+.el-button--primary {
+    background: var(--app-color-primary) !important;
+    border-color: var(--app-color-primary) !important;
+    color: var(--app-color-on-primary) !important;
+}
+
+.el-button--primary:hover:not(.is-disabled) {
+    background: var(--app-color-primary-hover) !important;
+    border-color: var(--app-color-primary-hover) !important;
+    color: var(--app-color-on-primary) !important;
+}
+
+.el-button--primary:active:not(.is-disabled) {
+    background: var(--app-color-primary-pressed) !important;
+    border-color: var(--app-color-primary-pressed) !important;
+}
+
+.el-button--success {
+    background: var(--app-color-success) !important;
+    border-color: var(--app-color-success) !important;
+    color: #f7fff9 !important;
+}
+
+.el-button--danger { color: #ff7b75 !important; }
+.el-button--danger:not(.is-plain):not(.is-text):not(.is-link) {
+    background: #ff5f57 !important;
+    border-color: #ff5f57 !important;
+    color: #fff !important;
+}
+
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner,
+.el-input-number {
+    min-height: 28px !important;
+    background: var(--app-bg-input) !important;
+    border: 1px solid var(--app-border-default) !important;
+    border-radius: 6px !important;
+    box-shadow: inset 0 1px 1px rgba(0, 0, 0, 0.18) !important;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-textarea__inner:hover { border-color: var(--app-border-strong) !important; }
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focused,
+.el-textarea__inner:focus {
+    border-color: var(--app-color-primary) !important;
+    box-shadow: var(--app-shadow-glow) !important;
+}
+
+.el-dropdown-menu,
+.el-select-dropdown,
+.el-picker-panel,
+.el-cascader__dropdown,
+.el-tooltip__popper {
+    background: rgba(32, 32, 30, 0.98) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 9px !important;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.46) !important;
+    backdrop-filter: blur(18px);
+}
+
+.el-dropdown-menu { padding: 5px !important; }
+.el-dropdown-menu__item,
+.el-select-dropdown__item {
+    min-height: 28px !important;
+    border-radius: 5px !important;
+    color: var(--el-text-color-regular) !important;
+    font-size: 12px !important;
+}
+
+.el-dropdown-menu__item:not(.is-disabled):hover,
+.el-select-dropdown__item.hover,
+.el-select-dropdown__item:hover {
+    background: var(--app-color-primary-dim) !important;
+    color: var(--el-text-color-primary) !important;
+}
+
+.el-popper__arrow::before { background: var(--app-bg-raised) !important; border-color: var(--app-border-default) !important; }
+
+.el-dialog__header,
+.el-message-box__header {
+    padding: 16px 18px 12px !important;
+    border-bottom: 1px solid var(--app-separator);
+}
+.el-dialog__body { padding: 16px 18px !important; }
+.el-dialog__footer { padding: 12px 18px 16px !important; border-top: 1px solid var(--app-separator); }
+
+.el-tabs__header { margin-bottom: 0 !important; }
+.el-tabs__nav-wrap::after { height: 1px !important; background: var(--app-separator) !important; }
+.el-tabs__item { height: 34px !important; color: var(--el-text-color-secondary) !important; font-size: 12px !important; }
+.el-tabs__item.is-active { color: var(--el-text-color-primary) !important; }
+.el-tabs__active-bar { height: 2px !important; background: var(--app-color-primary) !important; }
+
+.el-tree,
+.el-table,
+.el-table tr,
+.el-table th.el-table__cell,
+.el-table td.el-table__cell { background: transparent !important; }
+.el-table { --el-table-border-color: var(--app-separator) !important; }
+.el-tree-node__content { min-height: 28px !important; border-radius: 5px; margin: 1px 5px; }
+.el-tree-node__content:hover { background: var(--app-bg-hover) !important; }
+.el-tree-node.is-current > .el-tree-node__content { background: var(--app-color-primary-dim) !important; }
+
+.el-form-item__label,
+.el-checkbox__label,
+.el-radio__label { color: var(--el-text-color-regular) !important; font-size: 12px !important; }
+.el-divider { border-color: var(--app-separator) !important; }
+.el-divider__text { background: var(--el-bg-color-overlay) !important; color: var(--el-text-color-secondary) !important; }
+
+.el-switch.is-checked .el-switch__core { background: var(--app-color-primary) !important; border-color: var(--app-color-primary) !important; }
+.el-slider__bar { background: var(--app-color-primary) !important; }
+.el-slider__button { border-color: var(--app-color-primary) !important; background: var(--app-text-primary) !important; }
+
+.el-message,
+.el-notification {
+    background: var(--app-overlay-bg) !important;
+    border: 1px solid var(--app-overlay-border) !important;
+    box-shadow: var(--app-shadow-md) !important;
+}
+
+.lucide { stroke-width: 1.8; }
+
+/* Shared interaction primitives. Business components should compose these
+   semantics instead of inventing page-specific controls. */
+.app-icon-button {
+    width: var(--app-control-compact);
+    height: var(--app-control-compact);
+    display: inline-grid;
+    place-items: center;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--app-radius-sm);
+    background: transparent;
+    color: var(--app-text-secondary);
+    cursor: pointer;
+}
+.app-icon-button:hover { border-color: var(--app-border-default); background: var(--app-bg-hover); color: var(--app-text-primary); }
+.app-icon-button:active { transform: translateY(1px); }
+.app-icon-button:focus-visible { outline:0; box-shadow:var(--focus-ring); }
+.app-icon-button:disabled { opacity: .4; cursor: not-allowed; }
+.app-empty-state { min-height: 160px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:6px; padding:24px; text-align:center; }
+.app-empty-state > strong { font-size:13px; font-weight:600; }
+.app-empty-state > span { max-width:360px; color:var(--app-text-secondary); font-size:11px; line-height:1.55; }
+.app-inline-error { padding:8px 10px; border:1px solid color-mix(in srgb, var(--app-color-danger) 38%, transparent); border-radius:var(--app-radius-sm); background:color-mix(in srgb, var(--app-color-danger) 10%, transparent); color:var(--app-color-danger); font-size:11px; line-height:1.5; }
+
+@media (max-width: 720px) {
+    .el-dialog { width: calc(100vw - 24px) !important; margin-top: 12px !important; }
+    .el-dialog__body { max-height: calc(100vh - 132px); overflow:auto; }
+    .el-form:not(.keep-label-grid) .el-form-item { display:block; }
+    .el-form:not(.keep-label-grid) .el-form-item__label { width:auto !important; height:auto; margin-bottom:5px; line-height:18px; }
+    .el-form:not(.keep-label-grid) .el-form-item__content { margin-left:0 !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+    }
 }

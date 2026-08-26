@@ -3,7 +3,7 @@
 PARAM_DEFINITIONS = {
     'set_window': {
         'label': '设置工作窗口',
-        'modes': ['workflow'],
+        'modes': ['workflow', 'topology'],
         'params': {
             'work_mode': {
                 'type': 'select',
@@ -25,6 +25,14 @@ PARAM_DEFINITIONS = {
                 'default': False,
                 'label': '模拟器模式',
                 'visible_if': {'field': 'work_mode', 'operator': 'eq', 'value': 'window'},
+            },
+            'adb_device_id': {
+                'type': 'str',
+                'default': '',
+                'label': 'ADB 设备（自动）',
+                'help': '选择模拟器窗口后由 IDE 自动识别并写入。无法唯一识别时会退出模拟器模式。',
+                'readonly': True,
+                'visible_if': {'field': 'is_emulator', 'operator': 'eq', 'value': True},
             },
             'content_offset': {
                 'type': 'margin4',  # ⚡ 改为专属类型 margin4

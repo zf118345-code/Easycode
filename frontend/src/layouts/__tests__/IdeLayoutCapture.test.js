@@ -3,11 +3,12 @@
 // 1. 有填充回调（节点表单「捕获控件」）→ 回填 + 退出捕获模式（一次性填充语义）
 // 2. 无填充回调（顶部「控件捕获模式」）→ 生成新节点（连续捕获，模式不退出由后端保证）
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
 import IdeLayout from '../IdeLayout.vue'
 import { useProjectStore, useUiStore } from '@/stores'
 import { uiControlApi } from '@/api/uiControlApi'
+import { frameRecordingApi } from '@/api/frameRecordingApi'
 
 vi.mock('@/api/uiControlApi', () => ({
     uiControlApi: {
@@ -16,17 +17,30 @@ vi.mock('@/api/uiControlApi', () => ({
     }
 }))
 
+vi.mock('@/api/frameRecordingApi', () => ({
+    frameRecordingApi: {
+        start: vi.fn(() => Promise.resolve({ active: true, status: 'recording', frame_count: 1 })),
+        stop: vi.fn(() => Promise.resolve({ active: false, status: 'stopped', frame_count: 3 }))
+    }
+}))
+
 // jsdom 无 EventSource：以桩替代并捕获实例，测试经真实 onmessage 链路驱动
 // （SSE 事件 → IdeLayout → captureEvent prop → 面板 watch → emit node-requested → 处理）
-let esInstance = null
+const esInstances = new Map()
 class FakeEventSource {
-    constructor() { esInstance = this; this.onopen = null; this.onerror = null; this.onmessage = null }
-    close() {}
+    constructor(url) {
+        this.url = url
+        this.onopen = null
+        this.onerror = null
+        this.onmessage = null
+        esInstances.set(url, this)
+    }
+    close() { esInstances.delete(this.url) }
 }
 globalThis.EventSource = globalThis.EventSource || FakeEventSource
 
 function pushSSE(payload) {
-    esInstance.onmessage({ data: JSON.stringify(payload) })
+    esInstances.get('/api/ui-control/events').onmessage({ data: JSON.stringify(payload) })
 }
 
 const createControlNodeFromCaptureSpy = vi.fn()
@@ -54,6 +68,7 @@ function mountLayout() {
 describe('IdeLayout 捕获结果处理链路', () => {
     beforeEach(() => {
         vi.clearAllMocks()
+        esInstances.clear()
         setActivePinia(createPinia())
     })
 
@@ -63,7 +78,7 @@ describe('IdeLayout 捕获结果处理链路', () => {
         uiStore.setCaptureFillHandler(fillHandler)
 
         const wrapper = mountLayout()
-        expect(esInstance).toBeTruthy()
+        expect(esInstances.get('/api/ui-control/events')).toBeTruthy()
         vi.clearAllMocks()  // 清掉挂载期面板自身 stopAll 的调用，只看 copy 链路
 
         pushSSE({ event: 'copy', info: { name: '开始游戏', control_type: 'button' }, selector: 'name="开始游戏"' })
@@ -91,6 +106,21 @@ describe('IdeLayout 捕获结果处理链路', () => {
 
         expect(createControlNodeFromCaptureSpy).toHaveBeenCalledWith({ name: '确定', control_type: 'button' })
         expect(uiControlApi.modeControl).not.toHaveBeenCalled()  // 全局模式不退出（由后端保持激活）
+        wrapper.unmount()
+    })
+
+    it('IDE 位于前台时 Esc 由录制模式优先消费并停止录制', async () => {
+        const wrapper = mountLayout()
+        const recordingSse = esInstances.get('/api/frame-recording/events')
+        recordingSse.onmessage({ data: JSON.stringify({ event: 'state', active: true, status: 'recording' }) })
+        await wrapper.vm.$nextTick()
+
+        const event = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+        window.dispatchEvent(event)
+        await flushPromises()
+
+        expect(event.defaultPrevented).toBe(true)
+        expect(frameRecordingApi.stop).toHaveBeenCalledWith('esc_frontend')
         wrapper.unmount()
     })
 })

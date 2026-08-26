@@ -1,8 +1,9 @@
 import logging
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Body
+from fastapi import APIRouter, HTTPException, BackgroundTasks, Body, Request
 from fastapi.responses import StreamingResponse
 
 from core.schemas import RunRequestSchema
+from api.workspace_context import assert_matching_legacy_path
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +16,15 @@ def create_execution_router(execution_service, debug_service):
     router = APIRouter(tags=["执行引擎"])
 
     @router.post('/api/run')
-    async def run_task(request: RunRequestSchema, background_tasks: BackgroundTasks):
+    async def run_task(payload: RunRequestSchema, request: Request, background_tasks: BackgroundTasks):
         """运行任务，支持通过 __debug.breakpoints 下发初始断点"""
         if execution_service is None:
             _service_unavailable('ExecutionService')
-        bp_dict = request.blueprint_data if request.blueprint_data else None
+        bp_dict = payload.blueprint_data if payload.blueprint_data else None
         try:
+            project_path = assert_matching_legacy_path(request, payload.project_path, writable=True)
             return execution_service.run_task(
-                request.project_path, request.task_id, request.start_node_id, bp_dict, background_tasks
+                project_path, payload.task_id, payload.start_node_id, bp_dict, background_tasks
             )
         except HTTPException:
             raise

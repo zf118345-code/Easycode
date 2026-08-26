@@ -18,8 +18,19 @@ export function buildNodeDefaultParams(nodeType, paramsDefinitions) {
     const defs = (paramsDefinitions && paramsDefinitions[nodeType] && paramsDefinitions[nodeType].params) || {}
     const params = {}
     for (const [key, config] of Object.entries(defs)) {
-        if (config.hidden) continue
-        if (config.type === 'list_int2' || config.type === 'list_int4') {
+        if (config.hidden) {
+            if (config.default !== undefined && (key.endsWith('_reference_size') || key === 'coordinate_space')) {
+                params[key] = typeof structuredClone === 'function'
+                    ? structuredClone(config.default)
+                    : JSON.parse(JSON.stringify(config.default))
+            }
+            continue
+        }
+        if (config.default !== undefined) {
+            params[key] = typeof structuredClone === 'function'
+                ? structuredClone(config.default)
+                : JSON.parse(JSON.stringify(config.default))
+        } else if (config.type === 'list_int2' || config.type === 'list_int4') {
             params[key] = [0, 0, 0, 0].slice(0, config.type === 'list_int2' ? 2 : 4)
         } else if (config.type === 'list_dict') {
             params[key] = []
@@ -33,8 +44,6 @@ export function buildNodeDefaultParams(nodeType, paramsDefinitions) {
             if (Object.keys(subDefaults).length) {
                 params[key] = subDefaults
             }
-        } else if (config.default !== undefined) {
-            params[key] = Array.isArray(config.default) ? [...config.default] : config.default
         }
     }
     return params

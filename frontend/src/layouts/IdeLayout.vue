@@ -3,17 +3,39 @@
     <div class="ide-shell-layout">
         <!-- 1. 顶部主菜单栏 -->
         <TopMenuBar
-            :run-disabled="store.isRunning || store.isPaused"
+            :run-disabled="!canRunFromSelection"
+            :run-disabled-reason="runDisabledReason"
+            :recording-active="recordingState.active"
+            :recording-frames="recordingState.frame_count || 0"
+            :recording-fps="recordingState.average_fps || 0"
+            :recording-disabled="store.isRunning || store.isPaused || recordingBusy"
             @run="handleRun"
+            @open-project="handleOpenProject"
+            @new-project="createDialogVisible = true"
+            @close-project="handleCloseProject"
+            @save-project="handleSaveProject"
+            @export-config="handleExportConfig"
+            @undo="handleUndo"
+            @redo="handleRedo"
+            @open-global-search="globalSearchVisible = true"
+            @open-history="historyVisible = true"
+            @auto-layout="handleAutoLayout"
+            @open-docs="handleOpenDocs"
             @open-settings="settingsVisible = true"
             @open-schema-editor="schemaDialogVisible = true"
-            @open-control-capture="controlCaptureVisible = true"
+            @publish-package="openPublishCenter"
+            @open-control-capture="openControlCapture"
             @open-hotkey-settings="hotkeySettingsVisible = true"
-            @open-screenshot="openGlobalScreenshot" />
+            @open-project-settings="projectSettingsVisible = true"
+            @open-schedules="schedulesVisible = true"
+            @open-screenshot="openGlobalScreenshot"
+            @open-frame-replay="frameReplayVisible = true"
+            @open-left-panel="openLeftPanel"
+            @toggle-frame-recording="toggleFrameRecording" />
 
         <!-- 1.1 调试工具栏（工业级：▶⏸⏹⏭⏬⏫ + 断点统计 + 激活节点） -->
-        <div class="debug-toolbar-bar">
-            <DebugToolbar />
+        <div v-if="store.isRunning || store.isPaused" class="debug-toolbar-bar">
+            <DebugToolbar :recording-active="recordingState.active" />
         </div>
 
         <!-- 2. 全局主工作区 -->
@@ -34,12 +56,15 @@ v-for="item in bottomPanelsConfig"
                                 placement="right"
                                 :show-after="300"
                                 popper-class="ide-sidebar-tooltip">
-                        <div
-class="activity-icon-item"
+                        <button
+type="button"
+                             class="activity-icon-item"
                              :class="{ 'is-active': store.uiState.bottomPanelExpanded && bottomActive === item.id }"
+                             :aria-label="item.title"
+                             :aria-pressed="store.uiState.bottomPanelExpanded && bottomActive === item.id"
                              @click="toggleBottomPanel(item.id)">
                             <component :is="item.icon" class="act-svg" />
-                        </div>
+                        </button>
                     </el-tooltip>
                 </div>
             </div>
@@ -67,7 +92,7 @@ v-if="store.uiState.leftPanelExpanded && currentLeftPanel"
                     <!-- 中央画布区域：唯一画布页面（workflow/topology 共用一套画布组件，仅数据源不同） -->
                     <div class="ide-center-viewport ide-card-panel">
                         <div class="pane-content-inner">
-                            <CanvasPage ref="canvasPageRef" :key="store.canvasMode" />
+                            <CanvasPage ref="canvasPageRef" />
                         </div>
                     </div>
 
@@ -116,22 +141,23 @@ position="right"
             </div>
 </div>
 
-        <!-- 3. 底部纯净状态栏 -->
+        <!-- 3. 底部状态栏：只保留持续有决策价值的信息 -->
         <footer class="ide-status-footer">
             <div class="status-left">
-                <span class="status-dot">●</span>
-                <span>就绪</span>
-                <span class="status-divider">|</span>
-                <span>画布模式: {{ canvasModeLabel }}</span>
-                <span class="status-divider">|</span>
-                <span>项目路径: {{ store.currentProjectPath || '未打开' }}</span>
+                <span class="status-dot" :class="`is-${store.executionState}`">●</span>
+                <span>{{ ideStatusLabel }}</span>
+                <template v-if="recordingState.active">
+                    <span class="status-divider">·</span>
+                    <span class="recording-footer-status">帧录制 {{ recordingState.frame_count || 0 }} 帧 · {{ Number(recordingState.average_fps || 0).toFixed(1) }} FPS</span>
+                    <button v-if="recordingState.recording_mode === 'diagnostic_events'" class="recording-mark-button" title="保留下一帧并写入诊断标记" @click="markRecordingFrame">
+                        <Bookmark :size="12" /> 标记
+                    </button>
+                </template>
             </div>
             <div class="status-right">
-                <span>执行状态: 空闲</span>
-                <span class="status-divider">|</span>
-                <span>UTF-8</span>
-                <span class="status-divider">|</span>
-                <span>Vue 3.5</span>
+                <span class="project-location" :title="store.currentProjectPath">{{ currentProjectName }}</span>
+                <span class="status-divider">·</span>
+                <span>{{ canvasModeLabel }}</span>
             </div>
         </footer>
 
@@ -139,7 +165,8 @@ position="right"
         <PanelSettingsDialog v-model:visible="settingsVisible" @apply="handleApplyContext" />
 
         <!-- 客户表单配置与脚本包导出弹窗（顶栏「打包 (P)」菜单入口） -->
-        <FormSchemaEditor v-model="schemaDialogVisible" />
+        <FormSchemaEditor v-model="schemaDialogVisible" :mode="schemaDialogMode" />
+        <ProjectCreateDialog v-model="createDialogVisible" />
 
         <!-- 控件捕获工具（顶栏「运行 (R)」菜单入口；捕获结果 → 一键生成控件节点） -->
         <ControlCaptureTool
@@ -151,17 +178,20 @@ position="right"
         <!-- 全局快捷键设置（顶部「编辑 (E) → 快捷键设置」） -->
         <HotkeySettingsDialog v-model="hotkeySettingsVisible" />
 
-        <!-- 截图工具（顶栏「运行 (R) → 截图工具」）：框选后自动保存到项目 templates/ -->
-        <ScreenshotTool
-            ref="screenshotToolRef"
-            @template-crop-selected="onGlobalTemplateCrop" />
+        <!-- 项目设置（顶部「编辑 (E) → 项目设置」）：加载等待/弹窗/识别/引擎/日志 全局参数 -->
+        <ProjectSettingsDialog v-model="projectSettingsVisible" />
+        <GlobalSearchDialog v-model="globalSearchVisible" />
+        <VersionHistoryDialog v-model="historyVisible" />
+        <FrameReplayDialog v-model="frameReplayVisible" />
+        <FrameRecordingStartDialog v-model="recordingStartVisible" :busy="recordingBusy" @confirm="startFrameRecording" />
+    <PlatformScheduleDialog v-if="schedulesVisible" v-model="schedulesVisible" scope="ide" :tasks="runtimeEntryTasks" />
     </div>
 </template>
 
 <script setup>
-    import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-    import { useMainStore, useUiStore } from '@/stores'
-    import { ElMessage } from 'element-plus'
+    import { ref, computed, defineAsyncComponent, nextTick, onMounted, onUnmounted, watch } from 'vue'
+    import { useIdeStore, useProjectStore, useUiStore } from '@/stores'
+    import { ElMessage, ElMessageBox } from 'element-plus'
 
     import TopMenuBar from '@/components/shell/TopMenuBar.vue'
     import ActivityBar from '@/components/shell/ActivityBar.vue'
@@ -171,41 +201,226 @@ position="right"
     import FormSchemaEditor from '@/components/schema/FormSchemaEditor.vue'
     import ControlCaptureTool from '@/components/ControlCaptureTool.vue'
     import HotkeySettingsDialog from '@/components/HotkeySettingsDialog.vue'
-    import ScreenshotTool from '@/components/ScreenshotTool.vue'
+    import ProjectSettingsDialog from '@/components/ProjectSettingsDialog.vue'
+    import ProjectCreateDialog from '@/components/ProjectCreateDialog.vue'
     import DebugToolbar from '@/components/DebugToolbar.vue'
+    import GlobalSearchDialog from '@/components/GlobalSearchDialog.vue'
+    import VersionHistoryDialog from '@/components/VersionHistoryDialog.vue'
+    import FrameReplayDialog from '@/components/FrameReplayDialog.vue'
+    import FrameRecordingStartDialog from '@/components/FrameRecordingStartDialog.vue'
+    import { Bookmark } from 'lucide-vue-next'
     import { uiControlApi } from '@/api/uiControlApi'
-    import { workspaceApi } from '@/api/workspaceApi'
+    import { frameRecordingApi } from '@/api/frameRecordingApi'
+    import { captureApi } from '@/api/captureApi'
+    import client from '@/api/client'
+    import { subscribeResourceMutations } from '@/utils/resourceMutationEvents'
+    import { clearAssetPreviewCache } from '@/utils/assetPreview'
+    import { useProjectEntryActions } from '@/composables/useProjectEntryActions'
+    import { useRunFromSelection } from '@/composables/useRunFromSelection'
+
+    const PlatformScheduleDialog = defineAsyncComponent(() => import('@/components/PlatformScheduleDialog.vue'))
 
     import { leftPanelsConfig, rightPanelsConfig, bottomPanelsConfig } from '@/config/panelsConfig'
 
-    const store = useMainStore()
+    const store = useIdeStore()
+    const projectStore = useProjectStore()
     const settingsVisible = ref(false)
     const schemaDialogVisible = ref(false)
+    const schemaDialogMode = ref('configure')
+    const createDialogVisible = ref(false)
     const controlCaptureVisible = ref(false)
     const hotkeySettingsVisible = ref(false)
+    const projectSettingsVisible = ref(false)
+    const globalSearchVisible = ref(false)
+    const historyVisible = ref(false)
+    const frameReplayVisible = ref(false)
+    const recordingStartVisible = ref(false)
+    const schedulesVisible = ref(false)
     const canvasPageRef = ref(null)
-    const screenshotToolRef = ref(null)
+    const recordingState = ref({ active: false, status: 'idle', frame_count: 0, output_dir: '' })
+    const recordingBusy = ref(false)
+    let recordingEventSource = null
+    let lastFinishedRecording = ''
+    let externalChangeTimer = null
+    let externalChangePromptActive = false
+
+    const ideStatusLabel = computed(() => {
+        if (!store.currentProjectPath) return '未打开项目'
+        if (store.isRunning) return '正在执行'
+        if (store.isPaused) return '调试暂停'
+        if (store.executionState === 'error') return '执行失败'
+        return '就绪'
+    })
+    const currentProjectName = computed(() => (store.currentProjectPath || '').split(/[/\\]/).pop() || '未打开项目')
+    const canvasModeLabel = computed(() => ({ workflow: '主流程', function: '函数画布', topology: '页面地图' }[store.canvasMode] || '画布'))
+    const runtimeEntryTasks = computed(() => [{ task_id: 'main', task_name: '主流程', ...(store.blueprint?.main_graph || {}) }])
+    const { chooseAndOpenProject } = useProjectEntryActions()
+    const handleOpenProject = () => chooseAndOpenProject()
+
+    const handleCloseProject = async () => {
+        try {
+            await ElMessageBox.confirm('关闭当前项目并返回欢迎页？未完成的自动保存会先写入磁盘。', '关闭项目', {
+                confirmButtonText: '关闭项目', cancelButtonText: '取消', type: 'info'
+            })
+            await projectStore.closeProject()
+        } catch (err) {
+            if (err !== 'cancel' && err !== 'close') ElMessage.error(err?.message || String(err))
+        }
+    }
+
+    const handleSaveProject = async () => {
+        if (!store.currentProjectPath) return ElMessage.warning('请先打开项目')
+        try {
+            await store.saveBlueprintImmediately()
+            ElMessage.success('项目蓝图已保存')
+        } catch (err) {
+            ElMessage.error('保存失败: ' + (err?.message || err))
+        }
+    }
+
+    const handleExportConfig = async () => {
+        if (!store.currentProjectPath) return ElMessage.warning('请先打开项目')
+        try {
+            const result = await client.post('/api/exporter/config', { project_path: store.currentProjectPath })
+            ElMessage.success(`配置已导出：${result.output_file}`)
+        } catch (err) {
+            ElMessage.error('导出配置失败: ' + (err?.message || err))
+        }
+    }
+
+    const handleUndo = () => {
+        if (!canvasPageRef.value?.undoCanvas()) ElMessage.info('当前画布没有可撤销的操作')
+    }
+    const handleRedo = () => {
+        if (!canvasPageRef.value?.redoCanvas()) ElMessage.info('当前画布没有可重做的操作')
+    }
+    const handleAutoLayout = () => canvasPageRef.value?.openAutoLayout?.()
+    const openPublishCenter = () => {
+        schemaDialogMode.value = 'publish'
+        schemaDialogVisible.value = true
+    }
+    watch(schemaDialogVisible, visible => {
+        if (!visible) schemaDialogMode.value = 'configure'
+    })
+
+    const onGlobalShortcut = (event) => {
+        if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'p') {
+            event.preventDefault()
+            globalSearchVisible.value = true
+        }
+    }
+    const handleOpenDocs = () => {
+        const opened = window.open('/docs', '_blank', 'noopener,noreferrer')
+        if (!opened) ElMessage.info('文档地址：/docs（浏览器拦截了新窗口）')
+    }
+
+    const applyRecordingState = (state) => {
+        if (!state || typeof state !== 'object') return
+        recordingState.value = { ...recordingState.value, ...state }
+    }
+
+    const stopFrameRecording = async (reason = 'api') => {
+        if (recordingBusy.value) return
+        recordingBusy.value = true
+        try {
+            const result = await frameRecordingApi.stop(reason)
+            applyRecordingState(result)
+            if (!result.active && result.session_id && result.session_id !== lastFinishedRecording) {
+                lastFinishedRecording = result.session_id
+                ElMessage.success(`逐帧录制已停止，共保存 ${result.frame_count || 0} 帧：${result.output_dir}`)
+            }
+        } catch (err) {
+            ElMessage.error('停止逐帧录制失败: ' + (err?.message || err))
+        } finally {
+            recordingBusy.value = false
+        }
+    }
+
+    const toggleFrameRecording = async () => {
+        if (recordingState.value.active) {
+            await stopFrameRecording('menu')
+            return
+        }
+        if (!store.currentProjectPath) return ElMessage.warning('请先打开项目并配置工作面板')
+        if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务，再进入帧录制模式')
+        recordingStartVisible.value = true
+    }
+
+    const startFrameRecording = async options => {
+        if (recordingBusy.value) return
+        recordingBusy.value = true
+        try {
+            const result = await frameRecordingApi.start(store.currentProjectPath, options)
+            applyRecordingState(result)
+            if (result.active) {
+                recordingStartVisible.value = false
+                ElMessage.success(`工作面板已激活，逐帧录制已开始；按 Esc 停止。首帧已保存到：${result.output_dir}`)
+            }
+        } catch (err) {
+            ElMessage.error('逐帧录制启动失败: ' + (err?.message || err))
+        } finally {
+            recordingBusy.value = false
+        }
+    }
+
+    const markRecordingFrame = async () => {
+        try {
+            await frameRecordingApi.mark('IDE 手动标记')
+            ElMessage.success('已标记，下一帧将强制保留')
+        } catch (error) {
+            ElMessage.error(error?.message || '标记录制帧失败')
+        }
+    }
+
+    const onRecordingEscape = (event) => {
+        if (!recordingState.value.active || event.key !== 'Escape') return
+        event.preventDefault()
+        event.stopPropagation()
+        event.stopImmediatePropagation?.()
+        stopFrameRecording('esc_frontend')
+    }
+
+    function connectRecordingEvents() {
+        if (recordingEventSource) return
+        recordingEventSource = new EventSource('/api/frame-recording/events')
+        recordingEventSource.onmessage = (event) => {
+            try {
+                const data = JSON.parse(event.data)
+                const wasActive = recordingState.value.active
+                applyRecordingState(data)
+                if (wasActive && !data.active && data.session_id && data.session_id !== lastFinishedRecording) {
+                    lastFinishedRecording = data.session_id
+                    if (data.status === 'error') {
+                        ElMessage.error(`逐帧录制异常停止：${data.last_error || '未知错误'}；已保存 ${data.frame_count || 0} 帧`)
+                    } else {
+                        ElMessage.success(`逐帧录制已停止，共保存 ${data.frame_count || 0} 帧：${data.output_dir}`)
+                    }
+                }
+            } catch { /* EventSource 会继续接收后续合法状态 */ }
+        }
+    }
 
     // ⚡ 顶栏「运行 (R) → 截图工具」：打开全局模板截图（框选 → 自动保存到项目 templates/）
-    const openGlobalScreenshot = () => {
+    const openControlCapture = () => {
+        if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务')
+        if (recordingState.value.active) return ElMessage.warning('请先停止逐帧录制')
+        controlCaptureVisible.value = true
+    }
+
+    const openGlobalScreenshot = async () => {
         if (!store.currentProjectPath) {
             ElMessage.warning('请先打开一个项目，再使用截图工具')
             return
         }
-        screenshotToolRef.value?.open('template')
-    }
-    const onGlobalTemplateCrop = async (cropRect) => {
+        if (store.isRunning || store.isPaused) return ElMessage.warning('请先停止当前任务')
+        if (recordingState.value.active) return ElMessage.warning('请先停止逐帧录制')
         try {
-            const ts = new Date()
-            const pad = n => String(n).padStart(2, '0')
-            const name = `截图_${ts.getFullYear()}${pad(ts.getMonth() + 1)}${pad(ts.getDate())}_${pad(ts.getHours())}${pad(ts.getMinutes())}${pad(ts.getSeconds())}`
-            await workspaceApi.cropScreenshot(store.currentProjectPath, name, cropRect)
-            ElMessage.success(`模板图片 [${name}] 已保存到 templates/`)
-        } catch (err) {
-            ElMessage.error('截图保存失败: ' + (err?.message || err))
+            await registerCaptureSession(true)
+            await captureApi.trigger()
+        } catch (error) {
+            ElMessage.error(error?.message || '截图捕获启动失败')
         }
     }
-
     // ⚡ 捕获结果处理：若节点表单/条件对话框注册了填充回调（captureFillHandler）→ 回填当前编辑目标
     // 并退出捕获模式（一次性填充语义：捕获一次赋给当前节点后即退出；再次点击捕获则覆盖重填）；
     // 否则维持原行为：生成新控件节点（全局「控件捕获模式」：不退出，可连续捕获）
@@ -245,6 +460,72 @@ position="right"
     const captureEvent = ref(null)
     const captureConnected = ref(true)
     let captureEventSource = null
+    const captureSessionId = sessionStorage.getItem('easycodeCaptureSessionId') || `ide_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
+    sessionStorage.setItem('easycodeCaptureSessionId', captureSessionId)
+    let captureHeartbeat = null
+    let captureRegisterTimer = null
+    let capturePrewarmStarted = false
+    let lastFocusAt = Date.now() / 1000
+
+    async function registerCaptureSession(focused = false) {
+        if (!store.currentProjectPath) return
+        if (focused) lastFocusAt = Date.now() / 1000
+        await nextTick()
+        if (!canvasPageRef.value) return
+        const context = canvasPageRef.value?.getCaptureContext?.() || {}
+        await captureApi.registerSession({
+            session_id: captureSessionId,
+            project_path: store.currentProjectPath,
+            workspace_id: projectStore.workspaceId,
+            workspace_generation: projectStore.workspaceGeneration,
+            project_name: store.currentProjectName,
+            target_name: store.currentContext?.windowTitle || (store.currentContext?.workMode === 'desktop' ? '桌面工作区' : ''),
+            canvas_mode: store.canvasMode,
+            capture_context: context,
+            execution_state: store.isPaused ? 'paused' : store.isRunning ? 'running' : (store.executionState || 'idle'),
+            recording_active: Boolean(recordingState.value.active),
+            origin: window.location.origin,
+            last_focus_at: lastFocusAt
+        })
+        if (!capturePrewarmStarted) {
+            capturePrewarmStarted = true
+            captureApi.prewarm().catch(() => {
+                // 真正进入捕获时会返回可见错误；预热失败不打断 IDE 编辑。
+            })
+        }
+    }
+
+    function scheduleCaptureRegistration() {
+        clearTimeout(captureRegisterTimer)
+        captureRegisterTimer = setTimeout(() => registerCaptureSession(false).catch(() => {}), 100)
+    }
+
+    async function handleCaptureCommand(data) {
+        if (data.session_id && data.session_id !== captureSessionId) return
+        let result
+        try {
+            if (data.kind === 'field_confirm') {
+                result = await useUiStore().completeFieldCapture(data)
+                result = { ok: true, ...(result || {}) }
+            } else if (data.kind === 'field_cancel') {
+                useUiStore().cancelFieldCapture(data.field_request_id || null)
+                result = { ok: true }
+            } else {
+                if (!canvasPageRef.value) throw new Error('画布尚未就绪')
+                result = await canvasPageRef.value.executeCaptureCommand(data)
+            }
+        } catch (error) {
+            result = { ok: false, message: error?.message || String(error) }
+        }
+        await captureApi.acknowledgeAction(data.request_id, result).catch(() => {})
+    }
+
+    let captureCommandQueue = Promise.resolve()
+    function enqueueCaptureCommand(data) {
+        captureCommandQueue = captureCommandQueue
+            .then(() => handleCaptureCommand(data))
+            .catch(() => {})
+    }
 
     function connectCaptureEvents() {
         if (captureEventSource) return
@@ -261,17 +542,168 @@ position="right"
                 captureEvent.value = data
                 if (data.event === 'mode' && data.active) {
                     controlCaptureVisible.value = true  // ⚡ 热键进入 → 自动弹出面板（与点菜单一致）
+                } else if (data.event === 'screenshot-capture' && (!data.session_id || data.session_id === captureSessionId)) {
+                    if (!data.native_host) {
+                        ElMessage.error(data.message || '桌面捕获宿主未启动；已阻止浏览器内嵌降级')
+                    }
+                } else if (data.event === 'screenshot-error' && (!data.session_id || data.session_id === captureSessionId)) {
+                    useUiStore().cancelFieldCapture()
+                    ElMessage.error(data.message || '截图捕获失败')
+                } else if (data.event === 'screenshot-focus' && !data.native_host && (!data.session_id || data.session_id === captureSessionId)) {
+                    ElMessage.error(data.message || '桌面捕获宿主已退出，请重新进入截图捕获模式')
+                } else if (data.event === 'mode-error') {
+                    ElMessage.warning(data.message || '控件捕获模式启动失败')
+                } else if (data.event === 'capture-command') {
+                    enqueueCaptureCommand(data)
                 }
             } catch { /* 忽略非法帧 */ }
         }
     }
-    onMounted(connectCaptureEvents)
+    let unsubscribeResourceMutations = null
+
+    const onResourceMutation = async (event) => {
+        if (!event?.projectPath || event.projectPath !== projectStore.currentProjectPath) return
+        if (event.phase === 'before') {
+            projectStore.cancelPendingSaves()
+            return
+        }
+        if (event.phase === 'complete') {
+            try {
+                projectStore.invalidateAssetPreviews()
+                await projectStore.reloadAfterResourceMutation()
+                await nextTick()
+                clearAssetPreviewCache()
+            } catch (error) {
+                ElMessage.error(error.message || '资源变更后刷新项目失败，请重新打开项目')
+            }
+        }
+    }
+
+    const checkExternalProjectChanges = async () => {
+        if (
+            externalChangePromptActive
+            || !projectStore.currentProjectPath
+            || projectStore.workspaceBusy
+            || store.isRunning
+            || store.isPaused
+            || recordingState.value.active
+            || controlCaptureVisible.value
+        ) return
+        try {
+            const result = await projectStore.checkExternalChanges()
+            if (!result?.changed) return
+            externalChangePromptActive = true
+            const changed = (result.paths || []).slice(0, 5).join('、')
+            if (result.identity_changed) {
+                await ElMessageBox.alert(
+                    '磁盘中的 project_id 已发生变化，当前编辑会话不能继续写入。EasyCode 将放弃未提交的旧会话修改，并以新项目身份重新打开此目录。',
+                    '项目身份已更换',
+                    { type: 'warning', confirmButtonText: '重新打开项目', closeOnClickModal: false }
+                )
+                await projectStore.reopenAfterExternalIdentityChange()
+                ElMessage.warning('项目已按新的身份重新打开')
+                return
+            }
+            if (!projectStore.hasPendingSaves()) {
+                await projectStore.reloadExternalChanges()
+                ElMessage.info(`检测到项目文件在外部变化，已重新载入${changed ? `：${changed}` : ''}`)
+                return
+            }
+            try {
+                await ElMessageBox.confirm(
+                    `磁盘文件已在 EasyCode 外部修改，同时编辑器仍有待保存内容。变化：${changed || '项目文件'}。请选择要保留哪一份。`,
+                    '项目文件冲突',
+                    {
+                        confirmButtonText: '重新载入磁盘',
+                        cancelButtonText: '保留本地并覆盖',
+                        distinguishCancelAndClose: true,
+                        closeOnClickModal: false,
+                        type: 'warning'
+                    }
+                )
+                await projectStore.reloadExternalChanges()
+                ElMessage.success('已重新载入磁盘版本，本地待保存修改已放弃')
+            } catch (choice) {
+                if (choice === 'cancel') {
+                    await projectStore.keepLocalAfterExternalChange()
+                    ElMessage.success('已保留编辑器版本并写回磁盘')
+                }
+            }
+        } catch (error) {
+            // Polling failures must not interrupt editing; normal API actions
+            // still surface authoritative workspace errors.
+        } finally {
+            externalChangePromptActive = false
+        }
+    }
+
+    const flushAutosaveBestEffort = () => {
+        if (!projectStore.currentProjectPath || !projectStore.hasPendingSaves()) return
+        projectStore.flushPendingSaves().catch(error => {
+            console.error('页面离开前自动保存失败:', error)
+        })
+    }
+
+    const onDocumentVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') flushAutosaveBestEffort()
+    }
+
+    onMounted(() => {
+        unsubscribeResourceMutations = subscribeResourceMutations(onResourceMutation)
+        connectCaptureEvents()
+        connectRecordingEvents()
+        window.addEventListener('keydown', onGlobalShortcut)
+        window.addEventListener('keydown', onRecordingEscape, true)
+        window.addEventListener('focus', onIdeFocus)
+        window.addEventListener('pagehide', flushAutosaveBestEffort)
+        document.addEventListener('visibilitychange', onDocumentVisibilityChange)
+        registerCaptureSession(true).catch(() => {})
+        captureHeartbeat = setInterval(() => registerCaptureSession(false).catch(() => {}), 30000)
+        // 外部编辑检测是兜底保护，不应成为 IDE 的高频常驻负载。窗口重新
+        // 获得焦点时立即检查，后台仅低频巡检一次。
+        externalChangeTimer = setInterval(checkExternalProjectChanges, 10000)
+    })
     onUnmounted(() => {
+        unsubscribeResourceMutations?.()
+        unsubscribeResourceMutations = null
+        window.removeEventListener('keydown', onGlobalShortcut)
+        window.removeEventListener('keydown', onRecordingEscape, true)
+        window.removeEventListener('focus', onIdeFocus)
+        window.removeEventListener('pagehide', flushAutosaveBestEffort)
+        document.removeEventListener('visibilitychange', onDocumentVisibilityChange)
+        flushAutosaveBestEffort()
+        clearInterval(captureHeartbeat)
+        clearInterval(externalChangeTimer)
+        clearTimeout(captureRegisterTimer)
+        captureApi.unregisterSession(captureSessionId).catch(() => {})
         if (captureEventSource) {
             captureEventSource.close()
             captureEventSource = null
         }
+        if (recordingEventSource) {
+            recordingEventSource.close()
+            recordingEventSource = null
+        }
     })
+
+    function onIdeFocus() {
+        lastFocusAt = Date.now() / 1000
+        scheduleCaptureRegistration()
+        checkExternalProjectChanges()
+    }
+
+    watch(
+        () => [
+            store.currentProjectPath,
+            store.canvasMode,
+            store.selectedNodeId,
+            (store.selectedNodeIds || []).join(','),
+            store.selectedGroupId,
+            store.executionState,
+            recordingState.value.active
+        ],
+        scheduleCaptureRegistration
+    )
 
     // ⚡ 右侧面板：统一属性检查器（InspectorPanel 按 canvasMode 自动切换数据源，标题恒定）
     const rightActive = ref('inspector')
@@ -283,32 +715,36 @@ position="right"
         return currentRightPanel.value?.title || '属性面板'
     })
 
-    // ⚡ 左侧面板标题：仅「资源管理器」随画布模式切换（内容同数据源切换）；
-    // 其余面板（变量监控/插件中心等）标题与模式无关，按当前激活面板返回
     const leftPanelTitle = computed(() => {
-        const base = currentLeftPanel.value?.title || '项目资源管理器'
-        if (store.canvasMode === 'topology' && currentLeftPanel.value?.id === 'explorer') {
-            return '拓扑资源管理器'
-        }
-        return base
-    })
-
-    // ⚡ 状态栏画布模式文案
-    const canvasModeLabel = computed(() => {
-        return store.canvasMode === 'topology' ? '页面拓扑' : '业务流程'
+        return currentLeftPanel.value?.title || '项目大纲'
     })
 
     // 左侧面板选项与切换（状态联动 store.uiState）
     const leftActive = ref('explorer')
     const currentLeftPanel = computed(() => leftPanelsConfig.find(p => p.id === leftActive.value))
 
-    const toggleLeftPanel = (id) => {
+    const openLeftPanel = async id => {
+        if (!leftPanelsConfig.some(panel => panel.id === id)) return
+        leftActive.value = id
+        store.updateUiState('leftPanelExpanded', true)
+        try {
+            if (id === 'explorer') {
+                await store.loadTaskData('main')
+                await store.setCanvasMode('workflow')
+            } else if (id === 'page-map') {
+                await store.setCanvasMode('topology')
+            }
+        } catch (error) {
+            ElMessage.error(error.message || '切换工作区失败')
+        }
+    }
+
+    const toggleLeftPanel = async id => {
         if (leftActive.value === id && store.uiState.leftPanelExpanded) {
             store.updateUiState('leftPanelExpanded', false)
-        } else {
-            leftActive.value = id
-            store.updateUiState('leftPanelExpanded', true)
+            return
         }
+        await openLeftPanel(id)
     }
 
     // 右侧面板切换（状态联动 store.uiState）
@@ -341,7 +777,7 @@ position="right"
         const startW = store.uiState.leftPanelWidth
         const onMouseMove = (moveEvent) => {
             const dx = moveEvent.clientX - startX
-            const newW = Math.max(160, Math.min(startW + dx, 600))
+            const newW = Math.max(200, Math.min(startW + dx, 600))
             store.updateUiState('leftPanelWidth', newW)
         }
         const onMouseUp = () => {
@@ -359,7 +795,7 @@ position="right"
         const startW = store.uiState.rightPanelWidth
         const onMouseMove = (moveEvent) => {
             const dx = startX - moveEvent.clientX
-            const newW = Math.max(200, Math.min(startW + dx, 600))
+            const newW = Math.max(280, Math.min(startW + dx, 640))
             store.updateUiState('rightPanelWidth', newW)
         }
         const onMouseUp = () => {
@@ -388,18 +824,14 @@ position="right"
         window.addEventListener('mouseup', onMouseUp)
     }
 
-    const handleRun = async () => {
-        if (!store.currentTaskId) return ElMessage.warning('请先选择任务')
-        if (store.isRunning || store.isPaused) {
-            return ElMessage.warning('已有任务正在执行/暂停，请先停止再运行')
-        }
-        const res = await store.runTask(store.currentTaskId, null)
-        if (res?.status === 'started') {
-            ElMessage.success('任务已启动')
-        } else {
-            ElMessage.warning((res?.error) || '任务启动失败')
-        }
-    }
+    const {
+        canRun: canRunFromSelection,
+        disabledReason: runDisabledReason,
+        runSelectedNode: handleRun
+    } = useRunFromSelection({
+        blocked: computed(() => recordingState.value.active),
+        blockedReason: '请先停止逐帧录制'
+    })
 
     const handleApplyContext = async (ctx) => {
         await store.setCurrentContext(ctx)
@@ -408,12 +840,25 @@ position="right"
 </script>
 
 <style scoped>
+.recording-mark-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 7px;
+    border: 1px solid var(--el-color-danger-light-5);
+    border-radius: 5px;
+    background: transparent;
+    color: var(--el-color-danger-light-3);
+    font: inherit;
+    cursor: pointer;
+}
+.recording-mark-button:hover { background: var(--el-color-danger-light-9); }
     .ide-shell-layout {
         width: 100vw;
         height: 100vh;
         display: flex;
         flex-direction: column;
-        background: #12131e;
+        background: var(--el-bg-color-page);
         overflow: hidden;
         box-sizing: border-box;
     }
@@ -423,22 +868,23 @@ position="right"
         display: flex;
         position: relative;
         overflow: hidden;
-        background: #12131e;
+        background: var(--el-bg-color-page);
     }
 
     .debug-toolbar-bar {
-        display: flex; align-items: center;
-        padding: 6px 12px;
-        background: linear-gradient(180deg, #1a1b2e 0%, #161728 100%);
-        border-bottom: 1px solid var(--el-border-color-lighter, #25273f);
+        min-height: 38px;
+        display: flex;
+        align-items: center;
+        padding: 0 12px;
+        background: var(--app-chrome-bg);
+        border-bottom: 1px solid var(--app-separator);
         flex-shrink: 0;
-        gap: 12px;
     }
 
     .fixed-dock-left, .fixed-dock-right {
         width: 40px;
         height: 100%;
-        background: #181926;
+        background: var(--app-sidebar-bg);
         flex-shrink: 0;
         z-index: 60;
         user-select: none;
@@ -447,11 +893,11 @@ position="right"
     }
 
     .fixed-dock-left {
-        border-right: 1px solid rgba(255, 255, 255, 0.05);
+        border-right: 1px solid var(--app-separator);
     }
 
     .fixed-dock-right {
-        border-left: 1px solid rgba(255, 255, 255, 0.05);
+        border-left: 1px solid var(--app-separator);
     }
 
     .fixed-dock-left :deep(.activity-bar) {
@@ -467,20 +913,23 @@ position="right"
         flex-direction: column;
         align-items: center;
         gap: 4px;
-        border-top: 1px solid rgba(255, 255, 255, 0.05);
+        border-top: 1px solid var(--app-separator);
         padding-top: 8px;
     }
 
     .activity-icon-item {
         width: 32px;
         height: 32px;
-        border-radius: 6px;
+        border-radius: 7px;
         display: flex;
         align-items: center;
         justify-content: center;
         cursor: pointer;
         color: var(--el-text-color-secondary);
-        transition: all 0.2s ease;
+        transition: background .14s ease, color .14s ease;
+        padding: 0;
+        border: 0;
+        background: transparent;
     }
 
         .activity-icon-item:hover {
@@ -489,8 +938,9 @@ position="right"
         }
 
         .activity-icon-item.is-active {
-            background: rgba(78, 209, 156, 0.15);
+            background: var(--app-color-primary-dim);
             color: var(--el-color-primary);
+            box-shadow: inset 2px 0 var(--el-color-primary);
         }
 
     .act-svg {
@@ -504,7 +954,7 @@ position="right"
         flex-direction: column;
         position: relative;
         overflow: hidden;
-        padding: 4px;
+        padding: 0;
         box-sizing: border-box;
     }
 
@@ -521,7 +971,7 @@ position="right"
         flex-direction: column;
         position: relative;
         overflow: hidden;
-        background: #2b2d3d;
+        background: var(--app-canvas-bg);
     }
 
     .pane-content-inner {
@@ -531,49 +981,49 @@ position="right"
     }
 
     .ide-card-panel {
-        border-radius: 8px !important;
+        border-radius: 0 !important;
         overflow: hidden !important;
-        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-        border: 1px solid rgba(255, 255, 255, 0.06) !important;
+        box-shadow: none;
+        border: none !important;
     }
 
     .splitter-v {
-        width: 5px;
+        width: 4px;
         height: 100%;
         cursor: col-resize;
         flex-shrink: 0;
         background: transparent;
-        transition: background 0.2s ease;
+        transition: background .14s ease;
         z-index: 10;
     }
 
         .splitter-v:hover {
-            background: var(--el-color-primary);
+            background: rgba(217, 84, 23, 0.78);
         }
 
     .splitter-h {
         width: 100%;
-        height: 5px;
+        height: 4px;
         cursor: row-resize;
         flex-shrink: 0;
         background: transparent;
-        transition: background 0.2s ease;
+        transition: background .14s ease;
         z-index: 10;
     }
 
         .splitter-h:hover {
-            background: var(--el-color-primary);
+            background: rgba(217, 84, 23, 0.78);
         }
 
     .ide-status-footer {
-        height: 26px;
-        background: #181926;
-        border-top: 1px solid var(--el-border-color-light);
+        height: 24px;
+        background: var(--app-chrome-bg);
+        border-top: 1px solid var(--app-separator);
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0 12px;
-        font-size: 11px;
+        padding: 0 10px;
+        font-size: 10.5px;
         color: var(--el-text-color-secondary);
         flex-shrink: 0;
         user-select: none;
@@ -591,7 +1041,21 @@ position="right"
         font-size: 10px;
     }
 
+    .status-dot.is-running { color: var(--el-color-success); }
+    .status-dot.is-paused { color: var(--el-color-warning); }
+    .status-dot.is-error { color: var(--el-color-danger); }
+    .status-dot.is-stopped { color: var(--el-text-color-secondary); }
+
     .status-divider {
         color: var(--el-border-color-light);
+    }
+
+    .save-status.is-saving { color: var(--el-color-warning); }
+    .save-status.is-saved { color: var(--el-color-success); }
+    .save-status.is-error { color: var(--el-color-danger); font-weight: 600; }
+
+    .recording-footer-status {
+        color: var(--el-color-danger);
+        font-weight: 600;
     }
 </style>

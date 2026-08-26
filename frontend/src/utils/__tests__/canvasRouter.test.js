@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { computeEdgePath, routeOrthogonal } from '../canvasRouter'
+import { computeEdgePath, registerRouteUsage, routeOrthogonal } from '../canvasRouter'
 import { GRID_SIZE } from '../canvasShared'
 
 function makeNode(id, x, y, w = 160, h = 100) {
@@ -153,5 +153,31 @@ describe('canvasRouter 绕障正交路由', () => {
             expect(pts[i].x % GRID_SIZE === 0).toBe(true)
             expect(pts[i].y % GRID_SIZE === 0).toBe(true)
         }
+    })
+
+    it('手动转接点参与 A* 分段路由，仍保持正交和绕障', () => {
+        const src = makeNode('src', 0, 0)
+        const tgt = makeNode('tgt', 600, 0)
+        const waypoint = { x: 300, y: 240 }
+
+        const result = computeEdgePath(src, tgt, [src, tgt], 'success', { waypoints: [waypoint] })
+
+        expect(result.points).toContainEqual(waypoint)
+        expectOrthogonal(result.points)
+        expect(result.pathD).toBeTruthy()
+    })
+
+    it('全局通道占用成本会让后续边避开已经拥挤的直线路径', () => {
+        const segmentCosts = new Map()
+        const crossingCosts = new Map()
+        registerRouteUsage(segmentCosts, crossingCosts, [{ x: 0, y: 0 }, { x: 100, y: 0 }])
+
+        const points = routeOrthogonal({ x: 0, y: 0 }, { x: 100, y: 0 }, [], {
+            segmentCosts,
+            crossingCosts,
+        })
+
+        expect(points.some(point => point.y !== 0)).toBe(true)
+        expectOrthogonal(points)
     })
 })

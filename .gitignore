@@ -2,6 +2,7 @@
 __pycache__/
 *.pyc
 .venv/
+.venv312/
 venv/
 env/
 *.log
@@ -9,6 +10,11 @@ debug_screenshots/
 release/
 dist/
 build/
+.pytest_cache/
+.pytest-replay-debug/
+.easycode/
+.tmp/
+artifacts/
 *.db
 # 忽略 OCR 模型与调试截图
 models/
@@ -17,10 +23,15 @@ models/
 *.pth
 # Node.js
 frontend/node_modules/
-frontend/dist/
 frontend/.vite/
 frontend/*.log
+node_modules/
+.pnpm-store/
 *.md
+!design.md
+!docs/*.md
+!docs/**/*.md
+!native/android/README.md
 # IDE
 .vscode/
 .vs/
@@ -41,7 +52,7 @@ projects/build/player/
 /release/
 /projects/
 
-# 迁移备份文件
+# 本地备份文件
 *.bak
 
 # AI 分析导出产物（Repomix 打包）
@@ -52,6 +63,8 @@ Easycode.xml
 .codebuddy/
 .gemini/
 .qoder/
+.kiro/
+.zcode/
 opencode.jsonc
 .mcp.json
 

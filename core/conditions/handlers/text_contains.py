@@ -1,10 +1,6 @@
 # core/conditions/handlers/text_contains.py
 from typing import Any
 
-import cv2
-import numpy as np
-import pyautogui
-
 from core.conditions.base import BaseConditionEvaluator, ConditionRegistry
 from core.utils import resolve_template_string
 
@@ -14,7 +10,7 @@ class TextContainsEvaluator(BaseConditionEvaluator):
     @classmethod
     def evaluate(cls, params: dict, context: Any) -> bool:
         raw_text = str(params.get('target_text', '')).strip()
-        operator = str(params.get('exist_mode') or params.get('operator', 'contains'))
+        operator = str(params.get('exist_mode') or params.get('operator', 'contains')).strip().lower()
         gray_scale = bool(params.get('gray_scale', True))
         gray_threshold = int(params.get('gray_threshold', 127))
 
@@ -25,36 +21,47 @@ class TextContainsEvaluator(BaseConditionEvaluator):
         target_text = resolve_template_string(raw_text, context)
 
         try:
-            screen = pyautogui.screenshot()
-            frame_bgr = cv2.cvtColor(np.array(screen), cv2.COLOR_RGB2BGR)
+            from core.node_executors.base.ocr_recognition import recognize_ocr_region
 
-            if gray_scale:
-                gray = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-                _, thresh = cv2.threshold(gray, gray_threshold, 255, cv2.THRESH_BINARY)
-                processed_img = cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
-            else:
-                processed_img = frame_bgr
-
-            from core.node_executors.base.ocr_recognition import get_ocr_engine
-
-            engine_type, ocr_engine = get_ocr_engine()
-
-            detected_text = ''
-            if engine_type == 'ddddocr' and ocr_engine:
-                _, img_bytes = cv2.imencode('.png', processed_img)
-                raw_res = ocr_engine.classification(img_bytes.tobytes())
-                detected_text = str(raw_res).strip() if raw_res else ''
+            recognized = recognize_ocr_region(
+                context,
+                region_type=params.get('region_type', 'fullwindow'),
+                region_value=params.get('region_value'),
+                region_reference_size=params.get('region_reference_size'),
+                gray_scale=gray_scale,
+                gray_threshold=gray_threshold,
+            )
+            detected_text = recognized['text']
+            context.last_ocr_text = detected_text
+            if hasattr(context, 'log'):
+                if detected_text:
+                    context.log(f'[OCR] 识别文字="{detected_text}"')
+                else:
+                    context.log(f'[OCR] 未识别到有效文字 | 区域={list(recognized["region"])}')
 
             if operator in ('contains', 'exists'):
-                return target_text in detected_text
+                matched = target_text in detected_text
             elif operator in ('not_contains', 'not_exists'):
-                return target_text not in detected_text
-            elif operator == 'exact':
-                return target_text == detected_text
+                matched = target_text not in detected_text
+            elif operator in ('exact', 'equals'):
+                matched = target_text == detected_text
+            else:
+                matched = False
+            if hasattr(context, 'log'):
+                labels = {
+                    'contains': '包含', 'exists': '包含',
+                    'not_contains': '不包含', 'not_exists': '不包含',
+                    'exact': '完全等于', 'equals': '完全等于',
+                }
+                context.log(
+                    f'[OCR] 目标条件={labels.get(operator, operator)}"{target_text}" | '
+                    f'结果={"命中" if matched else "未命中"}'
+                )
+            return matched
 
         except Exception as e:
             if hasattr(context, 'log'):
-                context.log(f'⚠️ [OCR 判定失败]: {e}', 'warning')
+                context.log(f' [OCR 判定失败]: {e}', 'warning')
             return False
 
         return False

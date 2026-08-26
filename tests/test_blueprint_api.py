@@ -1,186 +1,135 @@
-"""蓝图 API 集成测试
-
-使用 TestClient + 临时项目目录验证三文件蓝图加载/保存流程：
-- GET /api/blueprint 加载项目元数据（project.json）
-- POST /api/blueprint/save 按字段拆分写入三个文件
-- GET /api/workflow、POST /api/workflow/save 流程画布往返
-- GET /api/topology、POST /api/topology/save 拓扑地图往返
-- GET /api/tasks/{task_id}/nodes 获取节点列表
-- 错误场景：项目不存在、任务不存在
-- 迁移：写入旧版 project_blueprint.json 后访问自动拆分为三文件
-"""
+"""Strict v3 project API integration tests."""
 
 import json
 
-from core.services.migration import ensure_migrated
+from core.project_schema import PROJECT_SCHEMA_VERSION, new_project_documents
+from core.services.asset_service import AssetService
+
+
+def _write_project(path, name='test_project'):
+    path.mkdir(exist_ok=True)
+    for filename, value in new_project_documents(name).items():
+        (path / filename).write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+    AssetService.ensure_structure(str(path))
+
+
+def _open(client, path):
+    response = client.post('/api/workspaces/open', json={'path': str(path)})
+    assert response.status_code == 200, response.text
+    workspace = response.json()['workspace']
+    return {
+        'X-Workspace-Id': workspace['workspace_id'],
+        'X-Workspace-Generation': str(workspace['generation']),
+    }
 
 
 class TestBlueprintAPI:
-    def test_load_blueprint_ok(self, client, tmp_path, sample_blueprint):
-        """写入旧版蓝图后访问应触发迁移并返回项目元数据"""
-        pdir = tmp_path / 'bp_project'
-        pdir.mkdir()
-        (pdir / 'project_blueprint.json').write_text(
-            json.dumps(sample_blueprint, ensure_ascii=False), encoding='utf-8'
-        )
-        resp = client.get('/api/blueprint', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['project_name'] == 'test_project'
-        assert 'tasks' not in data  # project.json 不含 tasks
-        # 迁移后三个文件已生成
-        assert (pdir / 'project.json').exists()
-        assert (pdir / 'workflow.json').exists()
-        assert (pdir / 'topology.json').exists()
-        assert (pdir / 'project_blueprint.json.bak').exists()
+    def test_load_current_project_documents(self, client, tmp_path):
+        project = tmp_path / 'project'
+        _write_project(project)
+        headers = _open(client, project)
 
-    def test_load_blueprint_empty_project(self, client, tmp_path):
-        """项目存在但无任何文件时返回默认元数据"""
-        pdir = tmp_path / 'empty_project'
-        pdir.mkdir()
-        resp = client.get('/api/blueprint', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['project_name'] == 'empty_project'
-        assert data['variables'] == {}
-        assert data['ui_state'] == {}
+        meta = client.get('/api/blueprint', params={'project_path': str(project)}, headers=headers)
+        workflow = client.get('/api/workflow', params={'project_path': str(project)}, headers=headers)
+        topology = client.get('/api/topology', params={'project_path': str(project)}, headers=headers)
 
-    def test_load_blueprint_not_found(self, client):
-        """加载不存在的项目应返回错误"""
-        resp = client.get('/api/blueprint', params={'project_path': '/nonexistent/xyz'})
-        # 应返回 4xx/5xx 错误
-        assert resp.status_code >= 400
+        assert meta.status_code == workflow.status_code == topology.status_code == 200
+        assert meta.json()['schema_version'] == PROJECT_SCHEMA_VERSION
+        assert workflow.json()['main_graph']['graph_id'] == 'main'
+        assert workflow.json()['functions'] == []
+        assert topology.json() == {'schema_version': 3, 'nodes': [], 'edges': [], 'blocks': []}
 
-    def test_save_blueprint_split(self, client, tmp_path, sample_blueprint):
-        """保存合并蓝图应拆分写入三个文件"""
-        pdir = tmp_path / 'save_project'
-        pdir.mkdir()
-        resp = client.post(
-            '/api/blueprint/save',
-            json={'project_path': str(pdir), 'blueprint_data': sample_blueprint},
-        )
-        assert resp.status_code == 200
-        # 验证三个文件已写入
-        saved_project = json.loads((pdir / 'project.json').read_text(encoding='utf-8'))
-        assert saved_project['project_name'] == 'test_project'
-        assert 'tasks' not in saved_project
-        saved_workflow = json.loads((pdir / 'workflow.json').read_text(encoding='utf-8'))
-        assert saved_workflow['tasks'][0]['task_id'] == 'task_main'
-        assert saved_workflow['edges'] == []
-        saved_topology = json.loads((pdir / 'topology.json').read_text(encoding='utf-8'))
-        assert saved_topology == {'tasks': [], 'edges': []}
-        # 旧文件名不再生成
-        assert not (pdir / 'project_blueprint.json').exists()
+    def test_empty_project_is_rejected_without_writing_back(self, client, tmp_path):
+        empty = tmp_path / 'empty'
+        empty.mkdir()
+        response = client.post('/api/workspaces/inspect', json={'path': str(empty)})
+        assert response.status_code == 200
+        assert response.json()['status'] == 'empty'
+        assert not list(empty.iterdir())
 
-    def test_workflow_roundtrip(self, client, tmp_path):
-        """workflow.json 的 GET/POST 往返"""
-        pdir = tmp_path / 'wf_project'
-        pdir.mkdir()
-        workflow_data = {
-            'tasks': [{'task_id': 't1', 'task_name': '任务', 'nodes': []}],
-            'edges': [{'edge_id': 'e1', 'source_node': 'a', 'target_node': 'b'}],
+    def test_workflow_and_page_map_roundtrip(self, client, tmp_path):
+        project = tmp_path / 'roundtrip'
+        _write_project(project)
+        headers = _open(client, project)
+        workflow = {
+            'main_graph': {
+                'graph_id': 'main',
+                'nodes': [
+                    {'node_id': 'a', 'node_name': '起点', 'node_type': 'log', 'params': {}},
+                    {'node_id': 'b', 'node_name': '终点', 'node_type': 'log', 'params': {}},
+                ],
+                'edges': [{
+                    'edge_id': 'e1', 'source_node': 'a', 'target_node': 'b',
+                    'source_port': 'success', 'source_port_id': 'success',
+                    'routing': {
+                        'mode': 'manual',
+                        'waypoints': [{'id': 'waypoint_1', 'x': 240, 'y': 160}],
+                    },
+                }],
+                'blocks': [{'block_id': 'block_1', 'name': '阶段', 'x': 0, 'y': 0, 'width': 400, 'height': 260}],
+            },
+            'functions': [], 'function_folders': [],
         }
-        resp = client.post('/api/workflow/save', json={'project_path': str(pdir), 'workflow_data': workflow_data})
-        assert resp.status_code == 200
-        resp = client.get('/api/workflow', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['tasks'][0]['task_id'] == 't1'
-        assert data['edges'][0]['edge_id'] == 'e1'
-
-    def test_workflow_empty_default(self, client, tmp_path):
-        """workflow.json 缺失时返回空模板"""
-        pdir = tmp_path / 'wf_empty'
-        pdir.mkdir()
-        resp = client.get('/api/workflow', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        assert resp.json() == {'tasks': [], 'edges': []}
-
-    def test_topology_roundtrip(self, client, tmp_path):
-        """topology.json 的 GET/POST 往返"""
-        pdir = tmp_path / 'topo_project'
-        pdir.mkdir()
-        topology_data = {
-            'tasks': [
-                {
-                    'task_id': 'task_topology',
-                    'task_name': '页面拓扑组',
-                    'nodes': [
-                        {
-                            'node_id': 'topo_1',
-                            'node_name': '登录页',
-                            'node_type': 'page_state',
-                            'params': {'page_id': 'login_page', 'features': [], 'feature_mode': 'and', 'exits': []},
-                            'position': {'x': 10, 'y': 20},
-                        }
-                    ],
-                }
-            ],
-            'edges': [{'edge_id': 'e1', 'source_node': 'topo_1', 'target_node': 'topo_2', 'canvas': 'topology'}],
+        topology = {
+            'nodes': [{'node_id': 'page_node', 'node_name': '登录页', 'node_type': 'page_state', 'params': {'page_id': 'page_login', 'features': [], 'feature_mode': 'and'}}],
+            'edges': [], 'blocks': [],
         }
-        resp = client.post('/api/topology/save', json={'project_path': str(pdir), 'topology_data': topology_data})
-        assert resp.status_code == 200
-        resp = client.get('/api/topology', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data['tasks'][0]['nodes'][0]['node_id'] == 'topo_1'
-        assert data['edges'][0]['source_node'] == 'topo_1'
 
-    def test_topology_empty_default(self, client, tmp_path):
-        """topology.json 缺失时返回空模板"""
-        pdir = tmp_path / 'topo_empty'
-        pdir.mkdir()
-        resp = client.get('/api/topology', params={'project_path': str(pdir)})
-        assert resp.status_code == 200
-        assert resp.json() == {'tasks': [], 'edges': []}
+        saved_flow = client.post('/api/workflow/save', json={'project_path': str(project), 'workflow_data': workflow}, headers=headers)
+        saved_map = client.post('/api/topology/save', json={'project_path': str(project), 'topology_data': topology}, headers=headers)
 
-    def test_get_task_nodes_ok(self, client, tmp_path, sample_blueprint):
-        """获取任务节点列表应返回节点信息（旧蓝图先自动迁移）"""
-        pdir = tmp_path / 'nodes_project'
-        pdir.mkdir()
-        (pdir / 'project_blueprint.json').write_text(
-            json.dumps(sample_blueprint, ensure_ascii=False), encoding='utf-8'
-        )
-        resp = client.get(
-            '/api/tasks/task_main/nodes',
-            params={'project_path': str(pdir)},
-        )
-        assert resp.status_code == 200
-        nodes = resp.json()
-        assert len(nodes) == 1
-        assert nodes[0]['node_id'] == 'node_1'
+        assert saved_flow.status_code == saved_map.status_code == 200
+        loaded_flow = client.get('/api/workflow', params={'project_path': str(project)}, headers=headers).json()
+        loaded_map = client.get('/api/topology', params={'project_path': str(project)}, headers=headers).json()
+        assert loaded_flow['main_graph']['edges'][0]['edge_id'] == 'e1'
+        assert loaded_flow['main_graph']['edges'][0]['routing']['waypoints'][0] == {
+            'id': 'waypoint_1', 'x': 240, 'y': 160,
+        }
+        assert loaded_flow['main_graph']['blocks'][0]['block_id'] == 'block_1'
+        assert loaded_map['nodes'][0]['params']['page_id'] == 'page_login'
 
-    def test_get_task_nodes_project_not_found(self, client):
-        """项目不存在时获取节点应返回 404"""
-        resp = client.get(
-            '/api/tasks/task_main/nodes',
-            params={'project_path': '/nonexistent/xyz'},
-        )
-        assert resp.status_code == 404
+    def test_v2_tasks_and_page_collections_are_rejected(self, client, tmp_path):
+        project = tmp_path / 'strict'
+        _write_project(project)
+        headers = _open(client, project)
+        old_workflow = {'tasks': [], 'edges': []}
+        old_topology = {'tasks': [], 'edges': []}
+        flow_response = client.post('/api/workflow/save', json={'project_path': str(project), 'workflow_data': old_workflow}, headers=headers)
+        map_response = client.post('/api/topology/save', json={'project_path': str(project), 'topology_data': old_topology}, headers=headers)
+        assert flow_response.status_code == 400
+        assert map_response.status_code == 400
 
-    def test_get_task_nodes_task_not_found(self, client, tmp_path, sample_blueprint):
-        """任务不存在时获取节点应返回 404"""
-        pdir = tmp_path / 'task_missing'
-        pdir.mkdir()
-        (pdir / 'project_blueprint.json').write_text(
-            json.dumps(sample_blueprint, ensure_ascii=False), encoding='utf-8'
-        )
-        resp = client.get(
-            '/api/tasks/nonexistent_task/nodes',
-            params={'project_path': str(pdir)},
-        )
-        assert resp.status_code == 404
+    def test_function_crud_and_reference_protection(self, client, tmp_path):
+        project = tmp_path / 'functions'
+        _write_project(project)
+        headers = _open(client, project)
 
+        created = client.post('/api/functions', json={'project_path': str(project), 'name': '登录'}, headers=headers)
+        assert created.status_code == 200, created.text
+        function = created.json()
+        function_id = function['function_id']
+        assert function['graph']['entry_node_id']
+        assert any(item['outcome_id'] == 'system_exception' for item in function['outcomes'])
 
-class TestMigrationIdempotent:
-    def test_second_migration_is_noop(self, tmp_path, sample_blueprint):
-        """迁移幂等：第二次调用不再改变文件"""
-        pdir = tmp_path / 'twice'
-        pdir.mkdir()
-        (pdir / 'project_blueprint.json').write_text(
-            json.dumps(sample_blueprint, ensure_ascii=False), encoding='utf-8'
-        )
-        assert ensure_migrated(str(pdir)) is True
-        workflow_before = (pdir / 'workflow.json').read_text(encoding='utf-8')
-        assert ensure_migrated(str(pdir)) is False
-        assert (pdir / 'workflow.json').read_text(encoding='utf-8') == workflow_before
+        duplicate = client.post(f'/api/functions/{function_id}/duplicate', params={'project_path': str(project)}, headers=headers)
+        assert duplicate.status_code == 200, duplicate.text
+        assert duplicate.json()['function_id'] != function_id
+        assert duplicate.json()['graph']['graph_id'] == duplicate.json()['function_id']
+
+        workflow = client.get('/api/workflow', params={'project_path': str(project)}, headers=headers).json()
+        workflow['main_graph']['nodes'].append({
+            'node_id': 'call_login', 'node_name': '调用登录', 'node_type': 'call_function',
+            'params': {'function_id': function_id, 'input_bindings': [], 'output_bindings': []},
+        })
+        assert client.post('/api/workflow/save', json={'project_path': str(project), 'workflow_data': workflow}, headers=headers).status_code == 200
+        blocked = client.delete(f'/api/functions/{function_id}', params={'project_path': str(project)}, headers=headers)
+        assert blocked.status_code == 409
+
+    def test_missing_workflow_is_reported_invalid(self, client, tmp_path):
+        project = tmp_path / 'missing_workflow'
+        _write_project(project)
+        (project / 'workflow.json').unlink()
+        response = client.post('/api/workspaces/inspect', json={'path': str(project)})
+        assert response.status_code == 200
+        assert response.json()['status'] == 'invalid'
+        assert 'workflow.json' in str(response.json()['errors'])

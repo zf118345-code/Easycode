@@ -1,19 +1,18 @@
-// stores/index.js - 向后兼容的重导出
-// 大 Store 已拆分为 4 个独立 Store（拓扑数据已收编进 projectStore.blueprint.topology），此处保持旧 API 兼容
+// stores/index.js - Store 统一出口与 IDE 门面。
+// 领域状态由 4 个独立 Store 持有，useIdeStore 仅为组件提供统一访问入口。
 export { useProjectStore } from './projectStore'
 export { useUiStore } from './uiStore'
 export { useExecutionStore } from './executionStore'
 export { useContextStore } from './contextStore'
 export { DEFAULT_UI_STATE } from './projectStore'
 
-// 向后兼容：useMainStore 代理到各子 Store
 import { defineStore } from 'pinia'
 import { useProjectStore } from './projectStore'
 import { useUiStore } from './uiStore'
 import { useExecutionStore } from './executionStore'
 import { useContextStore } from './contextStore'
 
-export const useMainStore = defineStore('main', {
+export const useIdeStore = defineStore('ide', {
     state: () => ({}),
     getters: {
         // ===== 子 Store 引用（架构层） =====
@@ -22,24 +21,32 @@ export const useMainStore = defineStore('main', {
         executionStore() { return useExecutionStore() },
         contextStore() { return useContextStore() },
 
-        // ===== projectStore 关键字段代理（向后兼容） =====
+        // ===== projectStore =====
         currentProjectPath() { return useProjectStore().currentProjectPath },
+        taskNodesVersion() { return useProjectStore().taskNodesVersion },
         currentProjectName() { return useProjectStore().currentProjectName },
+        currentProjectId() { return useProjectStore().currentProjectId },
+        projectReadOnly() { return useProjectStore().readOnly },
         recentProjects() { return useProjectStore().recentProjects },
         blueprint() { return useProjectStore().blueprint },
         paramsDefinitions() { return useProjectStore().paramsDefinitions },
         currentTaskId() { return useProjectStore().currentTaskId },
         tasks() { return useProjectStore().tasks },
         currentTask() { return useProjectStore().currentTask },
+        currentTaskData() { return useProjectStore().currentTaskData },
         nodes() { return useProjectStore().nodes },
         params() { return useProjectStore().params },
         uiState() { return useProjectStore().uiState },
         workflowData() { return useProjectStore().workflowData },
         topologyData() { return useProjectStore().topologyData },
+        minimapExpanded() { return useProjectStore().uiState.minimapExpanded },
 
         // ===== uiStore 关键字段代理 =====
         selectedNodeId() { return useUiStore().selectedNodeId },
         selectedNodeIds() { return useUiStore().selectedNodeIds },
+        primaryNodeId() { return useUiStore().primaryNodeId },
+        selectionAnchorId() { return useUiStore().selectionAnchorId },
+        selectedEdgeIds() { return useUiStore().selectedEdgeIds },
         selectedGroupId() { return useUiStore().selectedGroupId },
         selectedNode() { return useUiStore().selectedNode },
         canvasMode() { return useUiStore().canvasMode },
@@ -57,6 +64,7 @@ export const useMainStore = defineStore('main', {
         executionCallstack() { return useExecutionStore().executionCallstack },
         executionCurrentVariables() { return useExecutionStore().executionCurrentVariables },
         executionPrevVariables() { return useExecutionStore().executionPrevVariables },
+        previousActiveNodeId() { return useExecutionStore().previousActiveNodeId },
         currentActiveNodeId() { return useExecutionStore().currentActiveNodeId },
         isRunning() { return useExecutionStore().isRunning },
         isPaused() { return useExecutionStore().isPaused },
@@ -67,29 +75,49 @@ export const useMainStore = defineStore('main', {
     actions: {
         // ===== projectStore 关键方法代理 =====
         async loadParams() { return useProjectStore().loadParams() },
-        async loadProjectByPath(path) { return useProjectStore().loadProjectByPath(path) },
+        async loadProjectByPath(path, options) { return useProjectStore().loadProjectByPath(path, options) },
         async loadProjectData() { return useProjectStore().loadProjectData() },
         updateUiState(keyOrObject, value) { return useProjectStore().updateUiState(keyOrObject, value) },
         toggleMinimap() { return useProjectStore().toggleMinimap() },
         toggleLogPanel() { return useProjectStore().toggleLogPanel() },
         async loadTasks() { return useProjectStore().loadTasks() },
+        async loadTaskData(taskId) { return useProjectStore().loadTaskData(taskId) },
         async saveProjectMeta() { return useProjectStore().saveProjectMeta() },
         saveProjectMetaDebounced() { return useProjectStore().saveProjectMetaDebounced() },
         async saveWorkflowImmediately() { return useProjectStore().saveWorkflowImmediately() },
-        saveWorkflowDebounced() { return useProjectStore().saveWorkflowDebounced() },
         saveWorkflowDebounced() { return useProjectStore().saveWorkflowDebounced() },
         async saveTopologyData() { return useProjectStore().saveTopologyData() },
         saveTopologyDebounced() { return useProjectStore().saveTopologyDebounced() },
         saveBlueprintDebounced() { return useProjectStore().saveBlueprintDebounced() },
         async saveBlueprintImmediately() { return useProjectStore().saveBlueprintImmediately() },
+        async flushPendingSaves() { return useProjectStore().flushPendingSaves() },
         async saveCurrentTask() { return useProjectStore().saveCurrentTask() },
         async loadTaskNodes(taskId) { return useProjectStore().loadTaskNodes(taskId) },
-        async createNewTask(taskName) { return useProjectStore().createNewTask(taskName) },
+        async createFunction(name, folderId) { return useProjectStore().createFunction(name, folderId) },
+        async saveFunctionData(functionData) { return useProjectStore().saveFunctionData(functionData) },
+        async deleteFunction(functionId) { return useProjectStore().deleteFunction(functionId) },
 
         // ===== uiStore 关键方法代理 =====
-        setCanvasMode(mode) { return useUiStore().setCanvasMode(mode) },
+        async setCanvasMode(mode) {
+            // 切换前排空所有自动保存队列，保证属性面板最后一次输入和
+            // 画布结构已经持久化后再改变数据源。
+            const projectStore = useProjectStore()
+            const uiStore = useUiStore()
+            await projectStore.flushPendingSaves()
+            // 结构操作通常即时保存，但如果之前一次请求因图引用不完整而
+            // 失败，队列中不会留下任务。切换前再对当前内存图做一次完整
+            // 规范化与权威保存；失败时绝不改变 canvasMode。
+            if (projectStore.currentProjectPath && !projectStore.readOnly) {
+                if (uiStore.canvasMode === 'topology') await projectStore.saveTopologyData()
+                else await projectStore.saveWorkflowImmediately()
+            }
+            return uiStore.setCanvasMode(mode)
+        },
         selectNode(nodeId) { return useUiStore().selectNode(nodeId) },
-        selectNodes(nodeIds) { return useUiStore().selectNodes(nodeIds) },
+        selectNodes(nodeIds, options) { return useUiStore().selectNodes(nodeIds, options) },
+        selectPath(nodeIds, edgeIds, anchorId, primaryId) { return useUiStore().selectPath(nodeIds, edgeIds, anchorId, primaryId) },
+        selectEdge(edgeId, additive) { return useUiStore().selectEdge(edgeId, additive) },
+        clearEdgeSelection() { return useUiStore().clearEdgeSelection() },
         clearSelection() { return useUiStore().clearSelection() },
         setSelectedGroup(groupId) { return useUiStore().setSelectedGroup(groupId) },
         toggleBatchMode() { return useUiStore().toggleBatchMode() },
@@ -117,7 +145,7 @@ export const useMainStore = defineStore('main', {
         async stepOutExecution() { return useExecutionStore().stepOutExecution() },
         async pollDebugState() { return useExecutionStore().pollDebugState() },
         async getExecutionVariables(level) { return useExecutionStore().getExecutionVariables(level) },
-        startDebugPolling(intervalMs) { return useExecutionStore().startDebugPolling(intervalMs) },
+        startDebugPolling() { return useExecutionStore().startDebugPolling() },
         stopDebugPolling() { return useExecutionStore().stopDebugPolling() },
 
         // ===== contextStore 关键方法代理 =====

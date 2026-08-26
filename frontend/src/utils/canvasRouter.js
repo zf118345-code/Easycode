@@ -15,9 +15,11 @@ import {
 const STUB_GRIDS = 1               // 出/入端口垂直行驶的格数（= 基础安全间距 1 格）
 const ROUND_RADIUS = 8             // 路径圆角半径（仅渲染层视觉，不参与路由判断）
 const TURN_PENALTY = 0.05          // A* 转弯惩罚（偏好少折弯的最短路径）
+const OCCUPANCY_PENALTY = 4        // 已有线路占用同一网格段时优先绕行
+const CROSSING_PENALTY = 1.75      // 穿过既有垂直线路的代价
 const MAX_GRID_CELLS = 250000      // A* 格点上限，超出回退简易折线
 
-const DEFAULT_ROUTE_OFFSET = 50    // legacy 回退路径偏移（网格倍数）
+const DEFAULT_ROUTE_OFFSET = 50    // A* 无解时的保底路径偏移（网格倍数）
 
 // ---------------------------------------------------------------------------
 // Obstacles / stubs
@@ -61,6 +63,48 @@ function compressCollinear(points) {
     }
     out.push(points[points.length - 1])
     return out
+}
+
+function gridStepKey(x1, y1, x2, y2) {
+    const first = `${x1},${y1}`
+    const second = `${x2},${y2}`
+    return first < second ? `${first}|${second}` : `${second}|${first}`
+}
+
+function crossingKey(x, y, orientation) {
+    return `${x},${y}|${orientation}`
+}
+
+/** Register every logical grid step occupied by a routed edge. */
+export function registerRouteUsage(segmentCosts, crossingCosts, points, grid = GRID_SIZE) {
+    if (!(segmentCosts instanceof Map) || !(crossingCosts instanceof Map)) return
+    const list = dedupePoints(points || [])
+    for (let index = 0; index < list.length - 1; index += 1) {
+        const start = list[index]
+        const end = list[index + 1]
+        const horizontal = Math.abs(start.y - end.y) < 0.5
+        const vertical = Math.abs(start.x - end.x) < 0.5
+        if (!horizontal && !vertical) continue
+        const gx0 = Math.round(start.x / grid)
+        const gy0 = Math.round(start.y / grid)
+        const gx1 = Math.round(end.x / grid)
+        const gy1 = Math.round(end.y / grid)
+        const dx = Math.sign(gx1 - gx0)
+        const dy = Math.sign(gy1 - gy0)
+        const orientation = horizontal ? 'h' : 'v'
+        let x = gx0
+        let y = gy0
+        while (x !== gx1 || y !== gy1) {
+            const nx = x + dx
+            const ny = y + dy
+            const key = gridStepKey(x, y, nx, ny)
+            segmentCosts.set(key, (segmentCosts.get(key) || 0) + 1)
+            const pointKey = crossingKey(nx, ny, orientation)
+            crossingCosts.set(pointKey, (crossingCosts.get(pointKey) || 0) + 1)
+            x = nx
+            y = ny
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -114,6 +158,10 @@ class MinHeap {
 export function routeOrthogonal(start, end, obstacleRects = [], options = {}) {
     const grid = options.grid || GRID_SIZE
     const margin = options.margin || 0
+    const segmentCosts = options.segmentCosts instanceof Map ? options.segmentCosts : null
+    const crossingCosts = options.crossingCosts instanceof Map ? options.crossingCosts : null
+    const occupancyPenalty = Number(options.occupancyPenalty ?? OCCUPANCY_PENALTY)
+    const crossingPenalty = Number(options.crossingPenalty ?? CROSSING_PENALTY)
     const gx0 = Math.round(start.x / grid)
     const gy0 = Math.round(start.y / grid)
     const gx1 = Math.round(end.x / grid)
@@ -190,7 +238,14 @@ export function routeOrthogonal(start, end, obstacleRects = [], options = {}) {
             const nIdx = toIndex(nx, ny)
             if (blocked[nIdx] || closed[nIdx]) continue
             const turnPenalty = cur.dir && cur.dir !== dirCode ? TURN_PENALTY : 0
-            const ng = gScore[cur.idx] + 1 + turnPenalty
+            const horizontal = dx !== 0
+            const occupied = segmentCosts?.get(gridStepKey(c.x, c.y, nx, ny)) || 0
+            const perpendicular = crossingCosts?.get(crossingKey(nx, ny, horizontal ? 'v' : 'h')) || 0
+            const ng = gScore[cur.idx]
+                + 1
+                + turnPenalty
+                + occupied * occupancyPenalty
+                + perpendicular * crossingPenalty
             if (ng < gScore[nIdx]) {
                 gScore[nIdx] = ng
                 parent[nIdx] = cur.idx
@@ -235,7 +290,7 @@ export function routeOrthogonal(start, end, obstacleRects = [], options = {}) {
  * @param allNodes  全部渲染节点（作为障碍矩形）
  * @param sourcePort 'success'|'failure'|'branch_N'|'exit_N'|'entry'
  */
-export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success') {
+export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = 'success', options = {}) {
     const startPt = getPortPosition(sourceNode, sourcePort)
     const endPt = getPortPosition(targetNode, 'entry')
 
@@ -251,14 +306,34 @@ export function computeEdgePath(sourceNode, targetNode, allNodes, sourcePort = '
 
     const obstacles = (allNodes || []).map(nodeRect)
 
-    const midPoints = routeOrthogonal(exitPt, enterPt, obstacles, { grid: GRID_SIZE, margin: GRID_SIZE })
-
-    if (!midPoints) {
-        // 无路可达 / 网格过大：回退简易折线，保证边永不消失
-        return legacyComputeEdgePath(startPt, endPt, sourcePort)
+    const waypoints = Array.isArray(options.waypoints)
+        ? options.waypoints
+            .filter(point => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)))
+            .map(point => ({
+                x: Math.round(Number(point.x) / GRID_SIZE) * GRID_SIZE,
+                y: Math.round(Number(point.y) / GRID_SIZE) * GRID_SIZE
+            }))
+        : []
+    const anchors = [exitPt, ...waypoints, enterPt]
+    const routed = []
+    for (let index = 0; index < anchors.length - 1; index += 1) {
+        const segment = routeOrthogonal(anchors[index], anchors[index + 1], obstacles, {
+            grid: GRID_SIZE,
+            margin: GRID_SIZE,
+            segmentCosts: options.segmentCosts,
+            crossingCosts: options.crossingCosts,
+            occupancyPenalty: options.occupancyPenalty,
+            crossingPenalty: options.crossingPenalty
+        })
+        if (!segment) {
+            // 无路可达 / 网格过大：回退简易折线，保证边永不消失。
+            return fallbackComputeEdgePath(startPt, endPt, sourcePort)
+        }
+        if (index) segment.shift()
+        routed.push(...segment)
     }
 
-    const points = dedupePoints([startPt, ...midPoints, endPt])
+    const points = dedupePoints([startPt, ...routed, endPt])
 
     return finalize(points, sourcePort)
 }
@@ -271,10 +346,10 @@ function finalize(points, sourcePort) {
 }
 
 // ---------------------------------------------------------------------------
-// Legacy strategy path (fallback when A* fails)
+// A* 无解时的简化正交路径。
 // ---------------------------------------------------------------------------
 
-function legacyComputeEdgePath(startPt, endPt, sourcePort) {
+function fallbackComputeEdgePath(startPt, endPt, sourcePort) {
     const offset = DEFAULT_ROUTE_OFFSET
 
     const strategy = selectStrategy(sourcePort, startPt, endPt)
@@ -429,13 +504,17 @@ export function getRoundedPathString(points, radius = 12) {
 // ---------------------------------------------------------------------------
 
 export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
+    return getRoundedPathString(getSimpleOrthoPoints(start, end, sourcePort), 10)
+}
+
+export function getSimpleOrthoPoints(start, end, sourcePort = 'success') {
     const dx = end.x - start.x
     const dy = end.y - start.y
     const absDx = Math.abs(dx)
     const absDy = Math.abs(dy)
 
     if (absDx < 4 && absDy < 4) {
-        return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
+        return [start, end]
     }
 
     let srcDir = 'right'
@@ -457,7 +536,7 @@ export function getSimpleOrthoPath(start, end, sourcePort = 'success') {
         points = [start, { x: start.x, y: midY }, { x: end.x, y: midY }, end]
     }
 
-    return getRoundedPathString(points, 10)
+    return points
 }
 
 export { GRID_SIZE, NODE_WIDTH, NODE_MIN_HEIGHT }

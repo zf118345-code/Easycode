@@ -57,7 +57,10 @@ v-model="conditionPayload.gray_threshold"
                                        :value="conditionPayload[paramName]"
                                        :label="config.label || paramName"
                                        :context="conditionPayload"
+                                       :asset-category="conditionAssetCategory"
                                        @update="val => handleParamChange(paramName, val)"
+                                       @coordinate-meta="meta => handleCoordinateMeta(paramName, meta)"
+                                       @capture-bundle="bundle => handleCaptureBundle(paramName, bundle)"
                                        @capture-reset="handleCaptureReset"
                                        @open-browser="mode => $emit('open-browser', mode)"
                                        @open-screenshot="mode => $emit('open-screenshot', mode)" />
@@ -79,7 +82,7 @@ v-model="conditionPayload.gray_threshold"
     import { ref, computed, watch } from 'vue'
     import ParamRenderer from '@/components/ParamRenderer.vue'
     import { CONDITION_SCHEMAS, PAGE_FEATURE_SCHEMAS } from './conditionSchemas.js'
-    import { useMainStore } from '@/stores'
+    import { useIdeStore } from '@/stores'
     import { visionApi } from '@/api/visionApi'
     import { ElMessage } from 'element-plus'
     import { Settings, Plus } from 'lucide-vue-next'
@@ -92,7 +95,7 @@ v-model="conditionPayload.gray_threshold"
     })
 
     const emit = defineEmits(['update:visible', 'save', 'open-browser', 'open-screenshot'])
-    const store = useMainStore()
+    const store = useIdeStore()
 
     const dialogVisible = computed({
         get: () => props.visible,
@@ -136,6 +139,10 @@ v-model="conditionPayload.gray_threshold"
     const currentParamsSchema = computed(() => {
         return currentSchemas.value[activeConditionType.value]?.params || {}
     })
+    const conditionAssetCategory = computed(() => {
+        if (isPageFeature.value) return 'page'
+        return activeConditionType.value === 'text_contains' ? 'ocr' : ''
+    })
 
     const initDefaultPayload = (type) => {
         const schema = currentSchemas.value[type]?.params || {}
@@ -143,6 +150,7 @@ v-model="conditionPayload.gray_threshold"
         Object.keys(schema).forEach(key => {
             payload[key] = schema[key].default
         })
+        delete payload.combine_mode
         return payload
     }
 
@@ -166,6 +174,11 @@ v-model="conditionPayload.gray_threshold"
                 conditionPayload.value.region_value = targetBox
                 conditionPayload.value.crop_rect = targetBox
                 conditionPayload.value.region = targetBox
+                const metadata = regions.__meta__?.[imageSource] || regions.__meta__?.[cleanKey]
+                if (metadata?.reference_size) {
+                    conditionPayload.value.region_reference_size = [...metadata.reference_size]
+                    conditionPayload.value.coordinate_space = metadata.coordinate_space || 'workspace_px'
+                }
 
                 ElMessage.success(`已自动带入图片 [${cleanKey}] 录制坐标: [${targetBox.join(', ')}]`)
             } else {
@@ -194,6 +207,24 @@ v-model="conditionPayload.gray_threshold"
         conditionPayload.value = { ...conditionPayload.value }
     }
 
+    const handleCoordinateMeta = (paramName, meta) => {
+        if (!meta?.referenceSize) return
+        const referenceKey = paramName === 'position' ? 'position_reference_size' : 'region_reference_size'
+        conditionPayload.value[referenceKey] = [...meta.referenceSize]
+        conditionPayload.value.coordinate_space = meta.coordinateSpace || 'workspace_px'
+        conditionPayload.value = { ...conditionPayload.value }
+    }
+
+    const handleCaptureBundle = (paramName, bundle) => {
+        if (!bundle?.assetRef) return
+        conditionPayload.value[paramName] = bundle.assetRef
+        conditionPayload.value.region_type = 'recorded'
+        conditionPayload.value.region_value = [...(bundle.rect || [0, 0, 0, 0])]
+        conditionPayload.value.region_reference_size = [...(bundle.referenceSize || [0, 0])]
+        conditionPayload.value.coordinate_space = bundle.coordinateSpace || 'workspace_px'
+        conditionPayload.value = { ...conditionPayload.value }
+    }
+
     // ⚡ 条件/分支/页面特征里的「重置控件」：target 与捕获时写入的定位字段一并清空
     // （此前只清 target，by/window_title/index/control_info 残留会导致 textarea 仍显示旧信息）
     const handleCaptureReset = () => {
@@ -209,6 +240,7 @@ v-model="conditionPayload.gray_threshold"
                 const initCond = props.initialData.condition || props.initialData
                 activeConditionType.value = initCond.condition_type || 'image_exists'
                 conditionPayload.value = JSON.parse(JSON.stringify(initCond))
+                delete conditionPayload.value.combine_mode
             } else {
                 activeConditionType.value = 'image_exists'
                 conditionPayload.value = initDefaultPayload('image_exists')
@@ -217,10 +249,9 @@ v-model="conditionPayload.gray_threshold"
     })
 
     const handleSave = () => {
-        emit('save', {
-            condition: conditionPayload.value,
-            on_success: props.initialData?.on_success || {}
-        })
+        const condition = { ...conditionPayload.value }
+        delete condition.combine_mode
+        emit('save', { condition })
         dialogVisible.value = false
     }
 </script>

@@ -16,12 +16,12 @@ defineEmits(['update:modelValue'])
 
 <style scoped>
     :deep(.custom-fixed-switch .el-switch__core) {
-        background-color: var(--el-fill-color-blank, #181926) !important;
-        border-color: var(--el-border-color-light, #313352) !important;
+    background-color: var(--el-fill-color-blank, #17181b) !important;
+    border-color: var(--el-border-color-light, #323338) !important;
     }
 
     :deep(.custom-fixed-switch.is-checked .el-switch__core) {
-        background-color: var(--el-color-primary, #4ed19c) !important;
-        border-color: var(--el-color-primary, #4ed19c) !important;
+    background-color: var(--el-color-primary, #d95417) !important;
+    border-color: var(--el-color-primary, #d95417) !important;
     }
 </style>

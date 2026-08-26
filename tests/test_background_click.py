@@ -1,10 +1,6 @@
 # tests/test_background_click.py
-# 多开/后台点击测试：所有 PC 点击优先向绑定窗口后台投递（PostMessage），
-# 不占用物理鼠标；仅全桌面模式（无窗口句柄）回退物理点击。
+# 点击分发测试：严格后台优先、模拟器强制 ADB、物理回退必须项目授权。
 import threading
-
-import pytest
-
 
 class FakeCtx:
     """模拟 set_window 之后的执行上下文"""
@@ -24,6 +20,9 @@ class FakeCtx:
     def get_window_rect(self):
         return self.window_rect
 
+    def get_setting(self, key, default=None):
+        return self.variables.get(key, default)
+
     @property
     def is_emulator(self):
         return False
@@ -41,16 +40,14 @@ def make_node(node_type, params):
 
 # ========== 1. click 节点 ==========
 
-def test_click_background_when_window_bound(monkeypatch):
-    """绑定窗口：点击走后台投递（窗口偏移 + 相对坐标），物理鼠标零调用"""
-    import pyautogui
+def test_click_uses_unified_workspace_dispatch(monkeypatch):
+    """点击节点只把工作区坐标交给统一输入路由。"""
     import core.node_executors.base.click as click_mod
 
-    bg_calls, phys_calls = [], []
-    monkeypatch.setattr(
-        click_mod, 'background_click',
-        lambda hwnd, x, y, button='left', clicks=1: bg_calls.append((hwnd, x, y, clicks)) or {'ok': True, 'message': 'ok'})
-    monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: phys_calls.append(a))
+    dispatch_calls = []
+    monkeypatch.setattr(click_mod, 'click_workspace', lambda ctx, x, y, **kwargs:
+                        dispatch_calls.append((ctx.window_hwnd, x, y, kwargs))
+                        or {'ok': True, 'method': 'background', 'message': 'ok', 'workspace_point': [x, y]})
 
     from core.node_executors.base.click import ClickNodeExecutor
 
@@ -58,37 +55,31 @@ def test_click_background_when_window_bound(monkeypatch):
     result = ClickNodeExecutor().execute(make_node('click', {'position': [100, 50]}), ctx)
 
     assert result['success'] is True
-    assert bg_calls == [(1001, 110, 70, 1)]  # 窗口偏移 (10,20) + 相对 (100,50)
-    assert phys_calls == []
+    assert dispatch_calls[0][0:3] == (1001, 100, 50)
+    assert dispatch_calls[0][3]['requested_mode'] == 'background'
 
 
-def test_click_falls_back_physical_in_desktop_mode(monkeypatch):
-    """全桌面模式（无窗口句柄）：回退物理鼠标点击"""
-    import pyautogui
+def test_click_desktop_strict_mode_fails_without_silent_physical_fallback(monkeypatch):
+    """全桌面模式没有后台后端时明确失败，不偷偷移动鼠标。"""
     import core.node_executors.base.click as click_mod
 
-    phys_calls = []
-    monkeypatch.setattr(
-        click_mod, 'background_click',
-        lambda *a, **k: pytest.fail('桌面模式不应调用后台点击'))
-    monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: phys_calls.append(a))
+    monkeypatch.setattr(click_mod, 'click_workspace', lambda *args, **kwargs:
+                        {'ok': False, 'method': 'background', 'message': '未绑定窗口'})
 
     from core.node_executors.base.click import ClickNodeExecutor
 
     ctx = FakeCtx(window_hwnd=None)
     result = ClickNodeExecutor().execute(make_node('click', {'position': [100, 50]}), ctx)
 
-    assert result['success'] is True
-    assert len(phys_calls) == 1
+    assert result['success'] is False
 
 
 def test_click_background_failure_fails_node(monkeypatch):
     """后台点击失败（窗口句柄失效等）→ 节点失败"""
     import core.node_executors.base.click as click_mod
 
-    monkeypatch.setattr(
-        click_mod, 'background_click',
-        lambda *a, **k: {'ok': False, 'message': '后台点击失败'})
+    monkeypatch.setattr(click_mod, 'click_workspace',
+                        lambda *a, **k: {'ok': False, 'method': 'background', 'message': '后台点击失败'})
 
     from core.node_executors.base.click import ClickNodeExecutor
 
@@ -101,14 +92,12 @@ def test_click_background_failure_fails_node(monkeypatch):
 
 def test_concurrent_sessions_no_physical_mouse(monkeypatch):
     """多开并发：两个会话同时点击各自窗口，物理鼠标零占用、后台互不干扰"""
-    import pyautogui
     import core.node_executors.base.click as click_mod
 
-    bg_calls, phys_calls = [], []
-    monkeypatch.setattr(
-        click_mod, 'background_click',
-        lambda hwnd, x, y, button='left', clicks=1: bg_calls.append((hwnd, x, y)) or {'ok': True, 'message': 'ok'})
-    monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: phys_calls.append(a))
+    dispatch_calls = []
+    monkeypatch.setattr(click_mod, 'click_workspace', lambda ctx, x, y, **kwargs:
+                        dispatch_calls.append((ctx.window_hwnd, x, y, kwargs.get('requested_mode')))
+                        or {'ok': True, 'method': 'background', 'message': 'ok', 'workspace_point': [x, y]})
 
     from core.node_executors.base.click import ClickNodeExecutor
 
@@ -129,9 +118,26 @@ def test_concurrent_sessions_no_physical_mouse(monkeypatch):
         t.join(timeout=5)
 
     assert all(ok for _, ok in results)
-    assert len(bg_calls) == 2
-    assert {c[0] for c in bg_calls} == {2001, 2002}  # 各自绑定窗口
-    assert phys_calls == []  # 物理鼠标零占用
+    assert len(dispatch_calls) == 2
+    assert {c[0] for c in dispatch_calls} == {2001, 2002}  # 各自绑定窗口
+
+
+def test_auto_dispatch_never_uses_physical_mouse_for_foreground_window(monkeypatch):
+    """目标在前台也仍走后台；前台状态不再触发隐式物理点击。"""
+    import pyautogui
+    import core.services.background_input as bg
+
+    physical_calls = []
+    monkeypatch.setattr(bg, 'background_click', lambda *a, **k:
+                        {'ok': True, 'method': 'background', 'message': 'queued'})
+    monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: physical_calls.append((a, k)))
+
+    result = bg.dispatch_click(1001, 757, 809, mode='auto')
+
+    assert result['ok'] is True
+    assert result['method'] == 'background'
+    assert result['delivery'] == 'delivered_unverified'
+    assert physical_calls == []
 
 
 # ========== 3. 后台输入服务 ==========
@@ -142,7 +148,7 @@ def test_background_input_service_coords(monkeypatch):
     import core.services.background_input as bg
 
     posts = []
-    monkeypatch.setattr(bg.win32gui, 'ScreenToClient', lambda h, pt: (5, 6))
+    monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (5, 6)))
     monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append((h, m, w, l)))
 
     result = bg.background_click(42, 100, 100)
@@ -163,7 +169,7 @@ def test_background_double_click_sends_two_pairs(monkeypatch):
     import core.services.background_input as bg
 
     posts = []
-    monkeypatch.setattr(bg.win32gui, 'ScreenToClient', lambda h, pt: (0, 0))
+    monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (0, 0)))
     monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append(m))
 
     result = bg.background_double_click(9, 10, 10)
@@ -192,7 +198,7 @@ def test_control_node_click_uses_background(monkeypatch):
     import core.services.background_input as bg
 
     posts = []
-    monkeypatch.setattr(bg.win32gui, 'ScreenToClient', lambda h, pt: (3, 4))
+    monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (3, 4)))
     monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append((h, m, w, l)))
 
     from core.services.control_service import perform_action
@@ -204,35 +210,60 @@ def test_control_node_click_uses_background(monkeypatch):
     assert posts[0][0] == 77
 
 
-def test_image_recognition_click_center_background(monkeypatch):
-    """图像识别成功点击中心：绑定窗口时后台投递"""
-    import core.services.background_input as bg
-
-    posts = []
-    monkeypatch.setattr(bg.win32gui, 'ScreenToClient', lambda h, pt: (0, 0))
-    monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append((h, m, w, l)))
-
-    from core.node_executors.base.image_recognition import ImageRecognitionNodeExecutor
-
-    ctx = FakeCtx(window_hwnd=3001)
-    ImageRecognitionNodeExecutor._pc_click(500, 400, ctx)
-    assert len(posts) == 3  # MOVE + DOWN + UP
-    assert posts[0][0] == 3001
-    assert any('后台点击' in log for log in ctx.logs)
-
-
-def test_image_recognition_desktop_falls_back_physical(monkeypatch):
-    """图像识别全桌面模式：物理点击回退"""
+def test_control_click_physical_fallback_is_explicit(monkeypatch):
+    """控件后台投递失败时，只有项目显式授权才可回退物理鼠标。"""
     import pyautogui
     import core.services.background_input as bg
+    from core.services.control_service import perform_action
+
+    monkeypatch.setattr(bg, 'background_click', lambda *a, **k:
+                        {'ok': False, 'method': 'background', 'message': 'unsupported'})
+    physical = []
+    monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: physical.append((a, k)))
+    info = {'hwnd': 77, 'rect': [10, 10, 110, 40]}
+
+    blocked = perform_action(info, 'click')
+    assert blocked['ok'] is False
+    assert blocked['delivery'] == 'blocked'
+    assert physical == []
+
+    allowed = perform_action(info, 'click', allow_physical_fallback=True)
+    assert allowed['ok'] is True
+    assert allowed['method'] == 'physical'
+    assert len(physical) == 1
+
+
+def test_unified_dispatch_reports_background_delivery_unverified(monkeypatch):
+    """PostMessage 入队只报告 delivered_unverified，不伪装效果已验证。"""
+    import core.services.input_dispatcher as dispatcher
+
+    monkeypatch.setattr(dispatcher, 'workspace_point', lambda *a, **k: (50, 60, 500, 400))
+    monkeypatch.setattr(dispatcher, 'background_click', lambda *a, **k:
+                        {'ok': True, 'method': 'background', 'message': 'queued'})
+    result = dispatcher.click_workspace(FakeCtx(window_hwnd=3001), 50, 60)
+    assert result['ok'] is True
+    assert result['delivery'] == 'delivered_unverified'
+    assert result['verified'] is False
+
+
+def test_desktop_physical_fallback_defaults_off_and_requires_project_switch(monkeypatch):
+    """物理兜底默认关闭；只有项目显式授权后才允许真实鼠标输入。"""
+    import pyautogui
+    import core.services.input_dispatcher as dispatcher
 
     phys = []
     monkeypatch.setattr(pyautogui, 'click', lambda *a, **k: phys.append(a))
 
-    from core.node_executors.base.image_recognition import ImageRecognitionNodeExecutor
+    monkeypatch.setattr(dispatcher, 'workspace_point', lambda *a, **k: (50, 60, 500, 400))
+    blocked = dispatcher.click_workspace(FakeCtx(window_hwnd=None), 50, 60)
+    assert blocked['ok'] is False
+    assert len(phys) == 0
 
-    ctx = FakeCtx(window_hwnd=None)
-    ImageRecognitionNodeExecutor._pc_click(500, 400, ctx)
+    allowed = dispatcher.click_workspace(
+        FakeCtx({'allow_physical_fallback': True}, window_hwnd=None), 50, 60,
+    )
+    assert allowed['ok'] is True
+    assert allowed['method'] == 'physical'
     assert len(phys) == 1
 
 

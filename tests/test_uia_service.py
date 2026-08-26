@@ -154,12 +154,15 @@ def test_executor_uia_find_and_invoke(monkeypatch):
     invoke = FakeInvokePattern()
     el = FakeUiaElement(name='开始', control_type='ButtonControl', rect=(10, 10, 110, 40), invoke=invoke)
     info = uia_mod._element_info(el)
+    info['window_title'] = '测试窗口'
+    win = FakeUiaElement(name='测试窗口', control_type='WindowControl', children=[el])
+    root = FakeUiaElement(name='桌面', control_type='PaneControl', children=[win])
 
     monkeypatch.setattr(uia_mod, 'find_control', lambda **kw: info)
 
     class FakeAuto:
         PatternId = type('P', (), {'InvokePattern': 10000, 'ValuePattern': 10002})
-        ControlFromPoint = staticmethod(lambda x, y: el)
+        GetRootControl = staticmethod(lambda: root)
 
     monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
     monkeypatch.setattr(uia_mod, 'available', lambda: True)
@@ -169,7 +172,7 @@ def test_executor_uia_find_and_invoke(monkeypatch):
     ctx = FakeCtx()
     node = make_node({'action': 'click', 'by': 'uia_name', 'target': '开始'})
     result = ControlNodeExecutor().execute(node, ctx)
-    assert result['success'] is True
+    assert result['success'] is True, (result, ctx.logs)
     assert invoke.calls >= 1
     assert any('UIA' in log for log in ctx.logs)
 
@@ -300,9 +303,9 @@ def test_find_control_scoped_to_window(monkeypatch):
     assert info['name'] == '最高'
     assert info['automation_id'] == 'cb1'
 
-    # 窗口不存在 → 回退全桌面仍能命中
+    # 显式窗口不存在时必须严格失败，不能跨窗口误点同名控件。
     info2 = uia_mod.find_control(window_title='不存在的窗口', by='uia_name', target='最高', timeout_ms=500)
-    assert info2 is not None and info2['name'] == '最高'
+    assert info2 is None
 
 
 # ========== 祖先链定位（捕获记录路径 → 执行逐级下降） ==========
@@ -666,7 +669,7 @@ def test_perform_action_identity_mismatch_uses_physical_click(monkeypatch):
     import pyautogui as real_pyautogui
     monkeypatch.setattr(real_pyautogui, 'click', lambda x, y, clicks=1: clicked.append((x, y, clicks)))
 
-    result = uia_mod.perform_uia_action(info, 'click')
+    result = uia_mod.perform_uia_action(info, 'click', allow_physical_fallback=True)
     assert result['ok'] is True
     assert '物理点击' in result['message']
     assert clicked == [(60, 25, 1)]  # rect 中心 (60, 25)，未使用错误元素的 Invoke
@@ -688,7 +691,7 @@ def test_perform_action_no_hwnd_falls_back_to_physical(monkeypatch):
     import pyautogui as real_pyautogui
     monkeypatch.setattr(real_pyautogui, 'click', lambda x, y, clicks=1: clicked.append((x, y, clicks)))
 
-    result = uia_mod.perform_uia_action(info, 'click')
+    result = uia_mod.perform_uia_action(info, 'click', allow_physical_fallback=True)
     assert result['ok'] is True
     assert '物理点击' in result['message']
     assert clicked == [(30, 25, 1)]
@@ -707,6 +710,7 @@ def test_perform_action_hwnd_keeps_postmessage(monkeypatch):
     class FakeAuto:
         PatternId = type('P', (), {'InvokePattern': 10000, 'ValuePattern': 10002})
         ControlFromPoint = staticmethod(lambda x, y: el)
+        ControlFromHandle = staticmethod(lambda hwnd: el)
 
     monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
     calls = []

@@ -71,4 +71,20 @@ describe('executionStore.pollDebugState', () => {
         expect(store.executionCurrentVariables).toEqual({ coin: 9 })
         expect(store.executionPrevVariables).toEqual({ coin: 5 })
     })
+
+    it('调试状态同步前后节点，用于只动画当前执行边', async () => {
+        const store = useExecutionStore()
+        store.currentExecutionId = 'exec_edge'
+        executionApi.getDebugState.mockResolvedValue({
+            is_paused: false,
+            previous_node_id: 'node_a',
+            current_node_id: 'node_b',
+            executor_variables: {}
+        })
+
+        await store.pollDebugState()
+
+        expect(store.previousActiveNodeId).toBe('node_a')
+        expect(store.currentActiveNodeId).toBe('node_b')
+    })
 })

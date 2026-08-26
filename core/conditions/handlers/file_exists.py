@@ -18,8 +18,7 @@ class FileExistsEvaluator(BaseConditionEvaluator):
 
         file_path = resolve_template_string(raw_path, context)
 
-        # ⚡ 兼容 project_dir 与 project_path
-        project_dir = getattr(context, 'project_dir', None) or getattr(context, 'project_path', None)
+        project_dir = getattr(context, 'project_dir', None)
 
         if not os.path.isabs(file_path) and project_dir:
             file_path = os.path.join(project_dir, file_path)

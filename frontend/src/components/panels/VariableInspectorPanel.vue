@@ -59,9 +59,9 @@
 <script setup>
     import { ref, computed } from 'vue'
     import { Activity, Search } from 'lucide-vue-next'
-    import { useMainStore } from '@/stores'
+    import { useIdeStore } from '@/stores'
 
-    const store = useMainStore()
+    const store = useIdeStore()
     const searchText = ref('')
 
     function formatValue(value) {
@@ -117,7 +117,7 @@
         color: var(--el-text-color-secondary);
     }
     .status-text.is-paused { color: #e5484d; }
-    .status-text.is-running { color: #4ed19c; }
+.status-text.is-running { color: var(--app-color-success); }
 
     .var-search {
         max-width: 160px;
@@ -141,8 +141,8 @@
         transition: background 0.3s;
     }
     .var-row:last-child { border-bottom: none; }
-    .var-row.is-changed { background: rgba(78, 209, 156, 0.1); }
-    .var-row.is-changed .var-value { color: #4ed19c; }
+.var-row.is-changed { background: rgba(92, 131, 199, 0.12); }
+.var-row.is-changed .var-value { color: var(--app-color-info); }
 
     .var-head {
         background: rgba(255, 255, 255, 0.03);

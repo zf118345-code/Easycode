@@ -36,7 +36,7 @@
 
     const props = defineProps({
         config: { type: Object, default: () => ({}) },
-        modelValue: { required: false },
+        modelValue: { type: [String, Number, Boolean, Array, Object], default: null },
         context: { type: Object, default: () => ({}) }
     })
     const emit = defineEmits(['update:modelValue', 'capture-reset'])
@@ -44,7 +44,7 @@
     const uiStore = useUiStore()
     const capturing = ref(false)
 
-    // ⚡ 只读展示捕获到的全部控件信息（数据源：context.control_info；旧节点无 control_info 时兜底显示名称）
+    // 只读展示捕获到的完整控件信息；手工配置时显示当前目标名称。
     const displayText = computed(() => formatControlInfo(props.context?.control_info, props.modelValue))
 
     // ⚡ 捕获成功后回填本字段：注册填充回调（由全局捕获链路在 Ctrl+Shift+Enter 后调用）
