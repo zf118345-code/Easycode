@@ -8,15 +8,18 @@ keyboard, layout and window messages stay on the WPF dispatcher thread.
 from __future__ import annotations
 
 import atexit
+import io
 import importlib.util
 import json
 import logging
+import mmap
 import os
 import shutil
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -37,6 +40,8 @@ class NativeCaptureOverlay:
         self._pending: dict[str, dict[str, Any]] = {}
         self._last_error = ''
         self._snapshot_files: dict[str, str] = {}
+        self._snapshot_maps: dict[str, mmap.mmap] = {}
+        self._last_show_performance: dict[str, float] = {}
         self._registered_atexit = False
 
     @staticmethod
@@ -199,6 +204,12 @@ class NativeCaptureOverlay:
         with self._lock:
             return self._process
 
+    @property
+    def process_id(self) -> int:
+        with self._lock:
+            process = self._process
+            return int(process.pid) if process and process.poll() is None else 0
+
     def is_alive(self) -> bool:
         with self._lock:
             return bool(self._process and self._process.poll() is None and self._ready.is_set())
@@ -336,23 +347,66 @@ class NativeCaptureOverlay:
     def _cleanup_snapshot_file(self, snapshot_id: str) -> None:
         with self._lock:
             path = self._snapshot_files.pop(snapshot_id, '')
+            mapping = self._snapshot_maps.pop(snapshot_id, None)
+        if mapping is not None:
+            try:
+                mapping.close()
+            except (BufferError, OSError):
+                pass
         if path:
             try:
                 os.remove(path)
             except OSError:
                 pass
 
-    def show(self, session: dict[str, Any], snapshot: dict[str, Any], png: bytes) -> dict[str, Any]:
+    def show(
+        self,
+        session: dict[str, Any],
+        snapshot: dict[str, Any],
+        png: bytes,
+        *,
+        image: Any = None,
+    ) -> dict[str, Any]:
+        started_at = time.perf_counter()
         snapshot_id = str(snapshot.get('snapshot_id') or '')
-        path = self._snapshot_path(snapshot_id)
-        temporary = f'{path}.{uuid.uuid4().hex}.tmp'
-        Path(temporary).write_bytes(png)
-        os.replace(temporary, path)
-        with self._lock:
-            self._snapshot_files[snapshot_id] = path
+        path = ''
+        transport = 'png_file'
+        mapping_name = ''
+        stride = 0
+        if image is not None and os.name == 'nt':
+            try:
+                rgba = image.convert('RGBA')
+                pixels = rgba.tobytes('raw', 'BGRA')
+                mapping_name = f'Local\\EasycodeCapture_{uuid.uuid4().hex}'
+                mapping = mmap.mmap(-1, len(pixels), tagname=mapping_name, access=mmap.ACCESS_WRITE)
+                mapping.write(pixels)
+                mapping.seek(0)
+                stride = int(rgba.width) * 4
+                with self._lock:
+                    self._snapshot_maps[snapshot_id] = mapping
+                transport = 'shared_bgra'
+            except Exception as exc:
+                logger.warning('冻结帧共享内存准备失败，回退 PNG 文件: %s', exc)
+                mapping_name = ''
+                stride = 0
+        if transport == 'png_file':
+            if not png and image is not None:
+                buffer = io.BytesIO()
+                image.save(buffer, format='PNG', optimize=False, compress_level=1)
+                png = buffer.getvalue()
+            path = self._snapshot_path(snapshot_id)
+            temporary = f'{path}.{uuid.uuid4().hex}.tmp'
+            Path(temporary).write_bytes(png)
+            os.replace(temporary, path)
+            with self._lock:
+                self._snapshot_files[snapshot_id] = path
+        written_at = time.perf_counter()
         result = self.command('show', {
             'origin': str(session.get('origin') or '').rstrip('/'),
             'snapshot_path': path,
+            'snapshot_transport': transport,
+            'snapshot_mapping': mapping_name,
+            'snapshot_stride': stride,
             'snapshot_id': snapshot_id,
             'session_id': str(session.get('session_id') or ''),
             'project_path': str(session.get('project_path') or ''),
@@ -362,11 +416,26 @@ class NativeCaptureOverlay:
             'height': int(snapshot.get('height') or 0),
             'region': list(snapshot.get('region') or []),
             'backend': str(snapshot.get('backend') or ''),
+            'presentation': str(snapshot.get('presentation') or 'target_aligned'),
             'capture_context': session.get('capture_context') or {},
         }, timeout=5.0)
+        completed_at = time.perf_counter()
+        performance = {
+            'snapshot_write_ms': round((written_at - started_at) * 1000, 1),
+            'native_show_ms': round((completed_at - written_at) * 1000, 1),
+            'shared_memory_preview': transport == 'shared_bgra',
+        }
+        with self._lock:
+            self._last_show_performance = performance
+        result = {**result, 'performance': performance}
         if not result.get('ok'):
             self._cleanup_snapshot_file(snapshot_id)
         return result
+
+    @property
+    def last_show_performance(self) -> dict[str, float]:
+        with self._lock:
+            return dict(self._last_show_performance)
 
     def focus(self) -> bool:
         return bool(self.command('focus', timeout=2.0).get('ok'))

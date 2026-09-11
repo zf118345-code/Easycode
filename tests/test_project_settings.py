@@ -1,7 +1,5 @@
 # tests/test_project_settings.py
 # ⚡ 项目级引擎设置：默认值合并、API 读写、加载等待（帧稳定+超时轮询）
-import json
-import pytest
 from core.settings import DEFAULT_PROJECT_SETTINGS, merge_settings, SETTINGS_GROUPS
 
 

@@ -1,5 +1,6 @@
 import json
 import os
+import zipfile
 
 import pytest
 from fastapi import HTTPException
@@ -118,6 +119,21 @@ def test_ecf_export_import_clones_function_ids_and_keeps_assets(tmp_path):
         node['node_id'] for node in function['graph']['nodes']
     )
     assert len(updated['functions']) == 2
+
+
+def test_ecf_import_rejects_unsafe_archive_member(tmp_path):
+    project = str(tmp_path / 'project')
+    _create_project(project)
+    package = tmp_path / 'unsafe.ecf'
+    with zipfile.ZipFile(package, 'w') as archive:
+        archive.writestr('manifest.json', '{}')
+        archive.writestr('functions.json', '{}')
+        archive.writestr('../outside.png', b'not-an-image')
+
+    with pytest.raises(ValueError, match='不安全路径'):
+        FunctionPackageService.import_function(project, str(package))
+
+    assert not (tmp_path / 'outside.png').exists()
 
 
 def test_ecf_dependency_closure_remaps_called_function_contract_ids(tmp_path):

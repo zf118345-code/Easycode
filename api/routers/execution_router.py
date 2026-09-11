@@ -1,8 +1,14 @@
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Body, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Header, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from core.schemas import RunRequestSchema
+from api.contracts.operations import (
+    ExecutionBreakpointRequest,
+    ExecutionBreakpointsRequest,
+    ExecutionRunRequest,
+    ExecutionStepRequest,
+)
 from api.error_handling import internal_http_error
+from api.idempotency import execute_idempotent
 from api.workspace_context import assert_matching_legacy_path
 
 
@@ -14,15 +20,28 @@ def create_execution_router(execution_service, debug_service):
     router = APIRouter(tags=["执行引擎"])
 
     @router.post('/api/run')
-    async def run_task(payload: RunRequestSchema, request: Request, background_tasks: BackgroundTasks):
+    async def run_task(
+        payload: ExecutionRunRequest,
+        request: Request,
+        background_tasks: BackgroundTasks,
+        idempotency_key: str = Header(default='', alias='Idempotency-Key'),
+    ):
         """运行任务，支持通过 __debug.breakpoints 下发初始断点"""
         if execution_service is None:
             _service_unavailable('ExecutionService')
         bp_dict = payload.blueprint_data if payload.blueprint_data else None
         try:
             project_path = assert_matching_legacy_path(request, payload.project_path, writable=True)
-            return execution_service.run_task(
-                project_path, payload.task_id, payload.start_node_id, bp_dict, background_tasks
+            async def produce():
+                return execution_service.run_task(
+                    project_path, payload.task_id, payload.start_node_id, bp_dict, background_tasks
+                )
+
+            return await execute_idempotent(
+                idempotency_key,
+                'legacy.execution.run',
+                payload.model_dump(mode='json'),
+                produce,
             )
         except HTTPException:
             raise
@@ -89,16 +108,15 @@ def create_execution_router(execution_service, debug_service):
             raise internal_http_error('恢复失败', e) from e
 
     @router.post('/api/execution/{execution_id}/step')
-    async def step_execution(execution_id: str, body: dict = Body(default_factory=dict)):
+    async def step_execution(
+        execution_id: str,
+        payload: ExecutionStepRequest = Body(default_factory=ExecutionStepRequest),
+    ):
         """单步执行：step=over(单步跳过) / into(单步进入) / out(单步跳出)"""
         if debug_service is None:
             _service_unavailable('DebugService')
-        step_type = body.get('step', 'over')
-        valid = {'over', 'into', 'out', 'next'}
-        if step_type not in valid:
-            raise HTTPException(status_code=400, detail=f'step 必须为 {valid} 之一')
         try:
-            return debug_service.step_session(execution_id, step_type)
+            return debug_service.step_session(execution_id, payload.step)
         except HTTPException:
             raise
         except Exception as e:
@@ -142,43 +160,39 @@ def create_execution_router(execution_service, debug_service):
             raise internal_http_error('获取变量失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints')
-    async def set_breakpoints(execution_id: str, body: dict = Body(default_factory=dict)):
+    async def set_breakpoints(
+        execution_id: str,
+        payload: ExecutionBreakpointsRequest = Body(default_factory=ExecutionBreakpointsRequest),
+    ):
         """批量设置断点（覆盖所有旧断点）"""
         if debug_service is None:
             _service_unavailable('DebugService')
-        node_ids = list(body.get('breakpoints') or [])
         try:
-            return debug_service.set_breakpoints(execution_id, node_ids)
+            return debug_service.set_breakpoints(execution_id, payload.breakpoints)
         except HTTPException:
             raise
         except Exception as e:
             raise internal_http_error('设置断点失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints/add')
-    async def add_breakpoint(execution_id: str, body: dict = Body(default_factory=dict)):
-        node_id = body.get('node_id')
-        if not node_id:
-            raise HTTPException(status_code=400, detail='缺少 node_id')
+    async def add_breakpoint(execution_id: str, payload: ExecutionBreakpointRequest):
         if debug_service is None:
             _service_unavailable('DebugService')
         try:
-            debug_service.add_breakpoint(execution_id, node_id)
-            return {'ok': True, 'node_id': node_id}
+            debug_service.add_breakpoint(execution_id, payload.node_id)
+            return {'ok': True, 'node_id': payload.node_id}
         except HTTPException:
             raise
         except Exception as e:
             raise internal_http_error('新增断点失败', e) from e
 
     @router.post('/api/execution/{execution_id}/breakpoints/remove')
-    async def remove_breakpoint(execution_id: str, body: dict = Body(default_factory=dict)):
-        node_id = body.get('node_id')
-        if not node_id:
-            raise HTTPException(status_code=400, detail='缺少 node_id')
+    async def remove_breakpoint(execution_id: str, payload: ExecutionBreakpointRequest):
         if debug_service is None:
             _service_unavailable('DebugService')
         try:
-            debug_service.remove_breakpoint(execution_id, node_id)
-            return {'ok': True, 'node_id': node_id}
+            debug_service.remove_breakpoint(execution_id, payload.node_id)
+            return {'ok': True, 'node_id': payload.node_id}
         except HTTPException:
             raise
         except Exception as e:

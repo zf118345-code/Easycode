@@ -29,6 +29,9 @@ frontend/*.log
 node_modules/
 .pnpm-store/
 *.md
+!README.md
+!PRODUCT.md
+!AGENTS.md
 !design.md
 !docs/*.md
 !docs/**/*.md
@@ -74,3 +77,21 @@ opencode.jsonc
 
 # GUI 测试截图证据（本地验证用，不入库）
 gui-test-screenshots/
+
+# 本地 UI / 浏览器验收产物（只保留在开发机，不进入源码快照）
+.playwright-cli/
+frontend/.playwright-cli/
+frontend/.impeccable/
+frontend/output/
+output/
+tmp-*.png
+android-native-recorded-frame.png
+
+# Android / Gradle 本机构建与签名材料
+android/.gradle/
+android/.kotlin/
+android/build/
+android/**/build/
+android/local.properties
+*.jks
+*.keystore

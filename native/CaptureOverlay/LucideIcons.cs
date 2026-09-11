@@ -44,6 +44,7 @@ namespace Easycode.CaptureOverlay
             } },
             { "check", new[] { "M20,6 L9,17 L4,12" } },
             { "x", new[] { "M18,6 L6,18", "M6,6 L18,18" } },
+            { "corner-up-left", new[] { "M9,14 L4,9 L9,4", "M4,9 L14,9 A6,6 0 0 1 20,15 L20,20" } },
             { "folder-open", new[] {
                 "M6,14 L8,12 L22,12 L19,21 L3,21 A2,2 0 0 1 1,19 L1,5 A2,2 0 0 1 3,3 L8,3 L10,6 L19,6 A2,2 0 0 1 21,8 L21,9"
             } }

@@ -53,9 +53,9 @@ def execution_worker_main(payload: dict, events, start_event, stop_event):
         from core.project_loader import load_project, project_from_dict
         from core.services.platform_runtime_service import platform_runtime_service
         if payload.get('_ocr_process_semaphore') is not None:
-            from core.node_executors.base import ocr_recognition
+            from core.vision import ocr_engine
 
-            ocr_recognition._OCR_PROCESS_SEMAPHORE = payload['_ocr_process_semaphore']
+            ocr_engine._OCR_PROCESS_SEMAPHORE = payload['_ocr_process_semaphore']
 
         project_path = str(payload['project_path'])
         blueprint = payload.get('blueprint') or {}

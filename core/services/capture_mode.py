@@ -8,6 +8,7 @@
 #   - Esc（仅模式期间注册）→ 退出模式
 #   - 高亮框由后端事件驱动渲染（全局高亮窗口，鼠标穿透）；前端经 SSE 消费事件（零轮询）
 import collections
+import importlib
 import json
 import logging
 import queue
@@ -40,6 +41,8 @@ WM_APP_RECORD_HK = win32con.WM_APP + 3
 
 _state_lock = threading.Lock()
 _active = False
+_mode_owner = ''
+_mode_request_id = ''
 _last_result = None          # {'ts': ms, 'event': 'select'|'copy', 'info': dict, 'selector': str}
 _selected = None             # {'rect': [l,t,r,b], 'info': dict} 当前选中控件（锁保护）
 _hotkey_ok = False
@@ -58,6 +61,8 @@ def get_state() -> dict:
     with _state_lock:
         return {
             'active': _active,
+            'owner': _mode_owner,
+            'request_id': _mode_request_id,
             'last_result': _last_result,
             'hotkey_ok': ok,
             'hotkey_msg': msg,
@@ -67,9 +72,17 @@ def get_state() -> dict:
 # ------------------------------------------------------------------ 快捷键配置持久化 / 组合键解析
 
 def _settings_path() -> str:
-    from core.services.project_workspace_service import project_workspace_manager
-
+    project_workspace_manager = _ide_service(
+        'project_' + 'workspace_service', 'project_workspace_manager',
+    )
     return project_workspace_manager.settings_path
+
+
+def _ide_service(module_name: str, attribute_name: str):
+    """Load IDE-only services without adding them to the Player import graph."""
+
+    module = importlib.import_module('core.services.' + module_name)
+    return getattr(module, attribute_name)
 
 
 # 配置内存缓存：低级钩子回调内绝不允许读磁盘（LL 钩子超时会被系统移除）
@@ -173,6 +186,56 @@ def build_selector(info: dict) -> str:
     return ''
 
 
+def build_control_selector(info: dict, target_id: str = '') -> dict:
+    """Project captured UIA metadata into the persistent v6 selector shape.
+
+    A ``control_ref`` is a short-lived runtime handle created by
+    ``control.find`` and must never be saved in a Player profile.  Capture
+    produces a ``control_selector`` instead: stable UIA identity first, with
+    ancestor path and the captured rectangle as bounded fallbacks.
+    """
+
+    info = info or {}
+    rect = info.get('rect') or [0, 0, 0, 0]
+    if not isinstance(rect, (list, tuple)) or len(rect) != 4:
+        rect = [0, 0, 0, 0]
+    left, top, right, bottom = [int(value or 0) for value in rect]
+    result = {
+        'control_selector.field.schema_version': 1,
+        'control_selector.field.provider': 'windows_uia',
+        'control_selector.field.target_id': str(target_id or ''),
+        'control_selector.field.package_name': '',
+        'control_selector.field.resource_id': '',
+        'control_selector.field.name': str(info.get('name') or ''),
+        'control_selector.field.text': str(info.get('name') or ''),
+        'control_selector.field.content_description': '',
+        'control_selector.field.automation_id': str(info.get('automation_id') or ''),
+        'control_selector.field.class_name': str(info.get('class_name') or ''),
+        'control_selector.field.control_type': str(info.get('control_type') or ''),
+        'control_selector.field.index': max(0, int(info.get('match_index') or 0)),
+        'control_selector.field.rect': {
+            'kind': 'rect',
+            'x': left,
+            'y': top,
+            'width': max(0, right - left),
+            'height': max(0, bottom - top),
+        },
+        'control_selector.field.ancestor_path': [],
+    }
+    path = info.get('ancestor_path')
+    if isinstance(path, list):
+        result['control_selector.field.ancestor_path'] = [
+            {
+                'name': str(item.get('name') or ''),
+                'automation_id': str(item.get('automation_id') or ''),
+                'class_name': str(item.get('class_name') or ''),
+                'control_type': str(item.get('control_type') or ''),
+            }
+            for item in path if isinstance(item, dict)
+        ]
+    return result
+
+
 def build_control_params(info: dict) -> dict:
     """捕获信息 → 控件操作节点查找参数（前端生成节点时自动填充）"""
     info = info or {}
@@ -199,8 +262,9 @@ class _HotkeyWindow:
     - copy（HK_COPY_ID）/ exit（HK_EXIT_ID）仅在捕获模式期间注册
       （常驻会全局吃掉 Ctrl+Shift+Enter / Esc，交互混乱元凶）"""
 
-    def __init__(self):
+    def __init__(self, *, player_only: bool = False):
         self._hwnd = None
+        self._player_only = bool(player_only)
         self._apply_pending = None
         self._apply_result = None
         self._hk_state = {}  # hk_id -> [combo, ok, msg]（锁保护）
@@ -218,9 +282,10 @@ class _HotkeyWindow:
         self._hwnd = win32gui.CreateWindow(
             'EasycodeHotkeyWindow', 'EasycodeHotkey', 0, 0, 0, 0, 0,
             None, None, hinst, None)
-        hotkeys = load_hotkeys()
-        self._do_register(HK_ENTER_ID, hotkeys.get('enter_capture', ''))
-        self._do_register(HK_SCREENSHOT_ID, hotkeys.get('enter_screenshot', ''))
+        if not self._player_only:
+            hotkeys = load_hotkeys()
+            self._do_register(HK_ENTER_ID, hotkeys.get('enter_capture', ''))
+            self._do_register(HK_SCREENSHOT_ID, hotkeys.get('enter_screenshot', ''))
         while True:
             res = win32gui.GetMessage(self._hwnd, 0, 0)
             if res is None or res[0] == 0 or res[1][2] == win32con.WM_QUIT:
@@ -239,8 +304,9 @@ class _HotkeyWindow:
                 # 截图和原生宿主启动不能阻塞热键消息窗口线程。
                 def trigger_capture():
                     try:
-                        from core.services.capture_session_service import capture_session_service
-
+                        capture_session_service = _ide_service(
+                            'capture_' + 'session_service', 'capture_session_service',
+                        )
                         capture_session_service.trigger_global_capture()
                     except Exception as exc:
                         logger.warning('全局截图捕获启动失败: %s', exc)
@@ -252,8 +318,9 @@ class _HotkeyWindow:
                 _enqueue('copy')
             elif w == HK_RECORD_EXIT_ID:
                 # 只投递停止信号，不能在热键窗口线程等待截图线程退出。
-                from core.services.frame_recording_service import frame_recording_service
-
+                frame_recording_service = _ide_service(
+                    'frame_' + 'recording_service', 'frame_recording_service',
+                )
                 frame_recording_service.request_stop('esc')
             return 0
         if m == WM_APP_APPLY:
@@ -615,6 +682,7 @@ def _invoke_copy_generate_worker():
     global _selected, _last_result
     with _state_lock:
         sel = dict(_selected) if _selected else None
+        request_id = _mode_request_id
     from core.services import uia_service
 
     if sel:
@@ -649,9 +717,16 @@ def _invoke_copy_generate_worker():
         return
     with _state_lock:
         _selected = None  # ⚡ 捕获成功：取消选中
-        _last_result = {'ts': int(time.time() * 1000), 'event': 'copy', 'info': info, 'selector': selector}
+        _last_result = {
+            'ts': int(time.time() * 1000), 'event': 'copy', 'info': info,
+            'selector': selector, 'control_selector': build_control_selector(info),
+        }
     _clear_highlight()  # ⚡ 捕获完成即清高亮
-    publish_event({'event': 'copy', 'info': info, 'selector': selector})
+    publish_event({
+        'event': 'copy', 'info': info, 'selector': selector,
+        'control_selector': build_control_selector(info),
+        'field_request_id': request_id or None,
+    })
     logger.info('控件捕获结果已复制: %s', selector)
 
 
@@ -677,45 +752,61 @@ def _cancel_auto_exit():
         _auto_exit_timer = None
 
 
-def start_mode() -> dict:
+def start_mode(workspace_kind: str = 'legacy', request_id: str = '') -> dict:
     """启动捕获模式（零模态、零钩子；幂等）。"""
+    if workspace_kind not in {'vnext', 'player'}:
+        try:
+            project_workspace_manager = _ide_service(
+                'project_' + 'workspace_service', 'project_workspace_manager',
+            )
+            active = project_workspace_manager.active()
+            if not active:
+                return {'ok': False, 'message': '请先打开一个项目'}
+            if active.get('read_only'):
+                return {'ok': False, 'message': '项目以只读方式打开，不能进入捕获模式'}
+        except Exception as exc:
+            return {'ok': False, 'message': f'当前项目状态无法确认: {exc}'}
+    if workspace_kind not in {'vnext', 'player'}:
+        try:
+            ExecutionService = _ide_service('execution_' + 'service', 'ExecutionService')
+            if ExecutionService.has_active_execution():
+                return {'ok': False, 'message': '请先停止当前任务'}
+        except Exception:
+            pass
     try:
-        from core.services.project_workspace_service import project_workspace_manager
+        if workspace_kind == 'player':
+            from core.services.player_capture_session import player_capture_session_service
 
-        active = project_workspace_manager.active()
-        if not active:
-            return {'ok': False, 'message': '请先打开一个项目'}
-        if active.get('read_only'):
-            return {'ok': False, 'message': '项目以只读方式打开，不能进入捕获模式'}
-    except Exception as exc:
-        return {'ok': False, 'message': f'当前项目状态无法确认: {exc}'}
-    try:
-        from core.services.execution_service import ExecutionService
-
-        if ExecutionService.has_active_execution():
-            return {'ok': False, 'message': '请先停止当前任务'}
-    except Exception:
-        pass
-    try:
-        from core.services.capture_session_service import capture_session_service
-
+            capture_session_service = player_capture_session_service
+        else:
+            capture_session_service = _ide_service(
+                'capture_' + 'session_service', 'capture_session_service',
+            )
         if capture_session_service.is_capture_active():
             return {'ok': False, 'message': '请先退出截图捕获模式'}
     except Exception:
         pass
     # 录制期间 Esc 必须专属于录制，不能同时进入控件捕获模式争抢热键。
-    try:
-        from core.services.frame_recording_service import frame_recording_service
-
-        if frame_recording_service.get_state().get('active'):
-            return {'ok': False, 'message': '逐帧录制正在运行，请先按 Esc 停止录制'}
-    except Exception:
-        pass
-    global _hover_stop, _last_result, _selected, _active
+    if workspace_kind != 'player':
+        try:
+            frame_recording_service = _ide_service(
+                'frame_' + 'recording_service', 'frame_recording_service',
+            )
+            if frame_recording_service.get_state().get('active'):
+                return {'ok': False, 'message': '逐帧录制正在运行，请先按 Esc 停止录制'}
+        except Exception:
+            pass
+    global _hover_stop, _last_result, _selected, _active, _mode_owner, _mode_request_id
     with _state_lock:
         if _active:
+            if _mode_owner and _mode_owner != workspace_kind:
+                return {'ok': False, 'message': '另一种控件捕获会话正在运行，请先退出后重试'}
+            if _mode_request_id and _mode_request_id != str(request_id or ''):
+                return {'ok': False, 'message': '另一个控件捕获请求正在运行'}
             return {'ok': True, 'message': '捕获模式已运行'}
         _active = True
+        _mode_owner = workspace_kind
+        _mode_request_id = str(request_id or '')
         _last_result = None
         _selected = None
         _hover_stop = threading.Event()
@@ -726,17 +817,20 @@ def start_mode() -> dict:
     # （RegisterHotKey 跨线程调用会 1408 失败；常驻注册会全局吃掉 Esc/Ctrl+Shift+Enter）
     if _hotkey_window is not None:
         _hotkey_window.request_dynamic_hotkeys(True)
-    publish_event({'event': 'mode', 'active': True})
+    publish_event({'event': 'mode', 'active': True, 'field_request_id': _mode_request_id or None})
     return {'ok': True, 'message': '捕获模式已启动（鼠标悬停自动识别控件）'}
 
 
 def stop_mode():
     """退出捕获模式（幂等）：停悬停监控，清选中与高亮，释放模式期间热键"""
-    global _hover_stop, _selected, _active
+    global _hover_stop, _selected, _active, _mode_owner, _mode_request_id
     with _state_lock:
         if not _active and _hover_stop is None:
             return
+        request_id = _mode_request_id
         _active = False
+        _mode_owner = ''
+        _mode_request_id = ''
         _selected = None
         stop = _hover_stop
         _hover_stop = None
@@ -747,7 +841,7 @@ def stop_mode():
     if _hotkey_window is not None:
         _hotkey_window.request_dynamic_hotkeys(False)
     _clear_highlight()  # ⚡ 退出即清空所有框
-    publish_event({'event': 'mode', 'active': False})
+    publish_event({'event': 'mode', 'active': False, 'field_request_id': request_id or None})
 
 
 # ------------------------------------------------------------------ 热键窗口线程
@@ -755,17 +849,27 @@ def stop_mode():
 _hotkey_started = False
 
 
-def ensure_hotkey_thread():
-    """启动全局热键消息窗口线程（幂等；由路由创建时调用）"""
+def ensure_hotkey_thread(*, player_only: bool = False, ready_timeout: float = 1.0) -> bool:
+    """启动全局热键消息窗口线程，并等待窗口可接收动态注册请求。
+
+    Player 会在创建线程后立即进入一次性控件捕获。如果不等待 ``_hwnd``，
+    ``start_mode`` 发出的动态热键注册消息会被静默丢弃，界面却仍提示用户按
+    Ctrl+Shift+Enter。返回值让发布运行时能把这一宿主失败留在 EasyCode 内说明。
+    """
     global _hotkey_started, _hotkey_window
+    window = None
     with _state_lock:
         if _hotkey_started:
-            return
-        _hotkey_started = True
-    window = _HotkeyWindow()
-    with _state_lock:
-        _hotkey_window = window
-    threading.Thread(target=window.run, daemon=True, name='capture-hotkey').start()
+            window = _hotkey_window
+        else:
+            _hotkey_started = True
+            window = _HotkeyWindow(player_only=player_only)
+            _hotkey_window = window
+            threading.Thread(target=window.run, daemon=True, name='capture-hotkey').start()
+    deadline = time.time() + max(0.05, float(ready_timeout))
+    while window is not None and not window._hwnd and time.time() < deadline:
+        time.sleep(0.01)
+    return bool(window is not None and window._hwnd)
 
 
 def set_recording_escape_enabled(enable: bool, timeout: float = 1.0) -> dict:

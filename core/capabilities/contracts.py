@@ -169,7 +169,7 @@ class CapabilityContext:
         import cv2
         import numpy as np
 
-        from core.node_executors.base.ocr_recognition import ocr_engine_recognize
+        from core.vision.ocr_engine import ocr_engine_recognize
         from core.services.runtime_target import capture_workspace_region
 
         # Runtime capabilities must use the already bound execution target,

@@ -5,7 +5,7 @@
         <div class="tree-sidebar">
             <div class="tree-header">
                 <span><Folder :size="16" style="vertical-align: middle;" /> 资源分类</span>
-                <el-button class="trash-button" link size="small" title="资源回收站" @click="openTrashDialog">
+                <el-button v-if="!isVNext" class="trash-button" link size="small" title="资源回收站" @click="openTrashDialog">
                     <ArchiveRestore :size="14" /> 回收站
                 </el-button>
             </div>
@@ -70,7 +70,7 @@ ref="inlineInputRef"
         <div class="content-body">
             <div class="location-bar">
                 <span>当前选择路径: </span>
-                <strong class="path-highlight">/templates/{{ currentRelPath || '(根目录)' }}</strong>
+                <strong class="path-highlight">{{ resourceRootLabel }}/{{ currentRelPath || '(根目录)' }}</strong>
             </div>
 
             <!-- 图片网格查看 -->
@@ -90,7 +90,7 @@ v-for="img in displayedImages"
                      @dblclick="handleImageDblClick(img)">
                     <div class="img-wrapper">
                         <img v-if="img.data" :src="img.data" :alt="img.name" loading="lazy" decoding="async" />
-                        <div class="image-actions" @click.stop>
+                        <div v-if="isManageMode" class="image-actions" @click.stop>
                             <el-button circle size="small" title="移动或重命名" @click.stop="openMoveDialog(img, 'file')">
                                 <FolderInput :size="14" />
                             </el-button>
@@ -208,6 +208,7 @@ v-model="saveFileName"
         LockKeyhole, MoreHorizontal, RotateCcw, Trash2
     } from 'lucide-vue-next'
     import { visionApi } from '@/api/visionApi'
+    import { vnextApi } from '@/vnext/api'
     import { useProjectStore } from '@/stores/projectStore'
     import { publishResourceMutation } from '@/utils/resourceMutationEvents'
 
@@ -218,7 +219,9 @@ v-model="saveFileName"
         allowEmptyName: { type: Boolean, default: false },
         saveButtonText: { type: String, default: '保存截图' },
         saveBusy: { type: Boolean, default: false },
-        fillHeight: { type: Boolean, default: false }
+        fillHeight: { type: Boolean, default: false },
+        workspaceKind: { type: String, default: 'legacy' },
+        workspaceIdentity: { type: Object, default: null }
     })
 
     const emit = defineEmits(['select', 'save', 'close', 'mutated'])
@@ -233,6 +236,8 @@ v-model="saveFileName"
     const isSaveMode = computed(() => props.mode === 'save' || props.mode === 'capture-save')
     const isCaptureSaveMode = computed(() => props.mode === 'capture-save')
     const isManageMode = computed(() => props.mode === 'manage')
+    const isVNext = computed(() => props.workspaceKind === 'vnext' && props.workspaceIdentity)
+    const resourceRootLabel = computed(() => isVNext.value ? '/assets' : '/templates')
 
     const treeRef = ref(null)
     const inlineInputRef = ref(null)
@@ -270,6 +275,9 @@ v-model="saveFileName"
     const trashMaxBytes = ref(0)
     const restoringTrashId = ref('')
     let previewGeneration = 0
+    let vnextAssets = []
+
+    const previewBatchSize = () => isCaptureSaveMode.value ? 16 : 80
 
     const defaultProps = { children: 'children', label: 'name' }
 
@@ -277,7 +285,7 @@ v-model="saveFileName"
         const result = []
         for (const node of nodes || []) {
             if (node.id) {
-                result.push({ id: node.id, label: `${'  '.repeat(depth)}/templates/${node.id}` })
+                result.push({ id: node.id, label: `${'  '.repeat(depth)}${resourceRootLabel.value}/${node.id}` })
             }
             result.push(...flattenFolders(node.children, depth + 1))
         }
@@ -295,6 +303,33 @@ v-model="saveFileName"
 
     const fetchTree = async (preserveCurrentPath = false) => {
         try {
+            if (isVNext.value) {
+                const result = await vnextApi.assets(props.workspaceIdentity)
+                vnextAssets = Array.isArray(result.assets) ? result.assets : []
+                const makeFolderChildren = (category, folders) => {
+                    const root = { name: category, id: category, type: 'directory', children: [], protected: true }
+                    for (const folder of folders || []) {
+                        let parent = root
+                        let current = category
+                        for (const part of String(folder).split('/').filter(Boolean)) {
+                            current = `${current}/${part}`
+                            let child = parent.children.find(item => item.id === current)
+                            if (!child) { child = { name: part, id: current, type: 'directory', children: [] }; parent.children.push(child) }
+                            parent = child
+                        }
+                    }
+                    return root
+                }
+                treeData.value = MANAGED_ROOT_NAMES.map(rootName => {
+                    const category = result.categories?.find(item => item.id === rootName)
+                    return makeFolderChildren(rootName, category?.folders || [])
+                })
+                currentRelPath.value = preserveCurrentPath ? currentRelPath.value : (props.initialPath || 'image')
+                await nextTick()
+                treeRef.value?.setCurrentKey?.(currentRelPath.value)
+                await fetchImages(currentRelPath.value)
+                return
+            }
             const res = await visionApi.getTemplatesTree(props.projectPath)
             const rawTree = Array.isArray(res.tree) ? res.tree : []
             // 同时容忍历史接口偶尔返回的虚拟根包装，但界面不再渲染这个
@@ -346,18 +381,28 @@ v-model="saveFileName"
 
     const loadImageBatch = async (generation, start, end) => {
         const targets = imageList.value.slice(start, end)
-        const loaded = await Promise.all(targets.map(async image => {
+        const loaded = new Array(targets.length)
+        let cursor = 0
+        const loadOne = async image => {
             if (image.data) return image
             try {
-                const blob = await visionApi.getImageThumb(
-                    props.projectPath,
-                    image.asset_ref || image.relative_path
-                )
+                const blob = isVNext.value
+                    ? await vnextApi.assetContent(props.workspaceIdentity, image.asset_id)
+                    : await visionApi.getImageThumb(props.projectPath, image.asset_ref || image.relative_path)
                 return { ...image, data: URL.createObjectURL(blob) }
             } catch {
                 return image
             }
-        }))
+        }
+        // 捕获保存先让目录和名称输入可用；缩略图用有界并发补齐，避免
+        // 资源较多时一次打出 80 个内容请求并挤占确认事务。
+        const worker = async () => {
+            while (cursor < targets.length) {
+                const index = cursor++
+                loaded[index] = await loadOne(targets[index])
+            }
+        }
+        await Promise.all(Array.from({ length: Math.min(6, targets.length) }, worker))
         if (generation !== previewGeneration) {
             loaded.forEach(image => image.data && URL.revokeObjectURL(image.data))
             return
@@ -370,12 +415,25 @@ v-model="saveFileName"
     const fetchImages = async (relPath) => {
         const generation = ++previewGeneration
         try {
+            if (isVNext.value) {
+                const [category, ...folderParts] = String(relPath || 'image').replace(/\\/g, '/').split('/').filter(Boolean)
+                const folder = folderParts.join('/')
+                revokePreviewUrls()
+                imageList.value = vnextAssets.filter(asset => asset.category === category && String(asset.folder || '') === folder).map(asset => ({
+                    ...asset, name: asset.display_name, relative_path: asset.path, asset_ref: `asset://${asset.asset_id}`, data: '',
+                }))
+                const batchSize = previewBatchSize()
+                renderedImageCount.value = batchSize
+                await loadImageBatch(generation, 0, Math.min(batchSize, imageList.value.length))
+                return
+            }
             const res = await visionApi.getTemplatePreview(props.projectPath, relPath)
             if (generation !== previewGeneration) return
             revokePreviewUrls()
             imageList.value = (res.images || []).map(image => ({ ...image, data: '' }))
-            renderedImageCount.value = 80
-            await loadImageBatch(generation, 0, Math.min(80, imageList.value.length))
+            const batchSize = previewBatchSize()
+            renderedImageCount.value = batchSize
+            await loadImageBatch(generation, 0, Math.min(batchSize, imageList.value.length))
         } catch (err) {
             console.error('获取图片预览失败', err)
         }
@@ -385,7 +443,7 @@ v-model="saveFileName"
         const target = event.currentTarget
         if (!target || target.scrollHeight - target.scrollTop - target.clientHeight > 180) return
         const previous = renderedImageCount.value
-        const next = Math.min(imageList.value.length, previous + 80)
+        const next = Math.min(imageList.value.length, previous + previewBatchSize())
         if (next <= previous) return
         renderedImageCount.value = next
         loadImageBatch(previewGeneration, previous, next)
@@ -484,7 +542,7 @@ v-model="saveFileName"
     const openMoveDialog = (entry, entryType) => {
         const path = entryType === 'directory' ? entry.id : entry.relative_path
         const parts = path.split('/')
-        moveEntry.value = { path, entryType }
+        moveEntry.value = { path, entryType, assetId: entry.asset_id || '' }
         moveName.value = parts.pop() || ''
         moveTargetParent.value = parts.join('/') || props.initialPath || 'image'
         moveDialogVisible.value = true
@@ -536,6 +594,35 @@ v-model="saveFileName"
         if (!relativePath || mutationPending.value) return
         mutationPending.value = true
         try {
+            if (isVNext.value) {
+                if (!props.workspaceIdentity) throw new Error('vNext 工作区身份已失效')
+                const asset = vnextAssets.find(item => item.path === relativePath || item.asset_id === relativePath)
+                if (asset) {
+                    const impact = await vnextApi.assetReferences(props.workspaceIdentity, asset.asset_id)
+                    if (impact.references?.length) {
+                        const referenceCount = impact.references.length
+                        return ElMessage.warning(`该资源仍有 ${referenceCount} 处源码引用，请先替换或清除引用`)
+                    }
+                    await ElMessageBox.confirm('确认删除这项未被引用的资源？删除后无法从项目内恢复。', '确认删除图片', { type: 'warning', appendTo: 'body' })
+                    const confirmed = await vnextApi.deleteAsset(props.workspaceIdentity, asset.asset_id)
+                    if (confirmed.blocked) return ElMessage.warning('资源在确认期间产生了新引用，删除已取消')
+                } else {
+                    const impact = await vnextApi.deleteAssetFolder(props.workspaceIdentity, relativePath)
+                    if (impact.blocked) {
+                        const referenceCount = (impact.references || []).length
+                        return ElMessage.warning(`文件夹中的资源仍有 ${referenceCount} 处源码引用，请先替换或清除引用`)
+                    }
+                    if (impact.requires_confirmation) {
+                        await ElMessageBox.confirm(`文件夹包含 ${impact.asset_count || 0} 项资源。继续将删除这些未被引用的资源。`, '确认删除文件夹', { type: 'warning', appendTo: 'body' })
+                        const confirmed = await vnextApi.deleteAssetFolder(props.workspaceIdentity, relativePath, true)
+                        if (confirmed.blocked) return ElMessage.warning('文件夹在确认期间产生了新引用，删除已取消')
+                    }
+                }
+                if (currentRelPath.value === relativePath || currentRelPath.value.startsWith(`${relativePath}/`)) currentRelPath.value = relativePath.split('/').slice(0, -1).join('/') || 'image'
+                await fetchTree(true)
+                emit('mutated', { operation: 'delete', path: relativePath })
+                return ElMessage.success('资源已删除')
+            }
             const impact = await visionApi.getTemplateImpact(props.projectPath, relativePath)
             if (impact.protected) return ElMessage.warning('image、ocr、page 默认分类不能删除')
             try {
@@ -560,6 +647,7 @@ v-model="saveFileName"
                 ? `资源已删除，并清空 ${result.node_count} 个节点的图片与坐标`
                 : '资源已移入项目回收区')
         } catch (error) {
+            if (error === 'cancel' || error === 'close') return
             ElMessage.error(error.message || '删除资源失败')
         } finally {
             mutationPending.value = false
@@ -571,6 +659,22 @@ v-model="saveFileName"
         mutationPending.value = true
         const sourcePath = moveEntry.value.path
         try {
+            if (isVNext.value) {
+                if (!props.workspaceIdentity) throw new Error('vNext 工作区身份已失效')
+                if (moveEntry.value.entryType === 'directory') {
+                    await vnextApi.moveAssetFolder(props.workspaceIdentity, sourcePath, moveTargetParent.value, moveName.value.trim())
+                } else {
+                    const [category, ...folderParts] = moveTargetParent.value.split('/').filter(Boolean)
+                    const asset = vnextAssets.find(item => item.asset_id === moveEntry.value.assetId || item.path === sourcePath)
+                    if (!asset || !['image', 'ocr', 'page'].includes(category)) throw new Error('资源或目标目录已变化')
+                    const displayName = moveName.value.trim().replace(/\.(png|jpe?g|bmp|webp)$/i, '')
+                    await vnextApi.updateAsset(props.workspaceIdentity, asset.asset_id, { category, folder: folderParts.join('/'), display_name: displayName })
+                }
+                moveDialogVisible.value = false
+                await fetchTree(true)
+                emit('mutated', { operation: 'move', path: sourcePath })
+                return ElMessage.success('资源已移动，稳定资源 ID 与源码引用保持不变')
+            }
             await flushProjectBeforeMutation()
             notifyMutation('before', 'move', { path: sourcePath })
             const result = await visionApi.moveTemplateEntry(
@@ -655,7 +759,14 @@ v-model="saveFileName"
         nodeData.isCreating = false
 
         try {
-            await visionApi.createTemplateFolder(props.projectPath, nodeData.parentPath, folderName)
+            if (isVNext.value) {
+                if (!props.workspaceIdentity) throw new Error('vNext 工作区身份已失效')
+                const [category, ...parentParts] = String(nodeData.parentPath || '').split('/').filter(Boolean)
+                if (!['image', 'ocr', 'page'].includes(category)) throw new Error('资源分类已变化')
+                await vnextApi.createAssetFolder(props.workspaceIdentity, category, [...parentParts, folderName].join('/'))
+            } else {
+                await visionApi.createTemplateFolder(props.projectPath, nodeData.parentPath, folderName)
+            }
             ElMessage.success(`文件夹 [${folderName}] 创建成功`)
             await fetchTree(true)
         } catch (err) {
@@ -747,7 +858,7 @@ v-model="saveFileName"
 
     // ⚡ 增加对 initialPath 和 mode 的全量监听
     watch(
-        () => [props.projectPath, props.initialPath, props.mode],
+        () => [props.projectPath, props.initialPath, props.mode, props.workspaceKind, props.workspaceIdentity?.generation],
         ([newPath, newInitPath]) => {
             if (newPath) {
                 selectedImage.value = ''

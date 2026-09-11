@@ -2,7 +2,6 @@
 # ⚡ 控件链路端到端冒烟（A→D→G 串联）：
 #   A schema 加载（/api/params 真实返回）→ 按 schema 默认值构造节点（等价前端 buildNodeDefaultParams）
 #   → D 执行器查找/操作（mock UIA 服务）→ G 捕获生成参数与 schema by 选项对齐（闭环）
-import pytest
 
 from core.services import capture_mode
 

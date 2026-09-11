@@ -116,6 +116,12 @@ class PlatformProxy:
 
 
 def load_entry(package_root: Path, entry: str):
+    # Project extensions may vendor third-party wheels into ``_vendor``.  Keep
+    # this path scoped to the isolated worker; never mutate the IDE process.
+    vendor_root = package_root / '_vendor'
+    for search_root in (vendor_root, package_root):
+        if search_root.is_dir() and str(search_root) not in sys.path:
+            sys.path.insert(0, str(search_root))
     module_ref, separator, function_name = str(entry or '').partition(':')
     if not separator:
         raise ValueError('能力入口缺少函数名')

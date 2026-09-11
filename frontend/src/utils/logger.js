@@ -12,8 +12,9 @@ const PREFIX = {
     TRACE: '[TRC]'
 };
 
-// 默认开发环境为 DEBUG，可随时在浏览器控制台通过 window.__LOG_LEVEL__ = 'INFO' 修改
-window.__LOG_LEVEL__ = process.env.NODE_ENV === 'development' ? 'DEBUG' : 'WARN';
+// 默认不输出高频调试对象。需要诊断时可在浏览器控制台显式设置
+// window.__LOG_LEVEL__ = 'DEBUG'，刷新页面即可恢复完整 Pinia 追踪。
+window.__LOG_LEVEL__ = import.meta.env.DEV ? 'INFO' : 'WARN';
 
 function shouldLog(level) {
     const currentLevel = LEVELS[window.__LOG_LEVEL__] ?? LEVELS.INFO;

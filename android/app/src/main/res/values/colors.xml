@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="ec_background">#0F0F0E</color>
+    <color name="ec_surface">#1A1A18</color>
+    <color name="ec_surface_muted">#262623</color>
+    <color name="ec_text">#F7F7F2</color>
+    <color name="ec_text_muted">#9C9C93</color>
+    <color name="ec_border">#41413B</color>
+    <color name="ec_accent">#D95417</color>
+    <color name="ec_on_accent">#FFF8F2</color>
+    <color name="ec_warning">#D89A32</color>
+    <color name="ec_success">#3BA66B</color>
+    <color name="ec_error">#D84A4A</color>
+</resources>

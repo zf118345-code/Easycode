@@ -9,13 +9,17 @@ import shutil
 import uuid
 import zipfile
 from copy import deepcopy
+from pathlib import PurePosixPath
 from typing import Any
 
-from core.project_schema import PROJECT_SCHEMA_VERSION, SYSTEM_EXCEPTION_OUTCOME_ID, validate_document, WORKFLOW_FILE
+from core.project_schema import PROJECT_SCHEMA_VERSION, SYSTEM_EXCEPTION_OUTCOME_ID, WORKFLOW_FILE, validate_document
+from core.security import assert_safe_path
 from core.services.asset_service import AssetService
 
-
 PACKAGE_VERSION = 1
+MAX_PACKAGE_FILES = 4096
+MAX_UNCOMPRESSED_BYTES = 256 * 1024 * 1024
+MAX_METADATA_BYTES = 32 * 1024 * 1024
 
 
 def _id(prefix: str) -> str:
@@ -137,6 +141,28 @@ def clone_function_with_new_ids(
 
 class FunctionPackageService:
     @staticmethod
+    def _validate_archive(archive: zipfile.ZipFile) -> None:
+        members = archive.infolist()
+        if len(members) > MAX_PACKAGE_FILES:
+            raise ValueError('函数包文件数量超过安全上限')
+        if sum(max(0, item.file_size) for item in members) > MAX_UNCOMPRESSED_BYTES:
+            raise ValueError('函数包解压后体积超过安全上限')
+        names: set[str] = set()
+        for item in members:
+            name = item.filename.replace('\\', '/')
+            path = PurePosixPath(name)
+            if not name or path.is_absolute() or '..' in path.parts or ':' in path.parts[0]:
+                raise ValueError(f'函数包包含不安全路径: {item.filename}')
+            if (item.external_attr >> 16) & 0o170000 == 0o120000:
+                raise ValueError(f'函数包不允许符号链接: {item.filename}')
+            names.add(name)
+        if not {'manifest.json', 'functions.json'}.issubset(names):
+            raise ValueError('函数包缺少 manifest.json 或 functions.json')
+        for required in ('manifest.json', 'functions.json'):
+            if archive.getinfo(required).file_size > MAX_METADATA_BYTES:
+                raise ValueError(f'函数包元数据超过安全上限: {required}')
+
+    @staticmethod
     def _closure(workflow: dict[str, Any], root_id: str) -> list[dict[str, Any]]:
         by_id = {str(item.get('function_id')): item for item in workflow.get('functions', []) if isinstance(item, dict)}
         if root_id not in by_id:
@@ -212,6 +238,7 @@ class FunctionPackageService:
         from core.services.blueprint_service import BlueprintService
 
         with zipfile.ZipFile(package_path, 'r') as archive:
+            cls._validate_archive(archive)
             manifest = json.loads(archive.read('manifest.json'))
             payload_bytes = archive.read('functions.json')
             if manifest.get('format') != 'easycode-function' or int(manifest.get('package_version', 0)) != PACKAGE_VERSION:
@@ -262,15 +289,24 @@ class FunctionPackageService:
                 source_name = f'assets/{old_asset_id}/{old_relative}'
                 if source_name not in archive.namelist():
                     continue
-                category = old_relative.split('/', 1)[0] if '/' in old_relative else 'image'
+                category = AssetService.infer_kind(old_relative, record.get('kind'))
                 base_name = os.path.basename(old_relative)
+                if not base_name or base_name in {'.', '..'}:
+                    raise ValueError('函数包包含无效的资源文件名')
                 stem, extension = os.path.splitext(base_name)
                 relative = f'{category}/{base_name}'
                 index = 1
-                while os.path.exists(os.path.join(templates_root, relative.replace('/', os.sep))):
+                target = assert_safe_path(
+                    templates_root,
+                    os.path.join(templates_root, relative.replace('/', os.sep)),
+                )
+                while os.path.exists(target):
                     relative = f'{category}/{stem}{index}{extension}'
+                    target = assert_safe_path(
+                        templates_root,
+                        os.path.join(templates_root, relative.replace('/', os.sep)),
+                    )
                     index += 1
-                target = os.path.join(templates_root, relative.replace('/', os.sep))
                 os.makedirs(os.path.dirname(target), exist_ok=True)
                 with archive.open(source_name) as source, open(target, 'wb') as destination:
                     shutil.copyfileobj(source, destination)

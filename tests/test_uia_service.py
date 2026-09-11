@@ -1,13 +1,13 @@
 # tests/test_uia_service.py
 # UIA 控件服务测试：纯函数（信息提取/距离/匹配/查找）+ 执行器 UIA 链路（mock uiautomation）
-import pytest
 
 
 class FakeUiaElement:
     """模拟 uiautomation 元素（最小属性集）"""
 
     def __init__(self, name='', control_type='ButtonControl', automation_id='', class_name='',
-                 rect=None, hwnd=0, enabled=True, children=None, invoke=None, value=None):
+                 rect=None, hwnd=0, enabled=True, children=None, invoke=None, value=None,
+                 patterns=None):
         self.Name = name
         self.ControlTypeName = control_type
         self.AutomationId = automation_id
@@ -18,6 +18,11 @@ class FakeUiaElement:
         self._children = children or []
         self._invoke = invoke
         self._value = value
+        self._patterns = patterns or {}
+        self.IsOffscreen = False
+        self.IsKeyboardFocusable = True
+        self.HasKeyboardFocus = False
+        self.focus_calls = 0
 
     @property
     def BoundingRectangle(self):
@@ -37,11 +42,17 @@ class FakeUiaElement:
         return self._children
 
     def GetPattern(self, pattern_id):
+        if pattern_id in self._patterns:
+            return self._patterns[pattern_id]
         if pattern_id == 10000 and self._invoke is not None:  # InvokePattern
             return self._invoke
         if pattern_id == 10002 and self._value is not None:  # ValuePattern
             return self._value
         return None
+
+    def SetFocus(self):
+        self.focus_calls += 1
+        self.HasKeyboardFocus = True
 
     def GetClickablePoint(self):
         return ((self._rect[0] + self._rect[2]) // 2, (self._rect[1] + self._rect[3]) // 2)
@@ -58,11 +69,68 @@ class FakeInvokePattern:
 class FakeValuePattern:
     def __init__(self, value=''):
         self.Value = value  # 与真实 uiautomation ValuePattern.Value 对齐
+        self.IsReadOnly = False
         self.set_calls = []
 
     def SetValue(self, text):
         self.set_calls.append(text)
         self.Value = text
+
+
+class FakeActionPattern:
+    def __init__(self, *, toggle_state=0, selected=False):
+        self.calls = []
+        self.ToggleState = toggle_state
+        self.IsSelected = selected
+
+    def Toggle(self):
+        self.calls.append('toggle')
+
+    def Select(self):
+        self.calls.append('select')
+
+    def ScrollIntoView(self):
+        self.calls.append('scroll')
+
+
+def test_uia_status_and_general_patterns_are_semantic_only(monkeypatch):
+    from core.services import uia_service as uia_mod
+
+    value = FakeValuePattern('当前值')
+    toggle = FakeActionPattern(toggle_state=1)
+    selection = FakeActionPattern(selected=True)
+    scroll = FakeActionPattern()
+    element = FakeUiaElement(
+        name='选项', rect=(10, 20, 110, 70), value=value,
+        patterns={10015: toggle, 10010: selection, 10017: scroll},
+    )
+
+    class FakeAuto:
+        PatternId = type('P', (), {
+            'InvokePattern': 10000, 'ValuePattern': 10002,
+            'TogglePattern': 10015, 'SelectionItemPattern': 10010,
+            'ScrollItemPattern': 10017,
+        })
+
+    monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
+    monkeypatch.setattr(uia_mod, '_resolve_action_element', lambda *_args: element)
+    info = {'name': '选项', 'rect': [10, 20, 110, 70]}
+
+    status = uia_mod.perform_uia_action(info, 'get_status')
+    assert status['value']['control_status.field.checked'] is True
+    assert status['value']['control_status.field.selected'] is True
+    assert status['value']['control_status.field.editable'] is True
+    assert status['value']['control_status.field.current_value'] == '当前值'
+    assert status['value']['control_status.field.rect']['width'] == 100
+    assert uia_mod.perform_uia_action(info, 'focus')['ok'] is True
+    assert uia_mod.perform_uia_action(info, 'set_value', text='新值')['ok'] is True
+    assert uia_mod.perform_uia_action(info, 'select')['ok'] is True
+    assert uia_mod.perform_uia_action(info, 'toggle')['ok'] is True
+    assert uia_mod.perform_uia_action(info, 'scroll_into_view')['ok'] is True
+    assert value.Value == '新值'
+    assert selection.calls == ['select']
+    assert toggle.calls == ['toggle']
+    assert scroll.calls == ['scroll']
 
 
 # ========== 信息提取 / 距离 ==========
@@ -130,6 +198,61 @@ def test_inspect_point_skips_self_highlight_window(monkeypatch):
     assert result['control']['name'] == '确定'
 
 
+def test_semantic_control_picker_is_target_bounded_and_returns_parent_chain(monkeypatch):
+    import core.services.uia_service as uia_mod
+
+    window = FakeUiaElement(name='微信', control_type='WindowControl', rect=(100, 100, 900, 700), hwnd=88)
+    pane = FakeUiaElement(name='会话区', control_type='PaneControl', rect=(120, 150, 880, 680))
+    button = FakeUiaElement(name='发送', control_type='ButtonControl', automation_id='send', rect=(760, 620, 860, 665))
+    button._parent = pane
+    pane._parent = window
+    window.GetTopLevelControl = lambda: window
+    pane.GetTopLevelControl = lambda: window
+    button.GetTopLevelControl = lambda: window
+
+    class FakeAuto:
+        ControlFromPoint = staticmethod(lambda _x, _y: button)
+
+    monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
+    candidates = uia_mod.inspect_point_candidates(800, 640, expected_hwnd=88)
+    assert [item['name'] for item in candidates] == ['发送', '会话区', '微信']
+    assert [level['name'] for level in candidates[0]['ancestor_path']] == ['微信', '会话区', '发送']
+    assert [level['name'] for level in candidates[1]['ancestor_path']] == ['微信', '会话区']
+    assert uia_mod.inspect_point_candidates(800, 640, expected_hwnd=99) == []
+
+
+def test_overlay_process_is_excluded_without_hiding_the_capture_window(monkeypatch):
+    import core.services.uia_service as uia_mod
+
+    windows = [901, 502, 301]
+    visible = {901: True, 502: True, 301: True}
+    processes = {901: 66, 502: 77, 301: 88}
+    rects = {901: (0, 0, 900, 700), 502: (0, 0, 900, 700), 301: (100, 100, 800, 600)}
+    styles = {901: 0x20, 502: 0, 301: 0}
+
+    class FakeGui:
+        @staticmethod
+        def EnumWindows(callback, extra):
+            for hwnd in windows:
+                if callback(hwnd, extra) is False:
+                    break
+
+        IsWindowVisible = staticmethod(lambda hwnd: visible[hwnd])
+        GetWindowLong = staticmethod(lambda hwnd, _index: styles[hwnd])
+        GetWindowRect = staticmethod(lambda hwnd: rects[hwnd])
+
+    class FakeProcess:
+        GetWindowThreadProcessId = staticmethod(lambda hwnd: (1, processes[hwnd]))
+
+    monkeypatch.setitem(__import__('sys').modules, 'win32gui', FakeGui)
+    monkeypatch.setitem(__import__('sys').modules, 'win32process', FakeProcess)
+    monkeypatch.setitem(__import__('sys').modules, 'win32con', type('FakeCon', (), {
+        'GWL_EXSTYLE': -20, 'WS_EX_TRANSPARENT': 0x20,
+    }))
+
+    assert uia_mod._window_at_point_excluding(300, 250, {77}) == 301
+
+
 # ========== 执行器 UIA 链路 ==========
 
 class FakeCtx:
@@ -180,7 +303,6 @@ def test_executor_uia_find_and_invoke(monkeypatch):
 
 
 def test_executor_uia_not_found_fails(monkeypatch):
-    import core.node_executors.base.control as control_mod
     from core.services import uia_service as uia_mod
 
     monkeypatch.setattr(uia_mod, 'find_control', lambda **kw: None)
@@ -543,7 +665,7 @@ class FakeNativeClient:
 def test_find_control_native_hit(monkeypatch):
     """原生查找：窗口作用域 + PropertyCondition 命中（不依赖 Python BFS）"""
     import core.services.uia_service as uia_mod
-    from uiautomation import ControlType, PropertyId
+    from uiautomation import ControlType
 
     btn = FakeNativeElement(name='文件资源管理器 已固定', aid='Appid: Microsoft.Windows.Explorer', ctype=ControlType.ButtonControl)
     win = FakeNativeElement(name='任务栏', ctype=ControlType.WindowControl, children=[btn])
@@ -614,10 +736,6 @@ def test_find_control_native_index_via_findall(monkeypatch):
 def test_find_control_prefers_native_then_bfs_fallback(monkeypatch):
     """find_control：原生命中直接返回；原生失败回退 Python BFS（fake 树）"""
     import core.services.uia_service as uia_mod
-    from uiautomation import ControlType
-
-    btn = FakeNativeElement(name='确定', ctype=ControlType.ButtonControl)
-    root = FakeNativeElement(children=[btn])
 
     # 原生返回 None（找不到）→ 回退 Python BFS（fake uia 树命中）
     monkeypatch.setattr(uia_mod, 'find_control_native', lambda **kw: None)
@@ -666,13 +784,17 @@ def test_perform_action_identity_mismatch_uses_physical_click(monkeypatch):
 
     monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
     clicked = []
+    moved = []
     import pyautogui as real_pyautogui
     monkeypatch.setattr(real_pyautogui, 'click', lambda x, y, clicks=1: clicked.append((x, y, clicks)))
+    monkeypatch.setattr(real_pyautogui, 'position', lambda: (400, 300))
+    monkeypatch.setattr(real_pyautogui, 'moveTo', lambda x, y: moved.append((x, y)))
 
     result = uia_mod.perform_uia_action(info, 'click', allow_physical_fallback=True)
     assert result['ok'] is True
     assert '物理点击' in result['message']
     assert clicked == [(60, 25, 1)]  # rect 中心 (60, 25)，未使用错误元素的 Invoke
+    assert moved == [(400, 300)]
 
 
 def test_perform_action_no_hwnd_falls_back_to_physical(monkeypatch):
@@ -688,13 +810,17 @@ def test_perform_action_no_hwnd_falls_back_to_physical(monkeypatch):
 
     monkeypatch.setattr(uia_mod, '_uia', lambda: FakeAuto())
     clicked = []
+    moved = []
     import pyautogui as real_pyautogui
     monkeypatch.setattr(real_pyautogui, 'click', lambda x, y, clicks=1: clicked.append((x, y, clicks)))
+    monkeypatch.setattr(real_pyautogui, 'position', lambda: (400, 300))
+    monkeypatch.setattr(real_pyautogui, 'moveTo', lambda x, y: moved.append((x, y)))
 
     result = uia_mod.perform_uia_action(info, 'click', allow_physical_fallback=True)
     assert result['ok'] is True
     assert '物理点击' in result['message']
     assert clicked == [(30, 25, 1)]
+    assert moved == [(400, 300)]
     # 未调用 PostMessage（background_click 不应被调用）
     from core.services import background_input
     monkeypatch.setattr(background_input, 'background_click', lambda *a, **k: (_ for _ in ()).throw(AssertionError('不应走 PostMessage')))

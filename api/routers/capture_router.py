@@ -1,66 +1,118 @@
 import os
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, Body, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
-from core.services.capture_session_service import capture_session_service
+from api.contracts.capture import (
+    CaptureActionAcknowledgeRequest,
+    CaptureActionRequest,
+    CaptureAssetSaveRequest,
+    CaptureAssetUndoRequest,
+    CaptureCloseRequest,
+    CaptureReplayRequest,
+    CaptureSessionRegisterRequest,
+    CaptureSessionRequest,
+    CaptureSnapshotRequest,
+    CaptureTriggerRequest,
+)
+from api.idempotency import execute_idempotent
 from api.workspace_context import assert_matching_legacy_path
+from core.services.capture_session_service import capture_session_service
 
 
 def create_capture_router() -> APIRouter:
     router = APIRouter(tags=['冻结捕获'])
 
     @router.post('/api/capture/session/register')
-    async def register_session(request: Request, payload: dict = Body(...)):
-        payload['project_path'] = assert_matching_legacy_path(request, payload.get('project_path'))
+    async def register_session(request: Request, request_body: CaptureSessionRegisterRequest):
+        payload = request_body.model_dump(exclude_none=True)
+        if request_body.workspace_kind == 'player':
+            from core.vnext.player_bundle import PlayerBundleError, vnext_player_bundle_manager
+            try:
+                payload['project_path'] = vnext_player_bundle_manager.validate_player_capture_session(payload)
+            except PlayerBundleError as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        elif request_body.workspace_kind == 'vnext':
+            from core.vnext import VNextWorkspaceError, vnext_workspace_manager
+            try:
+                payload['project_path'] = vnext_workspace_manager.require_path(
+                    str(request.headers.get('x-workspace-id') or ''),
+                    int(request.headers.get('x-workspace-generation') or -1),
+                )
+            except (VNextWorkspaceError, TypeError, ValueError) as exc:
+                raise HTTPException(status_code=409, detail=str(exc)) from exc
+        else:
+            payload['project_path'] = assert_matching_legacy_path(request, payload.get('project_path'))
         return capture_session_service.register_ui_session(payload)
 
     @router.post('/api/capture/session/unregister')
-    async def unregister_session(payload: dict = Body(...)):
-        return capture_session_service.unregister_ui_session(str(payload.get('session_id') or ''))
+    async def unregister_session(payload: CaptureSessionRequest):
+        return capture_session_service.unregister_ui_session(payload.session_id)
 
     @router.post('/api/capture/trigger')
-    async def trigger_capture(payload: dict = Body(default_factory=dict)):
-        return await run_in_threadpool(capture_session_service.trigger_global_capture, payload)
+    async def trigger_capture(payload: CaptureTriggerRequest = Body(default_factory=CaptureTriggerRequest)):
+        return await run_in_threadpool(
+            capture_session_service.trigger_global_capture,
+            payload.model_dump(exclude_none=True),
+        )
 
     @router.post('/api/capture/prewarm')
     async def prewarm_capture_host():
         return await run_in_threadpool(capture_session_service.prewarm_native_host)
 
     @router.post('/api/capture/replay')
-    async def replay_capture(payload: dict = Body(...)):
+    async def replay_capture(payload: CaptureReplayRequest):
         return await run_in_threadpool(
             capture_session_service.trigger_recording_capture,
-            str(payload.get('recording_session_id') or ''),
-            int(payload.get('frame_index') or 0),
+            payload.recording_session_id,
+            payload.frame_index,
+            payload.session_id,
         )
 
     @router.post('/api/capture/snapshot')
-    async def create_snapshot(request: Request, payload: dict = Body(...)):
+    async def create_snapshot(request: Request, payload: CaptureSnapshotRequest):
+        session_id = payload.session_id
+        if session_id:
+            session = capture_session_service.active_ui_session(session_id)
+            requested = os.path.abspath(str(payload.project_path or session['project_path']))
+            bound = os.path.abspath(str(session['project_path']))
+            if os.path.normcase(os.path.realpath(requested)) != os.path.normcase(os.path.realpath(bound)):
+                raise HTTPException(status_code=409, detail='截图刷新请求与当前捕获会话项目不一致')
+            project_path = bound
+        else:
+            project_path = assert_matching_legacy_path(request, payload.project_path)
         return await run_in_threadpool(
             capture_session_service.create_snapshot,
-            assert_matching_legacy_path(request, payload.get('project_path')),
-            session_id=str(payload.get('session_id') or ''),
+            project_path,
+            session_id=session_id,
         )
 
     @router.get('/api/capture/snapshot/{snapshot_id}')
-    async def get_snapshot(snapshot_id: str):
-        return capture_session_service.get_snapshot(snapshot_id)
+    async def get_snapshot(snapshot_id: str, include_image: bool = True):
+        return capture_session_service.get_snapshot(snapshot_id, include_image=include_image)
 
     @router.post('/api/capture/close')
-    async def close_capture(payload: dict = Body(default_factory=dict)):
-        return capture_session_service.close_capture(str(payload.get('snapshot_id') or ''))
+    async def close_capture(payload: CaptureCloseRequest = Body(default_factory=CaptureCloseRequest)):
+        return capture_session_service.close_capture(payload.snapshot_id)
 
     @router.post('/api/capture/assets')
-    async def save_assets(payload: dict = Body(...)):
-        return await run_in_threadpool(capture_session_service.save_assets, payload)
+    async def save_assets(
+        payload: CaptureAssetSaveRequest,
+        idempotency_key: str = Header(default='', alias='Idempotency-Key'),
+    ):
+        async def produce():
+            return await run_in_threadpool(capture_session_service.save_assets, payload.model_dump())
+
+        return await execute_idempotent(
+            idempotency_key,
+            'capture.assets.save',
+            payload.model_dump(mode='json'),
+            produce,
+        )
 
     @router.post('/api/capture/assets/undo')
-    async def undo_assets(payload: dict = Body(...)):
-        return await run_in_threadpool(
-            capture_session_service.undo_assets,
-            str(payload.get('transaction_id') or ''),
-        )
+    async def undo_assets(payload: CaptureAssetUndoRequest):
+        return await run_in_threadpool(capture_session_service.undo_assets, payload.transaction_id)
 
     @router.get('/api/capture/directories')
     async def list_directories(project_path: str | None = None):
@@ -88,12 +140,22 @@ def create_capture_router() -> APIRouter:
         return {'directories': sorted(set(directories))}
 
     @router.post('/api/capture/action')
-    async def request_action(payload: dict = Body(...)):
-        return await run_in_threadpool(capture_session_service.request_ide_action, payload)
+    async def request_action(
+        payload: CaptureActionRequest,
+        idempotency_key: str = Header(default='', alias='Idempotency-Key'),
+    ):
+        async def produce():
+            return await run_in_threadpool(capture_session_service.request_ide_action, payload.model_dump())
+
+        return await execute_idempotent(
+            idempotency_key,
+            'legacy.capture.action',
+            payload.model_dump(mode='json'),
+            produce,
+        )
 
     @router.post('/api/capture/action/ack')
-    async def acknowledge_action(payload: dict = Body(...)):
-        request_id = str(payload.get('request_id') or '')
-        return capture_session_service.acknowledge_ide_action(request_id, payload.get('result') or {})
+    async def acknowledge_action(payload: CaptureActionAcknowledgeRequest):
+        return capture_session_service.acknowledge_ide_action(payload.request_id, payload.result)
 
     return router

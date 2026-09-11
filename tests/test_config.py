@@ -37,11 +37,14 @@ class TestSecurityConfigDev:
         assert isinstance(salt, bytes)
         assert len(salt) > 0
 
-    def test_dev_cors_wildcard(self, monkeypatch):
+    def test_dev_cors_is_limited_to_local_origins(self, monkeypatch):
         monkeypatch.setenv('APP_ENV', 'dev')
         monkeypatch.delenv('EASYCODE_CORS_ORIGINS', raising=False)
         cls = _reload_config()
-        assert cls.get_cors_origins() == ['*']
+        origins = cls.get_cors_origins()
+        assert '*' not in origins
+        assert 'http://localhost:5173' in origins
+        assert 'http://127.0.0.1:8000' in origins
 
     def test_default_rate_limit(self, monkeypatch):
         monkeypatch.delenv('EASYCODE_RATE_LIMIT', raising=False)
@@ -85,3 +88,5 @@ class TestSecurityHeaders:
         assert headers['X-Frame-Options'] == 'SAMEORIGIN'
         assert 'X-XSS-Protection' in headers
         assert 'Referrer-Policy' in headers
+        assert "script-src 'self'" in headers['Content-Security-Policy']
+        assert headers['Permissions-Policy'].startswith('camera=()')

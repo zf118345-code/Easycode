@@ -4,6 +4,7 @@ import vue from '@vitejs/plugin-vue'
 import path from 'path'
 
 const devPort = Number(process.env.EASYCODE_DEV_PORT || 5173)
+const devHost = process.env.EASYCODE_DEV_HOST || '127.0.0.1'
 const apiTarget = process.env.EASYCODE_API_TARGET || 'http://127.0.0.1:8000'
 
 export default defineConfig({
@@ -39,8 +40,12 @@ export default defineConfig({
         }
     },
     server: {
-        host: '0.0.0.0',
+        // Keep vulnerable development-only surfaces off the LAN by default.
+        // A deliberate EASYCODE_DEV_HOST override is still available for an
+        // isolated test network; production delivery never includes Vite.
+        host: devHost,
         port: devPort,
+        strictPort: true,
         proxy: {
             '/api': {
                 target: apiTarget,

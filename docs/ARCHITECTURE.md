@@ -1,231 +1,273 @@
-# EasyCode 当前系统架构
+# EasyCode 目标架构
 
-> 版本：3.0
-> 更新日期：2026-08-27
-> 本文只描述当前代码和 Schema v3；旧任务组、区块、跨画布连线和旧项目迁移语义不再属于系统架构。
+状态：`Approved`
 
-## 1. 架构目标
+最近修订：2026-09-02
 
-EasyCode 是面向 Windows、模拟器和通过 ADB 连接的 Android 设备的低代码自动化 IDE。系统同时提供：
+已实现 API、事务、幂等、进程和测试可靠性约束见 [后端可靠性](BACKEND_RELIABILITY.md)。项目函数模型见 [结构化程序模型](vnext/PROGRAM_MODEL.md)，文件/目录边界见 [文件能力](vnext/FILES.md)，录制与回放见 [帧录制与离线回放](vnext/REPLAY.md)，扩展边界见 [扩展平台](vnext/EXTENSIONS.md)，网络与配对见 [网络规格](vnext/NETWORK.md)，计划与批量运行见 [计划规格](vnext/SCHEDULES.md)。
 
-- 主流程：描述一次自动化任务的控制流。
-- 函数：带参数、局部变量、返回值和稳定结果端口的可复用节点图。
-- 页面地图：项目唯一的页面状态与导航图，供智能跳转按目标页面寻路。
-- 能力库：用 Python 实现并通过显式契约调用的复杂能力包。
-- Player：只暴露开发者允许修改的运行配置，并执行已发布项目。
-- 原生捕获宿主：承担桌面级低延迟截图选择、控件捕获和悬浮交互。
+## 1. 架构原则
 
-总体原则是“Web 技术负责高密度编辑，原生宿主负责桌面能力，Python 运行时负责执行和设备适配”。不把浏览器页面伪装成原生输入或后台捕获能力。
+- ProgramDocument 是项目函数的唯一可编辑事实；ECIR 是唯一运行语义载体。界面投影、只读伪代码和经批准扩展提供的派生视图都不能成为第二份平权事实；首版不存在页面拓扑。
+- ProgramDocument 是有类型的业务数据模型，不是需要用户或平台维护词法、关键字、缩进、解析和格式化的一门源码语言。
+- 前后端共享版本化契约，不通过中文显示名、文件路径、行号或散落字符串推断同一概念。
+- IDE 调试和 Player 发布必须经过同一编译器生成同一 ECIR 语义，不建设第二套解释执行路径。
+- 运行时、捕获宿主、扩展 Worker 和 Player 与活动 IDE 工作区解耦，但都携带明确项目、运行、实例和目标身份。
+- 平台差异进入目标驱动和函数实现；可选领域能力进入功能扩展，不污染通用程序模型。
+- 派生数据可以重建；稳定 ID、ProgramDocument、资源注册表、扩展锁和发布配置必须事务保存。
+- Player Runtime 本地优先。Compiler/Publisher 从真实调用与扩展权限推导网络级别并生成完整依赖闭包；没有显式公网能力的项目不得在启动或热路径访问 EasyCode 云、IDE、更新、遥测、在线授权或运行期依赖服务。
+- 任务运行网络与在线维护网络分别建模。启用更新不会把本地任务改成“必须联网”；关闭 Player 更新后不打入更新端点或调度器。IDE、Player 应用与项目内容使用独立版本和更新生命周期。
 
-## 2. 运行拓扑
-
-```text
-Vue 3 IDE / Player / Capture UI
-        │ HTTP + SSE + workspace identity
-        ▼
-FastAPI Router（协议、校验、错误映射）
-        │
-        ▼
-Application / Domain Services
-        ├─ Workspace、Blueprint、Asset、Snapshot
-        ├─ Execution、Debug、Preflight、Player
-        ├─ Capture、Vision、Frame Recording
-        └─ Capability、Platform、Build
-        │
-        ▼
-Runtime Ports
-        ├─ Capture: WGC / DXGI / PrintWindow / ADB stream
-        ├─ Input: UIA / window message / ADB / authorized physical fallback
-        ├─ Vision: OpenCV / RapidOCR / ddddocr
-        └─ Desktop host: Native WebView2 / Capture Overlay
-        │
-        ▼
-Project documents + assets + runtime state
-```
-
-开发时：
-
-- 后端：`python api/app.py --mode dev`，默认监听 `127.0.0.1:8000`。
-- 前端：在 `frontend/` 运行 Vite，默认监听 `127.0.0.1:5173`。
-- `main.py` 是命令行执行器，需要项目与入口参数，不是 IDE 后端启动命令。
-
-发布时：
-
-- FastAPI 托管已构建的 `release/web`。
-- `start_webview()` 优先使用项目原生 WebView2 宿主；只有宿主不可用时才显式回退 PyWebView。
-- Poetry/打包 CLI 的稳定入口是 `api.app:main`。
-
-## 3. 项目与工作区边界
-
-EasyCode 源码仓库和用户脚本项目是两个边界。脚本项目可以位于任意用户选择的目录，不属于源码仓库的 Git 生命周期。
-
-一个 Schema v3 项目包含：
+## 2. 分层
 
 ```text
-project.json       项目名、项目 ID、revision、全局变量、设置和 UI 状态
-workflow.json      唯一主流程、函数定义与函数文件夹
-topology.json      唯一页面地图
-context.json       运行上下文
-form_schema.json   Player 可配置表单
-templates/
-  assets.json      稳定 asset:// 引用注册表
-  image/
-  ocr/
-  page/
-scripts/
-capabilities/
-.easycode/         锁、恢复事务、历史等内部状态
+Vue IDE / Player / Native Capture UI
+        │ typed API + event protocol
+Structured Projection / Inspector / Control Registry
+        │ versioned ProgramDocument commands
+Workspace / Program / Function / Resource / Extension application services
+        │ domain commands and immutable results
+ProgramDocument + Type system + Function registry + Project model
+        │ deterministic compile
+Versioned ECIR + debug map + dependency closure
+        │ execute
+Runtime Coordinator
+        ├─ Windows driver
+        ├─ Android ADB driver
+        ├─ Android native driver
+        └─ controlled extension workers / feature runtimes
 ```
 
-项目约束：
+### 2.1 前端
 
-- 节点引用图片必须使用稳定的 `asset://` ID，移动文件不改变节点引用。
-- 主流程、每个函数和页面地图都是独立图，禁止跨图连线。
-- `project_id` 是项目身份；`revision` 是持久化版本；前端展示名不参与身份判断。
-- 每个项目请求必须携带 `X-Workspace-Id` 与 `X-Workspace-Generation`。
-- 切换项目会递增 generation，旧项目的延迟响应不能写入新项目。
-- 同一项目只有一个写入者；第二个实例以只读方式打开，不能静默争夺锁。
+- Workspace Store 保存当前项目身份、文档 revision、选择、诊断和会话状态；不得复制一份可编辑参数模型。
+- 结构化语句投影负责顺序、嵌套、折叠、多选、拖动、键盘操作、断点和运行状态，不直接承担完整值编辑。
+- 检查器通过 Program Service 的类型化命令修改同一 ProgramDocument；Control Registry 根据参数类型和 UI 契约渲染 IDE、Player 设计器与 Player 运行端。
+- 项目函数、资源、Player、计划和真实扩展管理使用各自工作区；未进入当前版本范围的领域能力不预留空工作区。
+- UI 覆盖加载、空、错误、禁用、取消、冲突、恢复和扩展不可用状态；不存在仅为占位而显示的入口。
 
-前端不是活动项目的权威来源。活动项目、锁、只读状态和 generation 均由 `ProjectWorkspaceManager` 管理。
+### 2.2 应用服务
 
-## 4. 持久化与自动保存
+- **Workspace Service**：项目打开、revision、事务、外部冲突和文件边界。
+- **Program Service**：ProgramDocument Schema、结构命令、引用、撤销重做、增量语义校验、稳定重命名，以及异常区域重试与递归删除等危险调用审核的指纹生成和失效检查。每个文档快照还携带当前文档实际引用到的操作、输入槽、记录类型和成员字段的权威展示元数据；前端不从稳定 ID 猜测中文名称，也不把展示名写回 ProgramDocument。
+- **Function Service**：官方、项目和扩展函数发现，稳定 ID、契约版本/指纹、项目锁、默认值、平台矩阵、搜索别名、摘要模板、显式迁移和依赖闭包。
+- **Variable Service**：项目变量定义、运行方案覆盖、会话副本和引用事务。
+- **File Integration Service**：类型化文件/目录函数、细粒度引用能力、范围校验、编码、原子文件写入、树操作报告、危险删除确认和同机写入协调。
+- **Resource Service**：稳定 ID、文件、元数据、引用索引和生命周期事务。
+- **Extension Service**：校验 `easycode-extension.json`，解析并事务保存 `easycode.lock`，管理启停、可信本地代码批准、声明式安全贡献、权限、Worker 生命周期、数据命名空间、密封运行产物和发布闭包。
+- **Capture Session Service**：会话、字段请求、原生宿主、结果回填和恢复。
+- **Recorder Service**：跨宿主帧订阅、录制会话/目标片段、有界编码写盘、磁盘保护、不可变索引、终态、清理与导出。
+- **Replay Service**：历史帧浏览、比较、可回放函数筛选、确定性离线分析、版本链接、分析报告和历史帧 Capture。
+- **Player Service**：表单 Schema、稳定绑定、运行参数覆盖和发布检查。
+- **Instance Directory / Pairing Service**：本机实例注册、跨电脑短期配对、稳定公钥身份、权限撤销和在线/离线状态；显示名不承担身份校验。
+- **Schedule Service / Player Hub**：本地时间触发、批次、错峰、宿主启动、局域网派发、幂等接纳和运行冲突策略；不进入 ProgramDocument 函数目录。
+- **Compiler Service**：ProgramDocument、函数契约、纯值操作注册表、扩展步骤、资源和目标到确定性 ECIR 的编译。
+- **Execution Service**：任务状态、暂停/继续/取消、消息监听、安全检查点、日志和驱动协调。
 
-`BlueprintService` 按文档域保存：
+页面、特征、出口、路径规划、随机弹窗扫描和拓扑图不属于首个正式版本，不存在核心 `Topology Service`、官方页面扩展包或预留运行模块。未来若重新立项，只能通过版本化功能扩展贡献点进入，并重新接受完整规格与 Harness 审查。
 
-- 工作流和函数变更只保存 `project.json + workflow.json`。
-- 页面地图变更只保存 `project.json + topology.json`。
-- 项目设置和全局变量只保存 `project.json`。
-- 显式完整保存才提交全部项目文档。
+应用服务之间使用明确命令和不可变结果，不读取彼此内部可变状态。
 
-所有 JSON 通过同目录临时文件、flush/fsync 和 `os.replace` 原子替换。多文档事务带恢复记录，进程中断后可以补偿，不允许出现“前端提示成功但只写入一半”。
+## 3. 领域对象与稳定 ID
 
-API 中间件只对真正改变项目文件的路由更新工作区基线。运行、暂停、捕获心跳、截图预热等运行时请求不会扫描项目目录。高频文档保存使用增量指纹；资源树变更才触发完整资源指纹更新。
+| 对象 | 稳定 ID | 可变显示属性 | 主要持久化位置 |
+| --- | --- | --- | --- |
+| 项目 | `project_id` | 名称、路径 | `project.json` |
+| 程序文档 | `document_id` | 文件组织 | `program/functions/*.json` |
+| 函数 | `function_id` | 名称、分类 | ProgramDocument / 函数注册表 |
+| 语句 | `statement_id` | 摘要、可选步骤备注 | ProgramDocument |
+| 参数 | `parameter_id` | 显示名 | 函数契约 |
+| 值节点 | `value_id` | 摘要、Control 投影 | ProgramDocument |
+| 局部符号 | `symbol_id` | 名称 | ProgramDocument / 符号索引 |
+| 项目变量 | `variable_id` | 名称、说明、默认值 | 项目变量注册表；运行值只在会话中 |
+| 资源 | `asset_id` | 名称、目录、文件名 | 资源注册表 |
+| 扩展包 | `package_id` | 显示名 | `easycode-extension.json` / `easycode.lock` |
+| 扩展对象 | 扩展定义的稳定 ID | 显示属性 | 扩展包 ID 命名空间数据 |
+| Player 控件 | `control_id` | 标签、布局 | Player Schema |
+| Player 运行方案 | `profile_id` | 名称、字段值 | Player 本地配置 |
+| Player 实例 | `instance_id` | 显示名、当前状态 | 本机实例目录 / 已配对身份库 |
+| 计划 | `schedule_id` | 名称、时间规则、批次条目 | Player Hub / 当前 Android APK |
+| 远程派发 | `dispatch_id` | 状态、截止时间 | 协调端与目标端幂等日志 |
+| 目标 | `target_id` | 名称、窗口/设备配置 | 目标配置 |
+| 录制会话 | `recording_session_id` | 名称、策略、状态 | IDE/Player 隔离本机数据目录 |
+| 录制片段 | `recording_segment_id` | 目标、时间范围、完整性 | 录制会话索引 |
+| 录制帧 | `frame_id` | 时间、尺寸、标记 | 不可变帧存储与内容哈希索引 |
+| 分析输入快照 | `analysis_input_bundle_id` | 来源版本、可重现状态 | 本机内容寻址依赖存储 |
+| 离线分析 | `analysis_run_id` | 名称、状态、结果摘要 | 本机分析报告与版本链 |
 
-`SnapshotService` 保存可恢复历史，并使用轻量 `index.json` 读取历史列表。索引缺失、损坏或发现外部新增快照时自动重建；常规自动保存不再反复解析全部历史 JSON。
+长期引用只使用稳定 ID。中文名、显示摘要、目录、排序位置和界面选中状态用于人类理解，不是跨版本绑定键。
 
-## 5. 前端职责
+## 4. ProgramDocument 与结构化编辑
 
-```text
-View / Panel
-  └─ composable（交互协议与生命周期）
-      └─ Pinia store（项目事实与可共享 UI 状态）
-          └─ API client（身份头、取消、超时、错误归一化）
-```
+- ProgramDocument 使用版本化、确定性 JSON，业务字段不混入滚动、折叠、选择或临时面板状态。
+- 结构化命令直接创建合法语句骨架；缺少必填参数属于可保存、可检查器修复的语义不完整状态，不产生“无法解析的文本草稿”。
+- 参数值是带稳定 `value_id` 的类型化值节点；常量、变量引用、资源引用、目标引用和纯值表达式不得依赖字符串猜测。移动默认保留 ID，复制生成新 ID。
+- 移动对象保留稳定 ID，复制对象生成新 ID；撤销重做必须恢复正确的对象、ID 和引用。
+- 所有修改携带文档 revision/hash。服务端只接受基于当前 revision 的命令；冲突返回内存模型、磁盘模型和基线 revision 所需信息，不允许无限 409，也不允许磁盘静默覆盖内存。
+- 保存先校验 Schema 与引用完整性，再写临时文件并原子替换。失败时内存模型和撤销历史保持可用。
+- 只读伪代码、诊断文本和运行日志可以生成，但不得反向解析为 ProgramDocument 或成为第二个保存入口。
+- `break` 与 `continue` 是词法循环控制，只能作用于当前函数最近一层循环，不能跨项目函数调用边界；它们穿过异常区域时仍执行 `finally`。`fail` 以静态稳定错误 ID、字符串消息和可选 JSON 详情产生永久结构化异常，可由现有异常区域捕获；三者都是核心结构语句，不占用官方函数目录。
 
-主要入口：
+## 5. 类型、变量与 Control
 
-- `App.vue`：IDE / Player 入口选择。
-- `IdeLayout.vue`：应用外壳、模式侧栏、工具窗口和宿主事件协调。
-- `CanvasPage.vue`：主流程、函数、页面地图的数据源切换和保存协调。
-- `CanvasView.vue`：节点与边渲染、选择、拖动、连接、键鼠手势。
-- `InspectorPanel.vue`：单节点、批量、函数契约检查器。
-- `projectStore`：项目文档、模式和函数事实状态。
-- `uiStore`：选择集、临时 UI 状态和面向当前图的批量操作。
-- `executionStore`：运行、调试、日志和执行高亮。
+- 用户只看见局部变量和项目变量；函数参数与返回值属于函数契约，循环项和异常属于局部符号。
+- 项目变量拥有稳定 `variable_id`、强类型、默认值、约束和说明。任务启动时应用运行方案覆盖，为当前会话创建独立副本；运行结束后释放且不回写。
+- Player Schema 使用判别式稳定绑定，可指向变量、入口参数、语句参数根或嵌套 `value_id`；不在变量或函数上增加常驻“暴露”布尔值，也不依赖树路径。
+- 时间、项目目录、目标尺寸和错误对象由内置函数或结构化运行对象提供，不建立系统变量表。
+- 类型注册表决定默认 Control；函数契约可以针对业务语义覆盖。IDE 设计器与运行 Player 复用 Control 原子组件和校验协议；Windows 与 Android 运行 Player 进一步共用同一编译后页面实现，通过响应式投影适配桌面和触控小屏，平台系统能力由 Host Adapter 分别承接。
+- 经核心注册的数值、文本、时间、几何、选择、结构、类型和集合纯值操作可以递归组合类型兼容的已有值；不得用任意 Python、自由字符串或扩展私有语法绕过类型检查。完整契约见 [`vnext/EXPRESSIONS.md`](vnext/EXPRESSIONS.md)。
+- 稳定操作、输入槽、记录类型和字段 ID 只用于持久化、编译、绑定和诊断；中央语句、检查器、输入器、Player 设计器和运行界面只使用同一注册表提供的中文展示名。若展示契约缺失，界面显示“不可用计算 / 不可用字段”并保留后台诊断，不能把 `core.*` 等内部标识当作用户文案泄露。
+- 函数只有一个逻辑返回值；多字段结果使用稳定字段的不可变命名记录。`optional<T>` 使用明确空状态，条件确认“有结果”后才允许访问成员；动态字典通过字典操作访问。空间值继续携带来源目标，成员引用不能绕过跨目标检查。
+- 普通函数调用只能成为独立 ProgramDocument `call` 语句；参数、条件和返回值不能隐藏截图、等待、输入、项目函数或扩展调用。只基于已有值的确定性无副作用计算由递归纯值表达式完成。
+- 集合模型区分固定字段记录、顺序同类列表、动态键同类字典和外部未知 JSON。结构化集合表达式处理无副作用筛选/转换/排序/分组/统计；循环在进入时固定快照，涉及普通函数或 I/O 的逐项工作必须显式显示。具体契约见 [`vnext/COLLECTIONS.md`](vnext/COLLECTIONS.md)。
+- 复杂值的摘要、折叠、聚焦和提取只是 ProgramDocument 的编辑投影。提取必须事务维护稳定引用；Player 可以绑定嵌套 `value_id`，不能依赖树路径或显示摘要。
+- Program Service 拒绝循环引用并增量校验受影响子树；Compiler/Runtime 的节点、深度、编译时间、ECIR 体积和内存预算由 Harness 验证，只作为高位安全门，不构成产品表达能力分级。
 
-前端边界：
+## 6. 函数与扩展
 
-- 节点列表、画布和检查器共享同一选择集。
-- 资源预览只在图片引用或已提交的预处理参数变化时刷新，也可手动刷新；拖动、选择和无关表单变化不触发视觉请求。
-- 画布节点采用对象身份缓存。拖动一个节点时，未变化节点保持相同渲染对象，避免重绘全部图片预览。
-- 外部文件变化每 30 秒兜底轮询一次，并在窗口重新获得焦点时立即检查；不是高频目录监听。
-- 工具图标使用 Lucide；外壳标题与内容标题只保留一层。
+函数契约至少包含命名空间、稳定 ID、显示名、参数、默认值、返回值、稳定异常 ID、异常重试分类、平台、权限、副作用、同步/异步语义、Control 覆盖、摘要模板和文档。
 
-## 6. API 与错误边界
+- 规范显示名使用 `命名空间.动作`；别名只参与搜索和帮助，不参与持久化、编译、绑定或迁移匹配。
+- 契约包含稳定 `function_id`、`contract_version` 和对行为相关字段进行规范化计算的 `contract_fingerprint`。项目锁记录精确版本与指纹；Compiler 发现漂移时停止并给出迁移入口，不使用当前安装版本静默替换。
+- 兼容改进保留同一主版本，但仍由开发者确认后更新项目锁；删除参数、改变类型/返回/异常/平台、改变副作用或改变默认行为属于破坏性变化，必须产生新主版本。已锁定旧契约在弃用后仍保留可构建路径。
+- 默认值只用于安全、稳定且跨支持平台语义一致的参数。资源、路径、目标、窗口选择器和其他不能可靠推断的必填参数保存为 `unset`，不能从当前界面选择或上次使用值静默填入。
+- 平台矩阵逐函数区分 Windows、ADB、Android 本机和无目标场景，并区分支持、条件支持与不支持。编辑检查、编译、发布和运行前使用同一矩阵与诊断。
 
-Router 只负责请求 Schema、工作区身份、HTTP 状态和响应格式。CPU/IO 重任务通过线程池或后台 Worker 执行，不阻塞 FastAPI 事件循环。
+- 官方原子函数与扩展函数可以由 Python、C++、Kotlin 或平台驱动实现。
+- 官方标准函数和项目函数使用 ProgramDocument 组合。
+- 标准函数可以声明融合实现，但结构化定义和融合实现必须通过返回、错误、超时、取消、日志和调试语义的等价性测试。
+- 核心运行原语保持最小且不重复；官方目录可以提供经过多项目验证的高频标准组合。新增标准函数只改善复用和操作效率，不得新增隐藏运行机制或复制同义原语。
+- Python/原生扩展在外部 IDE 开发；EasyCode 提供骨架、导入、契约审核、测试、启停、依赖和发布检查，不内置完整 Python 编辑器。
+- Python 扩展在受控 Worker 中运行；依赖、超时、取消、序列化、日志和进程退出具有明确边界。Worker 是故障隔离边界，不是恶意代码安全沙箱；执行 Python/原生代码前必须取得本机可信代码批准。
+- 未取得可信代码批准的第三方扩展只能使用不执行扩展代码的声明式安全贡献子集。安装范围、项目启用和信任决定保存在本机安装/项目状态中，扩展不得通过自己的 Manifest 自行声明已受信任。
+- 扩展清单固定为 `easycode-extension.json`；宿主变体与可操作目标分开声明。Windows 宿主的同一变体可以服务 Windows/ADB 目标，Android 本机发布必须选择 Android 本机变体，不能用 Python/Windows 变体伪装兼容。
+- 开发态可以运行已明确信任的源码入口；发布器只接收经过构建、哈希、签名并写入锁文件的密封运行产物。`.ecplayer`、Windows Bundle 与 APK 均拒绝扩展源码、测试和外部 IDE 配置。
+- 功能扩展通过版本化贡献点接入工作区、领域模型、函数、编译步骤、运行模块、Player 模块和 Harness。普通第三方扩展不能修改 ProgramDocument Schema 或核心 Store。
+- 目标驱动只向官方或明确受信任扩展开放。
+- Windows 宿主通过受约束的官方函数直接启动所选应用并等待其进程退出；Windows 驱动提供窗口查找/等待、激活、关闭和状态快照。启动能力不能接受 Shell 命令文本，也不能调用 PowerShell、命令解释器或脚本宿主；超出边界的系统自动化必须由声明权限的扩展实现。
+- 启动模拟器不新增专用运行机制：Windows 宿主启动模拟器应用，目标服务等待已配置 ADB 设备上线，ProgramDocument 再通过 `target_scope` 进入该目标。
+- 立即查询未命中和等待查询到期使用明确空的正常结果；资源缺失、权限不足、目标断开、平台不支持和驱动/扩展崩溃使用结构化异常。函数契约不能把这两类结果折叠为同一个布尔值或错误字符串。
 
-路由领域包括：
+## 7. 项目、扩展锁与事务
 
-- project workspace：打开、初始化、锁、最近项目和外部修改。
-- blueprint：主流程、页面地图、函数和历史。
-- execution：启动、停止、断点、暂停、恢复、单步和 SSE。
-- vision/capture：资源事务、截图、OCR、图像测试和原生宿主通信。
-- workspace/frame recording：窗口、ADB、帧录制与离线回放。
-- capability/platform：能力包、多实例消息、租约和协调。
-- build/player：发布前检查、表单 Schema、密包、EXE、Player 状态。
+- 项目可以位于 EasyCode 仓库内或外，运行时不依赖 Git。
+- 项目内操作只影响当前项目；共享扩展安装在用户级目录，项目通过 `easycode.lock` 锁定扩展清单哈希、发布者密钥指纹/信任模式、精确版本、依赖、所选宿主变体、密封产物哈希、函数契约和内容哈希。
+- 打开项目不得静默升级扩展。禁用、更新、卸载前先计算 ProgramDocument、Player、资源和其他扩展引用。
+- `easycode.lock` 同时记录项目引用的官方/扩展函数契约版本与指纹。兼容更新和破坏性迁移都必须先展示受影响调用、Player 字段和平台结论，由开发者确认后以项目事务提交；取消或失败保持原锁与 ProgramDocument 可构建。
+- 单文档保存使用 revision/hash 乐观并发；跨文档重构、资源移动和扩展变更使用项目事务。
+- 事务先校验完整变更，再以可恢复方式提交；失败不能留下半更新引用。
+- 旧画布和旧 `.easy` 测试项目不迁移，明确提示版本不支持。
 
-规则：
+## 8. 资源
 
-- 用户可修正的冲突使用明确 4xx 状态。
-- 基础设施不可用使用 503，不伪装成参数错误。
-- 未处理异常记录完整堆栈，响应不泄露本地路径和内部异常文本。
-- 后台截图或输入失败必须返回真实失败；物理输入回退只在项目显式授权时执行。
+- 资源注册表是元数据和引用事实，文件系统是字节事实，两者由 Resource Service 事务维护。
+- 图片资源不携带自动运行区域。识别区域属于具体函数调用；资源只记录捕获来源、尺寸、参考目标、哈希和审计元数据。
+- 资源选择采用两阶段提交：选中不等于应用，ProgramDocument 参数更新成功后才退出选择工作区。
+- 删除有引用资源时展示影响并选择取消、替换或清空；不能留下幽灵路径。
+- 编译只携带 ECIR 依赖闭包中的资源。
 
-## 7. 执行架构
+## 9. 功能扩展边界
 
-`ExecutionService` 管理执行登记、生命周期、日志流和线程安全状态；`GraphExecutor` 只负责编排控制流、函数调用帧和运行策略。
+- 首版保留通用功能扩展地基：版本化 `easycode-extension.json`、命名空间数据、声明式工作区、安全贡献点、受信任编译/运行/Player 模块、`easycode.lock`、权限、密封产物和发布闭包。
+- 功能扩展停用时必须零入口、零后台任务、零 ECIR/Player 依赖和零包体污染；中立 Harness 扩展验证这条边界，不把任何尚未立项的领域能力伪装成产品功能。
+- 普通第三方扩展不得增加 ProgramDocument 语句种类、修改核心 Store 或取得目标驱动权限。领域派生视图若存在，只能投影扩展自身唯一模型，不能成为第二份业务事实。
+- `image / ocr / page` 是始终可选的资源目录；其中 `page` 只是图片分类，不创建 Page Model、`页面.*` 函数、扫描任务或额外发布依赖。
 
-执行前：
+## 10. 捕获、目标与输入
 
-1. 发布前/运行前检查验证当前图、资源、函数契约和目标能力。
-2. 绑定工作窗口或 ADB serial，生成本次运行不可变的 runtime target。
-3. 创建运行时会话、帧缓存、输入派发和调试上下文。
+- Capture Session 请求使用判别式目的地。IDE 目的地包含项目、编辑会话、语句/参数和值 revision；Player 目的地包含 `product_id + release_id + profile_id + control_id + action_id + profile_revision + target_id`。统一宿主协议覆盖点、区域、图片、控件、手势路径、文件和目录，但两端分别原子提交到 ProgramDocument 与 Player 运行方案/私有资源覆盖。
+- 捕获只在编辑状态使用。运行、暂停或任务排队均阻止进入，并返回可恢复原因。
+- Windows、ADB 和 Android 本机使用不同宿主，但返回同一类型化结果契约。
+- Player 字段动作默认全关。真实可用动作必须同时满足作者逐字段/逐平台授权、字段类型允许、发布包能力闭包、当前宿主/目标能力和当前权限状态。结构上不支持的动作不打包也不显示；暂时不可用但可恢复的动作原位禁用并说明恢复方式。
+- 图片选择或截取确认后复制到当前 Player 实例的受控资源覆盖目录并计算哈希；普通外部文件与目录使用带读写模式的 `FileReference` / `DirectoryReference`，Android 保留系统授权 URI，不能降级为路径字符串。
+- `DirectoryReference` 使用列举、创建、写入、移动、删除空目录和递归删除等细粒度能力。递归删除确认同时绑定稳定调用、用户明确选择的 `authorization_root_id`、IDE 调试或 Player 执行配置 revision 与函数契约指纹；普通目录选择、父目录权限或路径文本都不能推导危险权限，派生引用只能缩小到确认树内。宿主在每次树遍历中记录实际子目标并验证仍位于授权范围，同时阻止根目录、保护根、链接和 Provider 跳转越界。目录复制/移动不得通过合并或覆盖既有目标绕过该边界。
+- 取点、框选、录图、取色、控件、路径捕获、文件选择和权限都由终端用户主动触发并按需申请最小权限。取消、拒绝、撤销、目标变化、宿主失败或应用被系统终止不得改写旧值；恢复后回到原字段。一个 Player 实例同一时刻只能有一个 Capture Session。
+- 后台输入失败时按项目策略决定是否物理回退；日志说明失败原因和真实路径。物理操作激活目标但不恢复旧前台窗口，鼠标位置始终恢复。
+- Windows 实例维护命名目标注册表和一个当前目标栈。进入 `target_scope` 语句时校验能力、切换帧与输入驱动并废弃旧帧缓存；离开时只恢复逻辑目标。
+- 坐标、区域、控件和捕获结果携带来源 `target_id`。运行时拒绝跨目标静默复用空间值；图片资源可以复用，运行区域仍属于当前调用。
+- 普通视觉调用在开始执行后向当前目标驱动请求新帧，不自动复用上一语句的隐式截图。显式取帧返回当前运行内不可变的 `FrameReference`，包含帧 ID、来源 `target_id`、目标空间版本和采集序号/时间；多个图像/OCR 调用使用同一引用时必须分析相同像素且不得偷偷重取。结果继承帧的来源信息，目标或空间不匹配时输入动作在执行前拒绝。
+- 一个运行实例串行操作一个当前目标。并行操作通过多个隔离 Player 实例和消息协作完成。
 
-执行中：
+### 10.1 运行录制与离线回放
 
-- 纯日志、变量、固定等待等节点不触发页面或弹窗扫描。
-- 弹窗只在具有视觉识别或输入副作用的节点前检测，并与页面寻路隔离。
-- 页面地图只在智能跳转及其恢复策略中参与识别和寻路。
-- 同一轮页面/图像/OCR 判断优先共享新鲜帧与预处理结果。
-- 调用函数建立独立局部变量帧，通过稳定 outcome ID 返回。
-- 能力调用的每次重试使用独立上下文和队列，超时 Worker 不能串入下一次重试。
+- Recorder Service 旁路订阅当前目标帧与运行标记，不修改 ProgramDocument/ECIR Schema，也不注册程序函数或运行语义。目标、方向、尺寸、DPI 或空间版本变化关闭当前片段并建立新片段；不同片段的空间值保持隔离。
+- 全部帧、变化帧与诊断策略共用版本化会话格式、无损帧内容、有界队列、磁盘保护和明确丢帧事件。停止录制不取消任务；未启用时不创建帧订阅、编码器、索引器或清理轮询。
+- Replay Service 首版只调度官方图像/OCR 契约中标记为无副作用且具有专用回放实现的分析函数。UIA/Accessibility 控件树不能从像素帧恢复；第三方扩展回放在具备独立无目标/输入/文件/消息/网络能力的隔离 Worker 与恶意实现 Harness 前不开放。界面和服务端都拒绝输入、目标切换、真实等待、文件、消息、网络与扩展调用进入历史帧路径。
+- 分析运行先把帧范围、ProgramDocument/ECIR、实际资源字节、官方函数契约、OCR 模型/字典、锁、参数与回放实现保存为不可变、按内容寻址的 `AnalysisInputBundle`，再输出新的不可变报告；只保存 revision/hash 而缺少可恢复字节时不得宣称可重现。分析结果不回写帧或任何输入。录制、输入快照与报告位于 IDE/Player 隔离本机目录，不进入项目、发布或更新闭包；清理快照后相关报告降级为仅可查看。
+- Player 录制默认关闭，用户确认绑定当前运行方案 revision。默认导出只含画面、元数据和报告；只有用户选择高级可重现导出并逐类确认项目逻辑、资源、模型与参数时才包含 `AnalysisInputBundle`。Recorder/Replay Service 不向更新、托管或遥测端点上传内容。
 
-执行后：
+## 11. 编译、运行、消息与日志
 
-- `ExecutionService` 原子更新最终状态，保留诊断信息。
-- Runtime session 释放截图、ADB stream、输入和 Worker 资源。
-- 单个实例失败不应污染其他实例。
+- Compiler Service 把 ProgramDocument、函数契约、纯值操作注册表、项目变量、启用扩展数据、资源和目标确定性编译为版本化 ECIR、调试映射、权限和依赖闭包。
+- 相同 ProgramDocument、契约、纯值操作注册表版本/哈希、扩展锁和编译器版本必须产生字节级或规范化等价的 ECIR。
+- 运行时不读取 ProgramDocument；热路径不依赖 WebView 或 HTTP 往返。
+- Runtime Coordinator 不建立全局联网前置。显式 LAN/公网调用按函数契约返回等待、超时或结构化失败；未受影响的本地流程与 Player 外壳继续可用。
+- Runtime Coordinator 把“正常无结果”和“结构化异常”作为不同终态记录。图像/文字/控件立即查找未命中或等待到期产生正常完成事件和明确空结果；资源、权限、目标、平台或驱动故障产生失败事件并按异常区域传播。
+- 异常区域没有 `retry_policy` 时保持普通捕获语义；存在策略时，Runtime 只对契约标记为瞬时的结构化异常从区域主体首条语句重新执行。默认最多再试 2 次、固定间隔 500ms；永久/未知异常直接进入捕获，正常无结果、取消和停止不重试。重试耗尽后仅把最后异常交给捕获分支或向上传播，最终分支只执行一次。
+- 重试不回滚已经发生的输入、网络、消息、文件或变量修改。包含直接或传递副作用的区域必须保存基于规范化区域主体和锁定函数契约指纹的作者确认；区域或契约变化后确认失效，并在编译、运行与发布前阻止继续使用旧确认。
+- Runtime Coordinator 管理运行状态、调用栈、取消、暂停、消息监听、安全检查点、日志和目标驱动；耗时扩展运行在 Worker。
+- 主动暂停在同一 Player 进程内保留运行 ID、调用栈、局部值、项目变量、目标和监听状态；继续恢复同一现场。停止、取消、进程退出或崩溃释放现场，下一次运行从入口开始。
+- 消息监听使用协作式串行调度。符合条件的队首消息在安全检查点由当前会话接手，普通项目函数处理后从主流程下一条语句继续；不创建并行 UI 操作流。
+- 已读只表示接收脚本取得并解码消息。业务成功、重试或再次请求由普通项目逻辑决定。
+- 结构化日志至少包含时间、级别、分类、运行/实例/目标、`function_id`、`statement_id`、相关 `value_id`、扩展 ID、消息 ID、动作开始/完成/失败和可获取的证据。
+- 崩溃诊断记录最后稳定语句、调用栈摘要、目标、扩展、操作和截图，不作为自动恢复输入。
+- UI 通过增量事件通道消费变化，不反复拉取整份状态。
 
-## 8. 输入、捕获与设备能力
+### 11.1 网络、配对与计划控制面
 
-能力按目标分级，而不是假设所有窗口都支持同一种方案：
+- 类型化网络能力分为三个独立官方原子函数：普通文本/JSON HTTP 请求返回状态、响应头和文本正文；multipart 文件上传流式读取已授权的可读 `FileReference`；文件下载流式写入受控临时文件并在完整成功后原子提交到可写 `FileReference`。三者分别声明网络和文件权限，失败只影响当前调用；文件字节不成为 ProgramDocument 值、项目变量或普通日志。浏览器 DOM、任意脚本注入、网页会话接管、万能二进制请求和任意流对象不进入这些能力。
+- 同机、同一操作系统用户、同一签名产品的实例可以自动注册为可信端点；跨电脑使用短期一次性配对码或二维码交换长期公钥身份。未知名称或错误身份立即失败，已配对离线端点可以在有效期内排队；撤销和密钥轮换必须可操作。
+- Schedule Service 属于宿主控制面。Windows 每用户 Player Hub 可以启动多个已安装产品/运行方案，或向已配对且单独授予远程启动权限的实例派发；Android 只调度当前 APK 内运行方案。计划数据不编译进 ECIR，也不通过 `消息.*` 执行业务派发。
+- 同一实例所有计划和远程派发严格 FIFO 串行；不同实例允许并行或确定性错峰。远程命令携带稳定 `dispatch_id`，网络重试、ACK 丢失或 Hub 重启不得创建第二个 `run_id`。协调端是单一计划所有者，离线时其他端不进行分布式补选。
+- 一次、每日和固定间隔计划使用明确时区与夏令时规则。错过触发只允许“跳过”或“在允许迟到窗口内补跑一次”，重叠只允许“跳过”或“排队一次”，禁止无限追赶。
+- Windows 实现把 `schedule_v6`、签名 `schedule_registry_v6` 与 `schedule_hub_v6` 分成三个窄层：时间/队列核心不启动进程；注册表只解析当前用户已验证的发布、实例和方案；Hub 通过 `LocalDispatchPort` 把稳定派发身份交给普通 Player Runtime。系统只登记一个当前用户 Hub 唤醒任务，计划数量不映射为系统任务数量。LAN 与 Android 继续使用独立宿主适配器，未实现时返回真实不可用，不回退到本机或普通消息。
 
-- Windows 标准控件：优先 UIA。
-- 普通窗口：后台窗口消息；投递后可做视觉/状态验证。
-- GPU/自绘窗口：优先 WGC/DXGI 获取画面；输入不支持时按策略阻止或回退。
-- 模拟器/Android：自动从已选窗口解析 ADB serial，使用持续 Android 帧会话和 ADB 输入。
-- 物理输入：最后手段，默认关闭；只有用户授权后才能占用鼠标键盘。
+## 12. Player 与发布
 
-最小化、保护画面、独占全屏、反作弊或不接受后台输入时，系统应展示能力原因，不得记录“点击成功”后静默继续。
+- Player Schema 以判别式契约绑定稳定函数/语句/参数/嵌套值/项目变量/资源/目标 ID，默认不暴露任何内容。字段还可以声明逐平台的终端动作白名单，但不能授予系统权限或让脚本静默采集。运行方案只能覆盖已签名值槽，不能改写表达式操作、结构或引用。
+- 发布产物中的签名 ECIR 不被用户表单直接改写。运行前由 Player 根据 Schema 生成经过类型校验的参数覆盖层/执行计划。
+- `.ecplayer` 包含 ECIR、函数契约、目标、Player Schema、资源、启用扩展运行闭包和发布报告；不包含 ProgramDocument、编辑元数据、扩展源码或 IDE 组件。
+- Bundle Loader 验证格式版本、签名、路径穿越、符号链接、体积、依赖、扩展权限、网络能力和源码隔离。发布报告显示“可完全离线 / 需要本机或局域网 / 需要公网”及其稳定引用来源。
+- 独立 Windows Player 是单独的进程与包边界，不复用 IDE FastAPI 应用。默认多实例入口是同一 EXE 的原生 Player 控制台；控制台只读取 Player Hub 注册表，为每个实例启动独立端口、数据根、Bundle Manager 和 Runtime 的隐藏工作进程，并嵌入该实例原有 Player 页面。独立 Player 窗口保留为恢复入口。专用入口先分派 capability/extension worker 与 Player Hub agent；普通分支解析并固定 `.ecplayer` 和外部信任根之后，才导入 DPI、Player 应用工厂、Bundle Loader 与 Runtime。应用只监听 loopback，不创建模块级全局应用。完整契约见 [Windows Player 多实例控制台](vnext/PLAYER_CONSOLE.md)。
+- Player 应用组合专用 Runtime/Capture Router 与终端更新、计划、Hub、LAN Router。Runtime Router 只依赖已验签 Bundle Manager 与 ECIR Runtime，不导入完整 vNext Router、Workspace Manager、Compiler/Publisher 或 Program Service；Capture 只公开 SSE、字段动作/ACK 和关闭，会话注册与冻结帧触发保持为 Runtime 内部授权调用。
+- Player Web 由独立 Vite 图生成 `player.html + capture.html + console.html`；IDE `index.html`、Workspace API 客户端和作者界面不进入构建。冻结运行时采用显式模块 allowlist，不整包收集旧节点执行器、条件、参数、legacy Player 或 `core.vnext`。密封扩展调用使用独立发布运行模块，不能导入开发态扩展发现、信任写入、签名或 Workspace 服务。组装前后扫描 Web、Runtime 与 `.ecplayer` 清单，拒绝 `src`、前端/Python 源、source map、`.easy` 和 ProgramDocument。详细契约见 [独立 Windows Player 发布边界](vnext/PUBLISHING.md)。
+- Update Service 把 IDE、Player 应用和项目内容作为独立更新产品。不可变发布使用固定信任根、单调序号、兼容范围、大小、哈希和签名元数据；任务固定一个 `release_id`，运行或暂停期间只能暂存，不能切换版本。
+- Player 按 `product_id` 持久保存 `UpdatePreferences`，分别控制普通可选更新的自动检查、自动下载和自动应用；更新应用/内容版本后仍保留，作者不能通过普通发布静默重置。手动检查不改写这些偏好。只要作者打包时启用了强制策略能力，轻量 Update Policy Checker 就继续取得签名最低版本策略，不受普通更新偏好影响，也不下载产物或触发安装；已经验证的策略不因断网或普通缓存清理失效。作者打包时关闭更新则不生成 Update Service、Policy Checker、入口或网络端点。
+- 项目内容更新只能替换签名 ECIR、资源、Player Schema 和兼容数据。Runtime、宿主、原生扩展、权限或 ABI 变化必须走 Windows Bundle/Android APK 应用更新；更新失败保留当前或上一完整版本。
+- Update Control Plane 提供作者身份、项目归属、上传、通道、配额/使用量、审计、监控和不可变发布元数据；Artifact Store/CDN 只分发签名产物。官方托管与作者自建实现同一开放 Feed，Player 不依赖专有云 API 才能验证更新。
+- `RolloutPolicy` 与不可变 Release 分离，使用单调 revision、发布 `rollout_id`、比例基点、白名单哈希和暂停状态控制可选更新。Rollout Evaluator 使用 `product_id + rollout_id + 本机产品域安装分组码` 在客户端确定性分桶；扩大比例只增加命中集合。白名单、分桶与暂停在官方托管和静态自建 Feed 中采用同一签名协议，不需要服务端动态识别终端。
+- 安装分组码由 Player 本机按产品随机生成并独立持久化，不来自硬件或账号，正常升级后保留；Feed 和请求不携带原始值。作者关闭更新时不创建该身份。服务端不根据运行日志、崩溃或任务结果自动改变灰度；作者的暂停、继续、扩大、全量和白名单变更写入审计。客户端启动健康失败的本地槽恢复不改变服务端策略。
+- 稳定版终端不能自行进入测试通道。Player 只显示项目级匿名测试分组码，作者将其哈希加入测试白名单后才取得测试版本；退出白名单不触发自动降级，等待稳定通道发布序号追平。
+- 平台不自动上传运行结果、崩溃、日志、截图或在线状态。诊断默认本机保存并由用户显式导出；官方更新控制面只能展示其真实拥有的请求量、传输量、配额和发布审计，不能推导在线设备舰队或伪安装/业务成功率。
+- 发布私钥留在作者受控环境，上传凭据只进入 IDE 本机安全存储。更新源或托管方迁移必须由现有信任根签名或通过可信应用更新交付，不能把可编辑 URL 当作信任事实。
+- Windows 与 Android 本机分别提供独立运行宿主，但执行同一 ECIR、函数契约和 Player Schema。两端运行 Player 共用编译后的 Vue 渲染层与 Control；Android 只替换 Kotlin/C++ Runtime、目标驱动、Capture 宿主、权限、系统选择器和 Host Adapter。签名 APK 必须内嵌离线 Web 资源及全部兼容运行闭包，并在断开数据线、关闭 IDE 与后端后独立运行。
+- 首个正式版本可以按垂直切片先完成 Windows/ADB，但 Android 真机部署/调试、MediaProjection 帧、无障碍输入、文件授权、权限恢复、兼容扩展和签名 APK 未通过 Harness 前，产品不得放行正式版本。AAB 不作为首个正式版本硬门，除非后续明确要求应用商店分发。
 
-原生 Capture Overlay 常驻后端生命周期，使用轻量消息协议。编辑捕获与脚本执行互斥；进入捕获前验证目标窗口非最小化并确保得到完整工作区画面。
+## 13. 性能与生命周期
 
-## 9. 资源与离线回放
+- Program Service、符号和引用索引增量更新；不因单个参数变化全项目重编译。
+- 结构化语句、函数和资源列表虚拟化；折叠分支不实例化不可见 Control。
+- 缩略图和派生产物按内容哈希缓存。
+- 空闲时不持续截图、窗口 Resize、扩展 Worker 或全量状态轮询；Player Hub 使用系统计时器/事件唤醒，不以高频轮询等待计划。
+- 后台线程、原生宿主、Worker、ADB 帧流和事件通道均有项目/运行级生命周期与清理。
+- IDE/Player 交互捕获可以在宿主所有者与目标范围内有界复用 WGC/scrcpy 驱动并空闲预热；Runtime 执行驱动保持运行级隔离。冻结帧优先通过本机共享内存交给原生捕获宿主，编码文件只作按需操作与兼容回退。
+- 非当前目标帧流默认停止或休眠；未启用功能扩展不激活任何后台服务。
+- 重型构建和测试默认串行运行，先检查重复进程，保护 IDE、Codex 和远程连接环境。
 
-`TemplateLibraryService` 对资源执行事务化移动、删除、回收站恢复和引用清理。默认 `image/ocr/page` 三个根目录始终存在且不可删除；所有资源选择/录入界面显示三类目录，入口只决定默认选中目录。
+## 14. 演进规则
 
-帧录制和离线回放用于不可重复或一闪即逝的业务画面：
+- 规格讨论按“产品与领域框架 → 编译/运行/扩展边界 → 领域语义 → 工作区交互 → Control 与视觉细节”推进。
+- 新功能先创建可追踪功能规格，关闭会改变实现路线的未知项。
+- 改变 ProgramDocument、持久化、ECIR、扩展信任或跨平台语义时先更新 ADR。
+- 使用垂直切片完成 Schema、后端、前端、执行、Player、失败恢复、测试和文档。
+- 删除废弃路径，不长期维护两个平权实现。
+- 实现状态和验证结果写入测试证据，不把目标规格改写成当前代码快照。
 
-- 录制真实时间线和关键帧，不要求当场创建节点。
-- 回放画面可以作为截图捕获的数据源，复用同一套点选、框选和资源保存协议。
-- 图像、OCR 和页面识别可对录制帧离线回归，输出命中原因和耗时。
+## 15. 作者效率增强边界
 
-## 10. 函数与能力库
-
-函数是节点图，不是复制模板。每个函数有独立 ID 和独立画布、形参、局部变量、返回值、稳定结果端口、固定入口及至少一个返回节点，并可保存测试用例和导入导出契约。
-
-能力库是代码实现的复杂函数包，适合算法、协议或第三方依赖逻辑。能力调用必须经过 manifest 契约、参数校验、超时、重试和隔离 Worker；不能让任意能力代码直接修改 IDE 全局状态。
-
-## 11. 安全与发布
-
-- 路径通过 realpath/normcase 边界验证，拒绝目录穿越和工作区外写入。
-- 远程协调只允许 `http/https`，LAN 请求需要协调令牌。
-- CORS、响应头和速率限制由 `SecurityConfig` 集中读取。
-- EBP 使用项目密包；密钥和 Player 秘密不进入前端项目文档。
-- 发布前检查阻止缺失资源、失效函数引用、无入口和不支持的运行能力。
-
-## 12. 质量门禁
-
-统一门禁由 `scripts/quality_gate.ps1` 执行：
-
-1. 前端 ESLint。
-2. 前端 Vitest 全量测试。
-3. 前端生产构建。
-4. Python Ruff 关键正确性规则。
-5. Bandit 中高风险扫描。
-6. Python Pytest 全量测试。
-
-真实 UI 另由 `scripts/ui_smoke_test.mjs` 在隔离工作区验证流程、函数、页面地图切换、节点渲染、控制台错误、网络失败、横向溢出和无可访问名称的图标按钮。
-
-任何架构调整必须同时更新本文、回归测试和 `docs/FULL_STACK_OPTIMIZATION_2026-08-27.md` 的迭代记录；“代码已写”不等于验收完成。
+- `OperationRecordingSessionV1` 是编辑器临时状态；只有作者确认时，Program Service 才把草稿转换为一个可撤销的 ProgramDocument 命令。录制器不保存平权宏格式，也不推断条件、循环或扩展私有函数。
+- `ControlSelectorV2` 在一次控件捕获中保存同一控件的主策略与有序后备策略。Runtime 只接受唯一确定候选；歧义停止且不产生输入副作用。重新捕获通过项目事务更新引用。
+- `TriggerDefinitionV1` 是 IDE 项目控制面事实，首期绑定已有项目函数。触发服务只创建普通运行请求，防抖、冷却、并发和权限在创建运行前判定；开发机触发定义不进入 Player 发布包，Player 保持独立签名运行方案和计划控制面。
+- 浏览器 DOM 由第一方签名功能扩展贡献宿主、强类型 `DomSelectorV1`、函数契约和发布模块。它复用普通函数调用和检查器，不进入 HTTP 原子能力，也不修改 ProgramDocument Schema。
+- 新领域扩展先作为普通签名包完成导入、信任、启用、锁定、发布和卸载；提升为官方范围时复用相同 Manifest 与密封产物。
+- 详细需求、失败语义和完成门见 [`vnext/AUTHORING_AUTOMATION.md`](vnext/AUTHORING_AUTOMATION.md)。

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import importlib.util
 import inspect
@@ -20,6 +21,7 @@ from typing import Any
 
 from core.capabilities import CapabilityContext, CapabilitySpec, capability_registry
 from core.expressions import ExpressionError, evaluate_expression
+from core.services.process_lifecycle import terminate_process_tree
 
 
 class CapabilityError(RuntimeError):
@@ -565,7 +567,7 @@ class CapabilityService:
             while time.monotonic() < deadline:
                 if bool(getattr(executor, 'is_stopped', False)):
                     cancellation.set()
-                    process.terminate()
+                    terminate_process_tree(process)
                     return {'success': False, 'code': 'CANCELLED', 'message': '能力调用已被停止', 'data': {}}
                 try:
                     line = output_queue.get(timeout=min(0.1, max(0.01, deadline - time.monotonic())))
@@ -602,23 +604,19 @@ class CapabilityService:
                         context.log(detail, 'error')
                     return {'success': False, 'code': 'EXCEPTION', 'message': str(event.get('error') or '能力执行异常'), 'data': {}}
             cancellation.set()
-            process.terminate()
-            return {'success': False, 'code': 'TIMEOUT', 'message': f'能力调用超时（{timeout_ms}ms），隔离进程已终止', 'data': {}}
+            terminate_process_tree(process)
+            return {
+                'success': False,
+                'code': 'TIMEOUT',
+                'message': f'能力调用超时（{timeout_ms}ms），隔离进程树已终止',
+                'data': {},
+            }
         finally:
             if process.poll() is None:
-                try:
-                    process.terminate()
-                    process.wait(timeout=1.0)
-                except Exception:
-                    try:
-                        process.kill()
-                    except Exception:
-                        pass
+                terminate_process_tree(process)
             for stream in (process.stdin, process.stdout, process.stderr):
-                try:
+                with contextlib.suppress(Exception):
                     stream.close() if stream else None
-                except Exception:
-                    pass
 
     @classmethod
     def invoke(

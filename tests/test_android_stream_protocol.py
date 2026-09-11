@@ -77,6 +77,10 @@ def test_scrcpy_utf8_text_and_meta_key_protocol(monkeypatch):
     assert session._control_socket.payloads[0][14:] == '中文A'.encode('utf-8')
 
     session.keyevent(29, metastate=0x1000)
-    down, up = struct.unpack('>BBIII', session._control_socket.payloads[1][:14]), struct.unpack('>BBIII', session._control_socket.payloads[1][14:])
+    # Socket write boundaries are not protocol frame boundaries.  The
+    # implementation deliberately writes down/up separately so held and
+    # cancelled keys can release safely.
+    down = struct.unpack('>BBIII', session._control_socket.payloads[1])
+    up = struct.unpack('>BBIII', session._control_socket.payloads[2])
     assert down == (0, 0, 29, 0, 0x1000)
     assert up == (0, 1, 29, 0, 0x1000)

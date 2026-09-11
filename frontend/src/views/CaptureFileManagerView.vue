@@ -14,6 +14,8 @@
             :save-button-text="saveButtonText"
             :save-busy="saving"
             :fill-height="true"
+            :workspace-kind="snapshot.workspace_kind || 'legacy'"
+            :workspace-identity="snapshot.workspace_kind === 'vnext' ? { workspace_id: snapshot.workspace_id, generation: snapshot.workspace_generation, project_id: snapshot.project_id || '', project_name: snapshot.project_name || '', project_path: snapshot.project_path, read_only: false } : null"
             @save="handleSave"
             @close="cancel" />
 
@@ -65,6 +67,7 @@
     const kind = ref('record')
     const explicitCategory = ref('')
     const fieldRequestId = ref('')
+    const fieldDestination = ref('parameter')
     const chainId = ref('')
     const operationId = ref('')
     const rects = ref([])
@@ -78,9 +81,12 @@
     const conflictResult = ref(null)
     const contextVersion = ref(0)
 
-    const category = computed(() => explicitCategory.value || (kind.value === 'record' ? 'image' : kind.value))
+    const category = computed(() => explicitCategory.value || (
+        kind.value === 'record' || kind.value === 'field_confirm' ? 'image' : kind.value
+    ))
     const saveButtonText = computed(() => {
         if (saving.value) return '正在保存…'
+        if (kind.value === 'field_confirm' && fieldDestination.value === 'resource') return rects.value.length > 1 ? `录入 ${rects.value.length} 项资源` : '录入资源'
         if (kind.value === 'field_confirm') return rects.value.length > 1 ? `保存并回填（${rects.value.length}）` : '保存并回填'
         if (kind.value === 'record') return rects.value.length > 1 ? `录入 ${rects.value.length} 张图片` : '录入图片'
         return rects.value.length > 1 ? `保存并生成（${rects.value.length}）` : '保存并生成节点'
@@ -108,6 +114,7 @@
 
     const commitSavedAssets = async saved => {
         let actionCommitted = false
+        let commitFailure = null
         try {
             const result = await captureApi.requestAction({
                 session_id: snapshot.value.session_id,
@@ -121,20 +128,32 @@
                 rects: saved.rects,
                 template_keys: saved.template_keys,
                 asset_refs: saved.asset_refs,
+                captured_assets: saved.assets || [],
                 asset_transaction: saved.transaction_id,
                 field_request_id: fieldRequestId.value
             })
+            if (!result?.ok) {
+                throw new Error(result?.message || 'IDE 已拒绝本次捕获结果，请返回字段后重试')
+            }
             actionCommitted = true
             postHost({
                 event: 'capture-save-complete',
                 result,
                 file_count: saved.files?.length || 0
             })
-        } finally {
-            if (!actionCommitted && saved.transaction_id) {
-                await captureApi.undoAssets(saved.transaction_id).catch(() => {})
+        } catch (error) {
+            commitFailure = error
+        }
+        if (!actionCommitted && saved.transaction_id) {
+            try {
+                await captureApi.undoAssets(saved.transaction_id)
+            } catch (rollbackError) {
+                const commitMessage = commitFailure?.message || '捕获结果未提交'
+                const rollbackMessage = rollbackError?.message || '未知回滚错误'
+                commitFailure = new Error(`${commitMessage}；资源回滚失败：${rollbackMessage}。请重新加载资源目录并检查孤立资源。`)
             }
         }
+        if (commitFailure) throw commitFailure
     }
 
     const saveAssets = async (collision = 'ask', overwriteConfirmed = false) => {
@@ -198,6 +217,7 @@
         kind.value = String(next.kind || 'record')
         explicitCategory.value = String(next.category || '')
         fieldRequestId.value = String(next.field_request_id || '')
+        fieldDestination.value = String(next.destination || 'parameter')
         chainId.value = String(next.chain_id || snapshotId.value)
         operationId.value = String(next.operation_id || `capture_web_${Date.now()}`)
         rects.value = Array.isArray(next.rects) ? next.rects : []
@@ -215,8 +235,11 @@
             if (!['image', 'ocr', 'page', 'record', 'field_confirm'].includes(kind.value)) throw new Error('捕获资源类型无效')
             if (!['image', 'ocr', 'page'].includes(category.value)) throw new Error('捕获资源分类无效')
             if (kind.value === 'field_confirm' && !fieldRequestId.value) throw new Error('属性捕获请求已失效')
+            if (!['parameter', 'resource'].includes(fieldDestination.value)) throw new Error('捕获目的地无效')
             if (!rects.value.length) throw new Error('没有可保存的框选范围')
-            const loaded = await captureApi.getSnapshot(snapshotId.value)
+            // 保存只需要冻结帧身份与尺寸；裁剪直接使用服务端持有的原帧。
+            // 避免为了打开资源管理器再次编码并传输整张 PNG。
+            const loaded = await captureApi.getSnapshot(snapshotId.value, false)
             if (!loaded?.workspace_id || loaded?.workspace_generation === undefined) {
                 throw new Error('冻结帧缺少工作区身份，请退出捕获并重新进入')
             }
@@ -257,6 +280,7 @@
                 operation_id: query.get('operation_id') || `capture_web_${Date.now()}`,
                 category: query.get('category') || '',
                 field_request_id: query.get('field_request_id') || '',
+                destination: query.get('destination') || 'parameter',
                 rects: parseJson(query.get('rects'), []),
                 port: parseJson(query.get('port'), null)
             })

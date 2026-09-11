@@ -38,8 +38,9 @@ def test_target_capability_profile_persists_by_versioned_fingerprint(tmp_path, m
 
 
 def test_window_capture_crop_accepts_client_area_provider(monkeypatch):
-    from core.services import screenshot_service
     import win32gui
+
+    from core.services import screenshot_service
 
     monkeypatch.setattr(win32gui, 'GetWindowRect', lambda _hwnd: (90, 80, 330, 260))
     monkeypatch.setattr(win32gui, 'GetClientRect', lambda _hwnd: (0, 0, 200, 120))
@@ -50,6 +51,80 @@ def test_window_capture_crop_accepts_client_area_provider(monkeypatch):
     image = Image.new('RGB', (200, 120), (10, 20, 30))
     cropped = screenshot_service.crop_window_image(1, image, (110, 110, 190, 160))
     assert cropped.size == (80, 50)
+
+
+def test_windows_target_refreshes_workspace_box_before_capture(monkeypatch):
+    from core.services import screenshot_service
+    from core.vnext.target_runtime import WindowsTargetDriver
+
+    driver = object.__new__(WindowsTargetDriver)
+    driver.target = {'work_area': {'mode': 'client'}}
+    driver.hwnd = 101
+    driver._box = (10, 20, 110, 120)
+    monkeypatch.setattr(driver, '_workspace_box', lambda: (200, 300, 649, 1142))
+    monkeypatch.setattr(
+        screenshot_service,
+        'capture_window_with_info',
+        lambda _hwnd: (Image.new('RGB', (449, 842)), {'provider': 'test'}),
+    )
+    observed = {}
+
+    def crop(_hwnd, image, screen_box):
+        observed['screen_box'] = screen_box
+        return image
+
+    monkeypatch.setattr(screenshot_service, 'crop_window_image', crop)
+
+    frame = driver.capture_frame()
+
+    assert frame.size == (449, 842)
+    assert observed['screen_box'] == (200, 300, 649, 1142)
+    assert driver._box == (200, 300, 649, 1142)
+
+
+def test_window_capture_crop_uses_dwm_bounds_for_wgc_resize_border(monkeypatch):
+    import win32gui
+
+    from core.services import screenshot_service
+
+    monkeypatch.setattr(win32gui, 'GetWindowRect', lambda _hwnd: (120, 120, 1036, 799))
+    monkeypatch.setattr(win32gui, 'GetClientRect', lambda _hwnd: (0, 0, 900, 640))
+    monkeypatch.setattr(
+        win32gui, 'ClientToScreen',
+        lambda _hwnd, point: (128 + point[0], 151 + point[1]),
+    )
+    monkeypatch.setattr(
+        screenshot_service, '_extended_frame_bounds',
+        lambda _hwnd: (127, 120, 1029, 792),
+    )
+    image = Image.new('RGB', (902, 672), (10, 20, 30))
+
+    cropped = screenshot_service.crop_window_image(1, image, (128, 151, 1028, 791))
+
+    assert cropped.size == (900, 640)
+
+
+def test_whole_window_capture_ignores_invisible_outer_resize_border(monkeypatch):
+    import win32gui
+
+    from core.services import screenshot_service
+
+    monkeypatch.setattr(win32gui, 'GetWindowRect', lambda _hwnd: (55, 81, 1010, 769))
+    monkeypatch.setattr(win32gui, 'GetClientRect', lambda _hwnd: (0, 0, 941, 681))
+    monkeypatch.setattr(
+        win32gui, 'ClientToScreen',
+        lambda _hwnd, point: (62 + point[0], 81 + point[1]),
+    )
+    monkeypatch.setattr(
+        screenshot_service, '_extended_frame_bounds',
+        lambda _hwnd: (62, 81, 1003, 762),
+    )
+    image = Image.new('RGB', (941, 681), (10, 20, 30))
+
+    cropped = screenshot_service.crop_window_image(1, image, (55, 81, 1010, 769))
+
+    assert cropped.size == (941, 681)
+    assert screenshot_service.window_image_screen_box(1, image.size) == (62, 81, 1003, 762)
 
 
 def test_player_protected_documents_and_redaction_roundtrip(tmp_path):
@@ -115,7 +190,7 @@ def _run_worker_batch(tmp_path, count: int):
             if len(finals) < count:
                 time.sleep(0.01)
         assert len(finals) == count
-        assert all(event['status'] == 'success' for _, event in finals)
+        assert all(event['status'] == 'success' for _, event in finals), finals
     finally:
         for proxy in proxies:
             proxy.stop()
@@ -138,7 +213,7 @@ def test_one_worker_failure_does_not_stop_another(tmp_path):
     finals = {}
     deadline = time.monotonic() + 20
     try:
-        for name, proxy in [('good', good), ('bad', bad)]:
+        for _name, proxy in [('good', good), ('bad', bad)]:
             while time.monotonic() < deadline:
                 event = next_worker_event(proxy, 0.1)
                 if event and event['type'] == 'ready':

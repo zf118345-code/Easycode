@@ -6,17 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 # ===== 请求 Payload 模型 =====
-
-
-class RunRequestSchema(BaseModel):
-    model_config = {'extra': 'allow'}
-
-    project_path: str
-    task_id: str
-    start_node_id: str | None = None
-    blueprint_data: dict[str, Any] | None = None
 
 
 class SaveBlueprintRequestSchema(BaseModel):
@@ -105,43 +95,6 @@ class ImageTestRequestSchema(BaseModel):
     region_reference_size: list[int] = Field(default=[0, 0])
 
 
-# ===== 补充：原 dict body 端点的 Pydantic Schema =====
-
-
-class ExporterSchemaRequestSchema(BaseModel):
-    """导出器表单 Schema 请求"""
-
-    model_config = {'extra': 'allow'}
-
-    project_path: str = Field(..., description='项目路径')
-    schema_data: dict[str, Any] | None = Field(default=None, description='表单 Schema 数据')
-
-
-class ExporterBuildRequestSchema(BaseModel):
-    """导出打包请求"""
-
-    model_config = {'extra': 'allow'}
-
-    project_path: str = Field(..., description='项目路径')
-    form_schema: dict[str, Any] | None = Field(default=None, description='客户配置表单 Schema')
-
-
-class CompileExeRequestSchema(BaseModel):
-    """编译 Player EXE 请求"""
-
-    model_config = {'extra': 'allow'}
-
-    project_path: str = Field(..., description='项目路径')
-
-
-class PlayerConfigRequestSchema(BaseModel):
-    """Player 用户配置保存请求"""
-
-    model_config = {'extra': 'allow'}
-
-    user_config: dict[str, Any] = Field(default_factory=dict, description='用户配置数据')
-
-
 class TemplateMkdirRequestSchema(BaseModel):
     """创建模板文件夹请求"""
 
@@ -182,27 +135,3 @@ class SaveRegionRequestSchema(BaseModel):
     relative_path: str | None = Field(default=None, description='相对路径')
     crop_rect: list[int] | None = Field(default=None, description='裁剪区域 [x, y, w, h]')
     region: dict[str, Any] | None = Field(default=None, description='区域数据')
-
-
-class StepRequestSchema(BaseModel):
-    """单步执行请求"""
-
-    model_config = {'extra': 'allow'}
-
-    step: str = Field(default='over', description='单步类型: over/into/out/next')
-
-
-class BreakpointsRequestSchema(BaseModel):
-    """批量设置断点请求"""
-
-    model_config = {'extra': 'allow'}
-
-    breakpoints: list[str] = Field(default_factory=list, description='断点节点 ID 列表')
-
-
-class BreakpointNodeRequestSchema(BaseModel):
-    """单个断点操作请求"""
-
-    model_config = {'extra': 'allow'}
-
-    node_id: str = Field(..., description='节点 ID')

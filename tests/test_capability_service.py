@@ -215,7 +215,7 @@ def test_capability_ocr_uses_bound_runtime_capture_without_preview_encoding(monk
         return Image.new('RGB', (40, 20), 'white'), (1, 2, 40, 20)
 
     monkeypatch.setattr('core.services.runtime_target.capture_workspace_region', fake_capture)
-    monkeypatch.setattr('core.node_executors.base.ocr_recognition.ocr_engine_recognize', lambda frame: '测试文字')
+    monkeypatch.setattr('core.vision.ocr_engine.ocr_engine_recognize', lambda frame: '测试文字')
     executor = FakeExecutor(tmp_path)
     spec = CapabilitySpec(
         capability_id='test.ocr', version='1.0.0', entry=lambda *_: None,

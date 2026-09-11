@@ -1,9 +1,14 @@
 # core/builder/compiler_service.py
+import logging
 import os
 import subprocess
 import sys
 
 from fastapi import HTTPException
+
+from core.services.process_lifecycle import terminate_process_tree
+
+logger = logging.getLogger(__name__)
 
 
 class CompilerService:
@@ -38,6 +43,7 @@ class CompilerService:
             raise HTTPException(status_code=404, detail=f'找不到编译脚本: {build_script}')
 
         snapshot = None
+        process: subprocess.Popen[str] | None = None
         try:
             # Build only from a fixed project revision.  The live workspace is
             # never read again by the child process while the build is running.
@@ -58,6 +64,7 @@ class CompilerService:
                 text=True,
                 cwd=root_dir,
                 env=env,
+                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
             )
 
             stdout, stderr = process.communicate(timeout=300)
@@ -96,13 +103,27 @@ class CompilerService:
                 'revision': snapshot['revision'],
                 'logs': stdout[-500:],
             }
-        except subprocess.TimeoutExpired:
-            process.kill()
-            raise HTTPException(status_code=500, detail='编译超时（超过 5 分钟），请检查 PyInstaller 环境') from None
+        except subprocess.TimeoutExpired as exc:
+            cleanup = terminate_process_tree(process)
+            logger.error(
+                'player.build.timeout',
+                extra={
+                    'event': 'player.build.timeout',
+                    'project_path': os.path.abspath(project_path),
+                    'child_pid': int(getattr(process, 'pid', 0) or 0),
+                    'cleanup': cleanup,
+                },
+            )
+            raise HTTPException(
+                status_code=504,
+                detail='编译超时（超过 5 分钟），已终止 PyInstaller 进程树，请检查构建环境',
+            ) from exc
         except Exception as e:
             print(f'[CompilerService Error] {str(e)}')
             raise HTTPException(status_code=500, detail=str(e)) from e
         finally:
+            if process is not None and process.poll() is None:
+                terminate_process_tree(process)
             if snapshot:
                 from core.services.build_snapshot_service import BuildSnapshotService
 

@@ -40,6 +40,7 @@ def verify_delivery_bundle(bundle_dir):
         os.path.join('release', 'web', 'index.html'),
         os.path.join('release', 'web', 'player.html'),
         os.path.join('release', 'web', 'capture.html'),
+        os.path.join('release', 'web', 'console.html'),
     ]
     missing = [relative for relative in required if not os.path.isfile(os.path.join(bundle_dir, relative))]
     leaked_profile = os.path.join(
@@ -91,10 +92,11 @@ def run_build_pipeline():
     src_web = os.path.join("release", "web")
     index_html = os.path.join(src_web, "index.html")
     player_html = os.path.join(src_web, "player.html")
+    console_html = os.path.join(src_web, "console.html")
     print(f"-> 检查前端目录: {os.path.abspath(src_web)}")
 
-    if not os.path.exists(index_html) or not os.path.exists(player_html):
-        print(f"[错误] 致命拦截: 前端入口不完整（需要 index.html 与 player.html）！请先执行 npm run build")
+    if not os.path.exists(index_html) or not os.path.exists(player_html) or not os.path.exists(console_html):
+        print(f"[错误] 致命拦截: 前端入口不完整（需要 index.html、player.html 与 console.html）！请先执行 npm run build")
         sys.exit(1)
     print("[通过] 前端精简网页产物完整。")
 

@@ -240,7 +240,7 @@
             delete instanceLogs[instance.id]
             delete instanceConfigs[instance.id]
             switchInstance(instances[0].id)
-        } catch (err) {
+        } catch {
             ElMessage.error(err.message || '删除实例失败')
         }
     }

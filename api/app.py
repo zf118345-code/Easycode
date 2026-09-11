@@ -13,24 +13,29 @@ enable_per_monitor_v2()
 os.environ['FLAGS_use_mkldnn'] = '0'  # noqa: SIM112 - PaddlePaddle 要求小写
 os.environ['FLAGS_enable_pir_api'] = '0'  # noqa: SIM112 - PaddlePaddle 要求小写
 
-import logging  # noqa: E402
 import asyncio  # noqa: E402
+import logging  # noqa: E402
 import secrets  # noqa: E402
 import threading  # noqa: E402
-from contextlib import asynccontextmanager  # noqa: E402
+import time  # noqa: E402
+import uuid  # noqa: E402
+from contextlib import asynccontextmanager, suppress  # noqa: E402
 from pathlib import Path  # noqa: E402
 
 import uvicorn  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, HTTPException  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from starlette.requests import Request  # noqa: E402
 from starlette.responses import JSONResponse, Response  # noqa: E402
 
+from api.errors import error_message, failure_detail, legacy_error_envelope, status_policy  # noqa: E402
+from api.request_context import reset_request_id, set_request_id  # noqa: E402
+from api.workspace_context import mutates_project_files, project_mutation_documents  # noqa: E402
+
 # 安全配置（统一从环境变量读取，避免硬编码密钥/CORS 来源）
 from core.config import SecurityConfig  # noqa: E402
 from core.services.project_workspace_service import project_workspace_manager  # noqa: E402
-from api.workspace_context import mutates_project_files, project_mutation_documents  # noqa: E402
 
 # 速率限制（slowapi 可选，缺失时降级为无限制）
 try:
@@ -130,6 +135,9 @@ except ImportError:
 
 @asynccontextmanager
 async def _lifespan(_app: FastAPI):
+    from core.vnext.ide_update_v6 import ide_update_service_v6
+
+    ide_update_service_v6.start()
     yield
     if frame_recording_service is not None:
         # 正常退出时补写 final session.json 并释放全局 Esc；图片从不清理。
@@ -137,12 +145,22 @@ async def _lifespan(_app: FastAPI):
 
     # CaptureOverlay 是 IDE 生命周期内常驻的原生子进程；后端退出时明确关闭。
     from core.services.native_capture_overlay import native_capture_overlay
+    from core.services.capture_session_service import capture_session_service
 
     native_capture_overlay.shutdown()
+    capture_session_service.shutdown()
     project_workspace_manager.shutdown()
     from core.services.platform_runtime_service import platform_runtime_service
 
     platform_runtime_service.shutdown()
+    from core.vnext.player_bundle import vnext_player_bundle_manager
+    from core.vnext.runtime import vnext_runtime
+    from core.vnext.schedule_hub_v6 import shutdown_player_hub_v6
+
+    shutdown_player_hub_v6()
+    ide_update_service_v6.shutdown()
+    vnext_player_bundle_manager.shutdown()
+    vnext_runtime.shutdown()
 
 
 def create_app():
@@ -181,17 +199,15 @@ def create_app():
             and mutates_project_files(request.method, request.url.path)
             and request.headers.get('x-workspace-id')
         ):
-            try:
+            with suppress(Exception):
                 await asyncio.to_thread(
                     project_workspace_manager.acknowledge,
                     request.headers['x-workspace-id'],
                     int(request.headers.get('x-workspace-generation') or -1),
                     project_mutation_documents(request.method, request.url.path),
                 )
-            except Exception:
                 # A switch may complete while a response is returning; the old
                 # request is already done and must not change the new baseline.
-                pass
         for header, value in security_headers.items():
             response.headers[header] = value
         return response
@@ -213,6 +229,8 @@ def create_app():
             'X-Workspace-Id',
             'X-Workspace-Generation',
             'X-EasyCode-Token',
+            'X-Request-ID',
+            'Idempotency-Key',
         ],
     )
 
@@ -222,27 +240,146 @@ def create_app():
     from core.error_codes import ErrorCode
     from core.response import error_response
 
+    @app.middleware('http')
+    async def request_identity_middleware(request: Request, call_next):
+        started_at = time.perf_counter()
+        supplied = str(request.headers.get('X-Request-ID') or '').strip()
+        request_id = supplied if supplied and len(supplied) <= 128 and all(
+            char.isalnum() or char in '-_.' for char in supplied
+        ) else f'req_{uuid.uuid4().hex}'
+        request.state.request_id = request_id
+        token = set_request_id(request_id)
+        status_code = 500
+        try:
+            response = await call_next(request)
+            status_code = response.status_code
+            response.headers['X-Request-ID'] = request_id
+            return response
+        finally:
+            logger.info(
+                'api.request.completed',
+                extra={
+                    'event': 'api.request.completed',
+                    'request_id': request_id,
+                    'method': request.method,
+                    'path': request.url.path,
+                    'status_code': status_code,
+                    'duration_ms': round((time.perf_counter() - started_at) * 1000, 3),
+                    'client_host': request.client.host if request.client else '',
+                },
+            )
+            reset_request_id(token)
+
+    def vnext_error_detail(
+        request: Request,
+        *,
+        code: str,
+        message: str,
+        retryable: bool = False,
+        action: str = 'none',
+        fields: list[dict] | None = None,
+        diagnostics: list[dict] | None = None,
+    ) -> dict:
+        return failure_detail(
+            code,
+            message,
+            request_id=str(getattr(request.state, 'request_id', '')),
+            retryable=retryable,
+            action=action,
+            fields=fields,
+            diagnostics=diagnostics,
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_exception_handler(request: Request, exc: HTTPException):
+        if not request.url.path.startswith('/api/vnext'):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=legacy_error_envelope(
+                    exc.status_code,
+                    exc.detail,
+                    str(getattr(request.state, 'request_id', '')),
+                ),
+                headers=exc.headers,
+            )
+        if isinstance(exc.detail, dict):
+            detail = dict(exc.detail)
+            message = str(detail.pop('message', '') or '请求失败')
+            normalized = vnext_error_detail(
+                request,
+                code=str(detail.pop('code', '') or ('not_found' if exc.status_code == 404 else 'request_failed')),
+                message=message,
+                retryable=bool((detail.get('recovery') or {}).get('retryable')),
+                action=str((detail.get('recovery') or {}).get('action') or 'none'),
+                fields=detail.pop('fields', None),
+                diagnostics=detail.pop('diagnostics', None),
+            )
+            if detail.get('request_id'):
+                normalized['request_id'] = str(detail['request_id'])
+            if isinstance(detail.get('recovery'), dict):
+                normalized['recovery'] = detail['recovery']
+        else:
+            code, retryable, action = status_policy(exc.status_code)
+            normalized = vnext_error_detail(
+                request,
+                code=code,
+                message=error_message(exc.detail),
+                retryable=retryable,
+                action=action,
+            )
+        return JSONResponse(status_code=exc.status_code, content={'detail': normalized}, headers=exc.headers)
+
     @app.exception_handler(RequestValidationError)
     async def validation_exception_handler(request: Request, exc: RequestValidationError):
         logger.warning(f'参数校验失败 [{request.url.path}]: {exc.errors()}')
+        if request.url.path.startswith('/api/vnext'):
+            fields = [{
+                'path': '.'.join(str(part) for part in item.get('loc', ()) if part != 'body'),
+                'message': str(item.get('msg') or '字段无效'),
+                'kind': str(item.get('type') or ''),
+            } for item in exc.errors()]
+            return JSONResponse(status_code=422, content={'detail': vnext_error_detail(
+                request, code='validation_error', message='请求参数校验失败',
+                action='fix_request', fields=fields,
+            )})
         return error_response(ErrorCode.VALIDATION_ERROR, '请求参数校验失败', status_code=422)
 
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception):
-        logger.error(f'未处理异常 [{request.url.path}]: {exc}', exc_info=True)
+        logger.error(
+            'api.request.unhandled_error',
+            exc_info=True,
+            extra={
+                'event': 'api.request.unhandled_error',
+                'request_id': str(getattr(request.state, 'request_id', '')),
+                'method': request.method,
+                'path': request.url.path,
+                'error_type': type(exc).__name__,
+            },
+        )
+        if request.url.path.startswith('/api/vnext'):
+            return JSONResponse(status_code=500, content={'detail': vnext_error_detail(
+                request, code='internal_error', message='内部服务器错误',
+                retryable=True, action='retry',
+            )})
         return error_response(ErrorCode.INTERNAL_ERROR, '内部服务器错误', status_code=500)
 
     # ====== 注册路由 ======
     from api.routers.blueprint_router import create_blueprint_router
     from api.routers.build_router import create_build_router
     from api.routers.capture_router import create_capture_router
-    from api.routers.capability_router import create_capability_router
     from api.routers.execution_router import create_execution_router
-    from api.routers.project_workspace_router import create_project_workspace_router
     from api.routers.platform_router import create_platform_router
+    from api.routers.project_workspace_router import create_project_workspace_router
     from api.routers.system_router import create_system_router
     from api.routers.ui_control_router import create_ui_control_router
     from api.routers.vision_router import create_vision_router
+    from api.routers.vnext_router import create_vnext_router
+    from api.routers.vnext_android_router import create_vnext_android_router
+    from api.routers.vnext_update_router import create_vnext_update_router
+    from api.routers.vnext_player_lan_router import create_vnext_player_lan_router
+    from api.routers.vnext_schedule_hub_router import create_vnext_schedule_hub_router
+    from api.routers.vnext_schedule_router import create_vnext_schedule_router
     from api.routers.workspace_router import create_workspace_router
 
     app.include_router(create_system_router(ALL_PARAMS))
@@ -254,7 +391,12 @@ def create_app():
     app.include_router(create_vision_router(VisionService))
     app.include_router(create_ui_control_router())
     app.include_router(create_capture_router())
-    app.include_router(create_capability_router())
+    app.include_router(create_vnext_router())
+    app.include_router(create_vnext_android_router())
+    app.include_router(create_vnext_update_router())
+    app.include_router(create_vnext_schedule_hub_router())
+    app.include_router(create_vnext_player_lan_router())
+    app.include_router(create_vnext_schedule_router())
     app.include_router(create_build_router(ExportService, CompilerService, PlayerService))
 
     def workspace_blockers():
@@ -357,7 +499,15 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument('--host', default='127.0.0.1', help='监听地址；局域网协调服务可使用 0.0.0.0')
     parser.add_argument('--port', type=int, default=8000, help='监听端口')
+    parser.add_argument('--player-bundle', default='', help='要加载的 vNext .ecplayer 运行包')
+    parser.add_argument('--player-trust-root', default='', help='Player 固定的发布者信任根')
     args = parser.parse_args(argv)
+
+    if args.player_bundle:
+        os.environ['EASYCODE_PLAYER_BUNDLE'] = str(Path(args.player_bundle).resolve())
+    if args.player_trust_root:
+        os.environ['EASYCODE_PLAYER_TRUST_ROOT'] = str(Path(args.player_trust_root).resolve())
+        os.environ['EASYCODE_PLAYER_REQUIRE_TRUST_ROOT'] = '1'
 
     if args.host not in {'127.0.0.1', 'localhost', '::1'} and not os.environ.get('EASYCODE_COORDINATOR_TOKEN'):
         parser.error('监听非本机地址时必须设置 EASYCODE_COORDINATOR_TOKEN')
@@ -376,4 +526,7 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == '__main__':
+    import multiprocessing
+
+    multiprocessing.freeze_support()
     main()

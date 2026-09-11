@@ -274,7 +274,7 @@
                 }
                 activePreview = preview
                 imageThumbUrl.value = preview.url
-            } catch (error) {
+            } catch {
                 if (requestId === previewRequestId) imageThumbError.value = true
             }
         },

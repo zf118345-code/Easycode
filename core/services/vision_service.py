@@ -293,7 +293,7 @@ class VisionService:
         import cv2
         import numpy as np
 
-        from core.node_executors.base.ocr_recognition import get_ocr_engine
+        from core.vision.ocr_engine import get_ocr_engine
 
         frame_bgr = None
 
@@ -327,7 +327,7 @@ class VisionService:
             processed_img = frame_bgr
 
         # 4. 执行 OCR 识字（⚡ #2 统一识别入口：RapidOCR 优先，ddddocr 兜底；引擎缺失时明确提示）
-        from core.node_executors.base.ocr_recognition import ocr_engine_recognize
+        from core.vision.ocr_engine import ocr_engine_recognize
 
         detected_text = ocr_engine_recognize(processed_img).strip()
         if not detected_text:

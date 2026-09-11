@@ -1,7 +1,6 @@
 # core/node_executors/base/ocr_recognition.py
 import base64
 import os
-import threading
 import time
 
 import cv2
@@ -11,122 +10,15 @@ from core.vision.frame_cache import prepared_frame
 
 from core.node_executors.base_class import BaseNodeExecutor
 from core.registry import NodeExecutorRegistry
-
-_OCR_ENGINE = None
-_ENGINE_TYPE = None
-_OCR_INIT_LOCK = threading.Lock()
-_OCR_INFERENCE_LOCK = threading.Lock()
-_OCR_PROCESS_SEMAPHORE = None  # injected by the Player process supervisor
-
-# ⚡ #2 OCR 引擎升级：RapidOCR（PP-OCRv4，界面/游戏文本准确率高）优先，
-# ddddocr（轻量验证码向）兜底；可用环境变量 EASYCODE_OCR_ENGINE 强制指定
-# （rapidocr / ddddocr / none），部署不再静默失效（失败会打 error 日志）
-
-
-def _init_rapidocr():
-    try:
-        from rapidocr_onnxruntime import RapidOCR
-
-        engine = RapidOCR()
-        # 预热一次（首次推理加载模型较慢，避免节点执行时卡顿）
-        import numpy as np
-
-        engine(np.zeros((32, 128, 3), dtype=np.uint8))
-        return engine
-    except Exception as e:
-        print(f' [OCR 引擎] RapidOCR 初始化失败（将回退 ddddocr）: {e}')
-        return None
-
-
-def _init_ddddocr():
-    try:
-        import ddddocr
-
-        return ddddocr.DdddOcr(show_ad=False)
-    except Exception as e:
-        print(f' [OCR 引擎初始化失败] ddddocr 导入异常: {e}')
-        return None
-
-
-def get_ocr_engine():
-    """返回 (engine_type, engine)。engine_type: 'rapidocr' | 'ddddocr' | 'none'"""
-    global _OCR_ENGINE, _ENGINE_TYPE
-    if _ENGINE_TYPE is not None:
-        return _ENGINE_TYPE, _OCR_ENGINE
-
-    with _OCR_INIT_LOCK:
-        if _ENGINE_TYPE is not None:
-            return _ENGINE_TYPE, _OCR_ENGINE
-
-        forced = (os.environ.get('EASYCODE_OCR_ENGINE') or '').strip().lower()
-        if forced in ('rapidocr', 'ddddocr', 'none'):
-            _ENGINE_TYPE = forced
-            if forced == 'rapidocr':
-                _OCR_ENGINE = _init_rapidocr()
-                if _OCR_ENGINE is None:
-                    _ENGINE_TYPE = 'none'
-            elif forced == 'ddddocr':
-                _OCR_ENGINE = _init_ddddocr()
-                if _OCR_ENGINE is None:
-                    _ENGINE_TYPE = 'none'
-            if _ENGINE_TYPE != 'none':
-                print(f' [OCR 引擎初始化] {_ENGINE_TYPE} 启动成功（强制指定）')
-            return _ENGINE_TYPE, _OCR_ENGINE
-
-        # 默认链：RapidOCR → ddddocr
-        _OCR_ENGINE = _init_rapidocr()
-        if _OCR_ENGINE is not None:
-            _ENGINE_TYPE = 'rapidocr'
-            print(' [OCR 引擎初始化] RapidOCR (PP-OCRv4) 启动成功')
-        else:
-            _OCR_ENGINE = _init_ddddocr()
-            _ENGINE_TYPE = 'ddddocr' if _OCR_ENGINE is not None else 'none'
-            if _ENGINE_TYPE == 'ddddocr':
-                print(' [OCR 引擎初始化] ddddocr 启动成功（RapidOCR 不可用回退）')
-            else:
-                print(' [OCR 引擎] 无可用 OCR 引擎（rapidocr/ddddocr 均未安装），OCR 节点将超时失败')
-        return _ENGINE_TYPE, _OCR_ENGINE
-
-
-def ocr_engine_recognize(image_bgr) -> str:
-    """统一识别入口：按引擎类型调用，返回识别文本"""
-    engine_type, engine = get_ocr_engine()
-    if engine is None:
-        return ''
-    try:
-        # The bundled OCR engines are stateful native runtimes. A bounded lock
-        # prevents concurrent executor threads from corrupting one shared engine
-        # or multiplying CPU usage unpredictably. Worker isolation can later
-        # replace this with a small inference pool without changing callers.
-        process_slot = _OCR_PROCESS_SEMAPHORE
-        if process_slot is not None:
-            process_slot.acquire()
-        try:
-            with _OCR_INFERENCE_LOCK:
-                if engine_type == 'rapidocr':
-                    result, _ = engine(image_bgr)
-                    if not result:
-                        return ''
-                    return ''.join(item[1] for item in result)
-                if engine_type == 'ddddocr':
-                    _, img_bytes = cv2.imencode('.png', image_bgr)
-                    return str(engine.classification(img_bytes.tobytes()) or '')
-        finally:
-            if process_slot is not None:
-                process_slot.release()
-    except Exception as e:
-        print(f' [OCR 引擎] 识别调用失败: {e}')
-        return ''
-    return ''
-
-
-def preprocess_ocr_image(image_bgr, gray_scale: bool = True, gray_threshold: int = 127):
-    """Apply the exact same OCR preprocessing for nodes, conditions and previews."""
-    if gray_scale:
-        gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray, int(gray_threshold), 255, cv2.THRESH_BINARY)
-        return cv2.cvtColor(thresh, cv2.COLOR_GRAY2BGR)
-    return image_bgr
+from core.vision.ocr_engine import (
+    OcrAdapterError,
+    OcrAdapterLine,
+    OcrAdapterResult,
+    get_ocr_engine,
+    ocr_engine_recognize,
+    ocr_engine_recognize_detailed,
+    preprocess_ocr_image,
+)
 
 
 def recognize_ocr_region(

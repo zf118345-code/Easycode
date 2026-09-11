@@ -53,16 +53,29 @@ class SecurityConfig:
         """获取允许的 CORS 来源列表
 
         - 优先读取 EASYCODE_CORS_ORIGINS（逗号分隔）
-        - 生产环境未配置时使用安全默认值（仅本机回环）
-        - 开发环境未配置时返回 ['*'] 便于本地联调
+        - 未配置时仅允许 EasyCode 本机开发/运行入口
+
+        CORS 不是身份认证，但放开 ``*`` 会允许任意网页读取本机 IDE
+        API。自定义开发端口必须通过环境变量显式加入。
         """
         raw = os.environ.get(cls._CORS_ORIGINS_ENV, '').strip()
         if raw:
             return [o.strip() for o in raw.split(',') if o.strip()]
 
-        if cls.IS_PROD:
-            return ['http://127.0.0.1:8000', 'http://localhost:8000']
-        return ['*']
+        origins = [
+            'http://127.0.0.1:8000',
+            'http://localhost:8000',
+        ]
+        if cls.IS_DEV:
+            origins.extend([
+                'http://127.0.0.1:5173',
+                'http://localhost:5173',
+                'http://127.0.0.1:5174',
+                'http://localhost:5174',
+                'http://127.0.0.1:4173',
+                'http://localhost:4173',
+            ])
+        return origins
 
     @classmethod
     def get_rate_limit(cls) -> str:
@@ -77,4 +90,15 @@ class SecurityConfig:
             'X-Frame-Options': 'SAMEORIGIN',
             'X-XSS-Protection': '1; mode=block',
             'Referrer-Policy': 'strict-origin-when-cross-origin',
+            'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+            # Production assets are self-hosted. Monaco workers use blob URLs
+            # and Vue component styles require inline style declarations.
+            'Content-Security-Policy': (
+                "default-src 'self'; base-uri 'none'; object-src 'none'; "
+                "script-src 'self'; style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob:; font-src 'self' data:; "
+                "connect-src 'self' http://127.0.0.1:* http://localhost:* "
+                "ws://127.0.0.1:* ws://localhost:*; "
+                "worker-src 'self' blob:; frame-ancestors 'self'; form-action 'self'"
+            ),
         }

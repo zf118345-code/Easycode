@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">EasyCode Player</string>
+    <string name="accessibility_label">EasyCode 本机输入服务</string>
+    <string name="accessibility_description">仅在已签名任务明确需要时执行点击、滑动、拖拽、长按和文本输入。关闭后相关动作会明确失败。</string>
+    <string name="capture_notification_title">EasyCode 正在读取屏幕画面</string>
+    <string name="capture_notification_text">切换到目标画面，3 秒后自动冻结</string>
+    <string name="capture_notification_action">立即冻结</string>
+    <string name="runtime_notification_title">EasyCode 任务正在运行</string>
+</resources>

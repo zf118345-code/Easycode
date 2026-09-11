@@ -1,16 +1,26 @@
-[tool.poetry]
+[project]
 name = "easycode"
 version = "2.4.0"
-description = "Easycode 节点自动化引擎"
-authors = ["Easycode Team"]
+description = "EasyCode structured automation IDE and Player"
 readme = "README.md"
+requires-python = ">=3.10,<3.13"
+dynamic = ["dependencies"]
+authors = [
+    { name = "EasyCode Team" },
+]
+
+[project.scripts]
+easycode = "api.app:main"
+
+[tool.poetry]
 packages = [{ include = "core" }, { include = "api" }]
 
 [tool.poetry.dependencies]
-python = "^3.10"
+python = ">=3.10,<3.13"
 fastapi = ">=0.100.0"
 uvicorn = ">=0.22.0"
 slowapi = ">=0.1.9"
+python-dotenv = ">=1.0.0"
 pydantic = ">=2.0.0"
 pyautogui = ">=0.9.54"
 opencv-python = ">=4.8.0"
@@ -26,6 +36,7 @@ rapidocr-onnxruntime = ">=1.3.0"
 ddddocr = ">=1.4.7"
 av = ">=14.0.0"
 cryptography = ">=41.0.0"
+tzdata = ">=2025.2"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=7.0"
@@ -33,9 +44,7 @@ pytest-asyncio = ">=0.21"
 httpx = ">=0.24"
 ruff = ">=0.6.0"
 bandit = ">=1.7.0"
-
-[tool.poetry.scripts]
-easycode = "api.app:main"
+pyinstaller = ">=6.10,<7"
 
 [tool.ruff]
 target-version = "py310"

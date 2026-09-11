@@ -259,7 +259,7 @@
         }
         try {
             return getSimpleOrthoPath(start, end, props.drawingConnection.portType)
-        } catch (e) {
+        } catch {
             return `M ${start.x} ${start.y} L ${end.x} ${end.y}`
         }
     })

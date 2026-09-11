@@ -36,11 +36,13 @@ class PlatformStore:
 
     def _connect(self) -> sqlite3.Connection:
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        connection = sqlite3.connect(self.path, timeout=30, isolation_level=None)
         connection.row_factory = sqlite3.Row
-        connection.execute('PRAGMA journal_mode=WAL')
+        # The busy handler must be installed before any pragma that can need a
+        # write lock. Multiple isolated Player workers may open a fresh store
+        # at the same time.
+        connection.execute('PRAGMA busy_timeout=30000')
         connection.execute('PRAGMA synchronous=NORMAL')
-        connection.execute('PRAGMA busy_timeout=10000')
         connection.execute('PRAGMA foreign_keys=ON')
         return connection
 
@@ -48,72 +50,87 @@ class PlatformStore:
         with self._init_lock:
             if self._initialized:
                 return
-            with self._connect() as db:
-                db.executescript(
-                    '''
-                    CREATE TABLE IF NOT EXISTS state_values (
-                        namespace TEXT NOT NULL,
-                        key TEXT NOT NULL,
-                        value_json TEXT NOT NULL,
-                        updated_at REAL NOT NULL,
-                        PRIMARY KEY(namespace, key)
-                    );
-                    CREATE TABLE IF NOT EXISTS messages (
-                        id TEXT PRIMARY KEY,
-                        channel TEXT NOT NULL,
-                        sender TEXT NOT NULL,
-                        payload_json TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'ready',
-                        claimed_by TEXT,
-                        claimed_until REAL,
-                        created_at REAL NOT NULL,
-                        expires_at REAL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_messages_ready
-                        ON messages(channel, status, created_at);
-                    CREATE TABLE IF NOT EXISTS leases (
-                        resource_key TEXT PRIMARY KEY,
-                        owner TEXT NOT NULL,
-                        token TEXT NOT NULL,
-                        expires_at REAL NOT NULL,
-                        updated_at REAL NOT NULL
-                    );
-                    CREATE TABLE IF NOT EXISTS schedules (
-                        id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        schedule_type TEXT NOT NULL,
-                        schedule_value TEXT NOT NULL,
-                        payload_json TEXT NOT NULL,
-                        enabled INTEGER NOT NULL DEFAULT 1,
-                        next_run_at REAL,
-                        claimed_by TEXT,
-                        claimed_until REAL,
-                        last_run_at REAL,
-                        last_status TEXT,
-                        last_error TEXT,
-                        created_at REAL NOT NULL,
-                        updated_at REAL NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_schedules_due
-                        ON schedules(enabled, next_run_at);
-                    CREATE TABLE IF NOT EXISTS outbox (
-                        id TEXT PRIMARY KEY,
-                        endpoint TEXT NOT NULL,
-                        token TEXT NOT NULL,
-                        operation TEXT NOT NULL,
-                        payload_json TEXT NOT NULL,
-                        status TEXT NOT NULL DEFAULT 'pending',
-                        attempts INTEGER NOT NULL DEFAULT 0,
-                        next_attempt_at REAL NOT NULL,
-                        last_error TEXT,
-                        created_at REAL NOT NULL,
-                        updated_at REAL NOT NULL
-                    );
-                    CREATE INDEX IF NOT EXISTS idx_outbox_pending
-                        ON outbox(status, next_attempt_at);
-                    '''
-                )
-                db.execute(f'PRAGMA user_version={self.SCHEMA_VERSION}')
+            deadline = time.monotonic() + 30.0
+            attempt = 0
+            while True:
+                try:
+                    with self._connect() as db:
+                        # WAL is persistent for the database, so configure it
+                        # only during schema initialization instead of on every
+                        # connection. Retrying is safe because every DDL is
+                        # idempotent.
+                        db.execute('PRAGMA journal_mode=WAL')
+                        db.executescript(
+                            '''
+                            CREATE TABLE IF NOT EXISTS state_values (
+                                namespace TEXT NOT NULL,
+                                key TEXT NOT NULL,
+                                value_json TEXT NOT NULL,
+                                updated_at REAL NOT NULL,
+                                PRIMARY KEY(namespace, key)
+                            );
+                            CREATE TABLE IF NOT EXISTS messages (
+                                id TEXT PRIMARY KEY,
+                                channel TEXT NOT NULL,
+                                sender TEXT NOT NULL,
+                                payload_json TEXT NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'ready',
+                                claimed_by TEXT,
+                                claimed_until REAL,
+                                created_at REAL NOT NULL,
+                                expires_at REAL
+                            );
+                            CREATE INDEX IF NOT EXISTS idx_messages_ready
+                                ON messages(channel, status, created_at);
+                            CREATE TABLE IF NOT EXISTS leases (
+                                resource_key TEXT PRIMARY KEY,
+                                owner TEXT NOT NULL,
+                                token TEXT NOT NULL,
+                                expires_at REAL NOT NULL,
+                                updated_at REAL NOT NULL
+                            );
+                            CREATE TABLE IF NOT EXISTS schedules (
+                                id TEXT PRIMARY KEY,
+                                name TEXT NOT NULL,
+                                schedule_type TEXT NOT NULL,
+                                schedule_value TEXT NOT NULL,
+                                payload_json TEXT NOT NULL,
+                                enabled INTEGER NOT NULL DEFAULT 1,
+                                next_run_at REAL,
+                                claimed_by TEXT,
+                                claimed_until REAL,
+                                last_run_at REAL,
+                                last_status TEXT,
+                                last_error TEXT,
+                                created_at REAL NOT NULL,
+                                updated_at REAL NOT NULL
+                            );
+                            CREATE INDEX IF NOT EXISTS idx_schedules_due
+                                ON schedules(enabled, next_run_at);
+                            CREATE TABLE IF NOT EXISTS outbox (
+                                id TEXT PRIMARY KEY,
+                                endpoint TEXT NOT NULL,
+                                token TEXT NOT NULL,
+                                operation TEXT NOT NULL,
+                                payload_json TEXT NOT NULL,
+                                status TEXT NOT NULL DEFAULT 'pending',
+                                attempts INTEGER NOT NULL DEFAULT 0,
+                                next_attempt_at REAL NOT NULL,
+                                last_error TEXT,
+                                created_at REAL NOT NULL,
+                                updated_at REAL NOT NULL
+                            );
+                            CREATE INDEX IF NOT EXISTS idx_outbox_pending
+                                ON outbox(status, next_attempt_at);
+                            '''
+                        )
+                        db.execute(f'PRAGMA user_version={self.SCHEMA_VERSION}')
+                    break
+                except sqlite3.OperationalError as exc:
+                    if 'locked' not in str(exc).lower() or time.monotonic() >= deadline:
+                        raise
+                    attempt += 1
+                    time.sleep(min(0.5, 0.025 * attempt))
             self._initialized = True
 
     @staticmethod

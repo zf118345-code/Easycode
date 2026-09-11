@@ -85,6 +85,36 @@ def test_every_captured_frame_is_retained_without_deduplication(monkeypatch, tmp
     assert escape_calls == ['released']
 
 
+def test_vnext_capture_provider_records_without_legacy_context_and_releases_driver(monkeypatch, tmp_path):
+    project = tmp_path / 'vnext-recording-project'
+    project.mkdir()
+    service = FrameRecordingService()
+    _prepare_service(monkeypatch, service)
+    captures = []
+    releases = []
+
+    def capture():
+        captures.append(len(captures) + 1)
+        if len(captures) == 3:
+            service.request_stop('test_complete')
+        return Image.new('RGB', (32, 18), (len(captures), 20, 40))
+
+    started = service.start(
+        str(project), {'target_fps': 30},
+        capture_provider=capture, capture_release=lambda: releases.append(True),
+        target_title='测试模拟器', capture_backend='vnext:android_adb',
+    )
+    state = _wait_finished(service)
+    manifest = json.loads((project / 'recordings' / started['session_id'] / 'session.json').read_text(encoding='utf-8'))
+
+    assert state['frame_count'] == 3
+    assert state['target_title'] == '测试模拟器'
+    assert state['capture_backend'] == 'vnext:android_adb'
+    assert state['screen_region'] == [0, 0, 32, 18]
+    assert manifest['workspace_size'] == [32, 18]
+    assert releases == [True]
+
+
 def test_capture_failure_keeps_all_frames_saved_before_error(monkeypatch, tmp_path):
     project = _create_project(tmp_path)
     service = FrameRecordingService()

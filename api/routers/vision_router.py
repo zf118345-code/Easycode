@@ -1,16 +1,22 @@
 import logging
 
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 
+from api.contracts.vision import (
+    RegionSaveRequest,
+    TemplateFolderCreateRequest,
+    TemplateRegisterRequest,
+    VisionProjectRequest,
+)
+from api.workspace_context import assert_matching_legacy_path
 from core.schemas import (
     ImageTestRequestSchema,
     OcrTestRequestSchema,
     TemplateDeleteRequestSchema,
     TemplateMoveRequestSchema,
 )
-from api.workspace_context import assert_matching_legacy_path
 
 logger = logging.getLogger(__name__)
 
@@ -48,14 +54,14 @@ def create_vision_router(vision_service):
         return await run_in_threadpool(vision_service.resolve_template, assert_matching_legacy_path(request, project_path), reference)
 
     @router.post('/api/templates/mkdir')
-    async def create_template_folder(request: Request, data: dict = Body(...)):
+    async def create_template_folder(request: Request, payload: TemplateFolderCreateRequest):
         if vision_service is None:
             _service_unavailable('VisionService')
         return await run_in_threadpool(
             vision_service.create_template_folder,
-            assert_matching_legacy_path(request, data.get('project_path'), writable=True),
-            data.get('parent_path', ''),
-            data.get('folder_name', ''),
+            assert_matching_legacy_path(request, payload.project_path, writable=True),
+            payload.parent_path,
+            payload.folder_name,
         )
 
     @router.get('/api/regions')
@@ -65,17 +71,17 @@ def create_vision_router(vision_service):
         return await run_in_threadpool(vision_service.get_regions, assert_matching_legacy_path(request, project_path))
 
     @router.post('/api/regions')
-    async def save_region(request: Request, data: dict = Body(...)):
+    async def save_region(request: Request, payload: RegionSaveRequest):
         if vision_service is None:
             _service_unavailable('VisionService')
-        template_name = data.get('template_name') or data.get('relative_path')
-        crop_rect = data.get('crop_rect') or data.get('region')
+        template_name = payload.template_name or payload.relative_path
+        crop_rect = payload.crop_rect if payload.crop_rect is not None else payload.region
         return await run_in_threadpool(
             vision_service.save_region,
-            assert_matching_legacy_path(request, data.get('project_path'), writable=True),
+            assert_matching_legacy_path(request, payload.project_path, writable=True),
             template_name,
             crop_rect,
-            data.get('reference_size'),
+            payload.reference_size,
         )
 
     @router.get('/api/templates/impact')
@@ -118,24 +124,28 @@ def create_vision_router(vision_service):
         )
 
     @router.post('/api/templates/trash/{transaction_id}/restore')
-    async def restore_template_trash(transaction_id: str, request: Request, data: dict = Body(default={})):
+    async def restore_template_trash(
+        transaction_id: str,
+        request: Request,
+        payload: VisionProjectRequest,
+    ):
         if vision_service is None:
             _service_unavailable('VisionService')
         return await run_in_threadpool(
             vision_service.restore_template_entry,
-            assert_matching_legacy_path(request, data.get('project_path'), writable=True),
+            assert_matching_legacy_path(request, payload.project_path, writable=True),
             transaction_id,
         )
 
     @router.post('/api/templates/register')
-    async def register_template(request: Request, data: dict = Body(...)):
+    async def register_template(request: Request, payload: TemplateRegisterRequest):
         if vision_service is None:
             _service_unavailable('VisionService')
         return await run_in_threadpool(
             vision_service.register_template,
-            assert_matching_legacy_path(request, data.get('project_path'), writable=True),
-            data.get('relative_path', ''),
-            data.get('kind', ''),
+            assert_matching_legacy_path(request, payload.project_path, writable=True),
+            payload.relative_path,
+            payload.kind,
         )
 
     @router.post('/api/ocr/test')

@@ -17,6 +17,7 @@ REQUIRED_DELIVERY_FILES = (
     'release/web/index.html',
     'release/web/player.html',
     'release/web/capture.html',
+    'release/web/console.html',
 )
 
 

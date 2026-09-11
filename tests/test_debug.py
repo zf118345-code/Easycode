@@ -3,7 +3,6 @@
 import threading
 import time
 
-import pytest
 
 import core.node_executors  # noqa: F401 - 副作用导入，注册执行器
 from core.executor import GraphExecutor
@@ -265,7 +264,6 @@ def test_executor_logs_capped(monkeypatch, tmp_path):
     ex.max_logs = 50
     ex.variables = {}
     # log() 内 resolve_template_string 需要变量
-    from core.utils import resolve_template_string
     monkeypatch.setattr('core.executor.resolve_template_string', lambda s, ctx: str(s))
 
     for i in range(120):

@@ -28,10 +28,16 @@ class TestSecurityHeaders:
         resp = client.get('/api/params')
         assert resp.headers.get('X-Content-Type-Options') == 'nosniff'
         assert resp.headers.get('X-Frame-Options') == 'SAMEORIGIN'
+        assert "script-src 'self'" in resp.headers.get('Content-Security-Policy', '')
+        assert resp.headers.get('Permissions-Policy', '').startswith('camera=()')
 
     def test_cors_headers_on_get(self, client):
         """带 Origin 的 GET 请求应返回 CORS 允许来源头"""
         resp = client.get('/api/params', headers={'Origin': 'http://localhost:5173'})
         assert resp.status_code == 200
-        # 开发环境 CORS 允许所有来源，应回传 Origin 或 *
-        assert resp.headers.get('access-control-allow-origin') is not None
+        assert resp.headers.get('access-control-allow-origin') == 'http://localhost:5173'
+
+    def test_cors_rejects_untrusted_web_origin(self, client):
+        resp = client.get('/api/params', headers={'Origin': 'https://untrusted.example'})
+        assert resp.status_code == 200
+        assert resp.headers.get('access-control-allow-origin') is None

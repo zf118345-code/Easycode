@@ -108,7 +108,6 @@ def test_loader_extracts_context_from_ebp(tmp_path):
     ebp = tmp_path / 'assets.ebp'
     ebp.write_bytes(PlayerAssetLoader.DEFAULT_MASTER_KEY[:16] + b'\x00' * 16)  # 占位，下面用真加密
     # 用真实加密替换
-    from core.services.export_service import ExportService
     # 直接构造加密流：AES-CBC 加密 zip
     from cryptography.hazmat.primitives import padding as sym_padding
     from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes

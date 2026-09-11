@@ -5,15 +5,19 @@ export const captureApi = {
     unregisterSession: sessionId => client.post('/api/capture/session/unregister', { session_id: sessionId }),
     trigger: (payload = {}) => client.post('/api/capture/trigger', payload),
     prewarm: () => client.post('/api/capture/prewarm'),
-    replay: (recordingSessionId, frameIndex) => client.post('/api/capture/replay', {
+    replay: (recordingSessionId, frameIndex, sessionId = '') => client.post('/api/capture/replay', {
         recording_session_id: recordingSessionId,
-        frame_index: frameIndex
+        frame_index: frameIndex,
+        session_id: sessionId
     }),
     createSnapshot: (projectPath, sessionId) => client.post('/api/capture/snapshot', {
         project_path: projectPath,
         session_id: sessionId
     }),
-    getSnapshot: snapshotId => client.get(`/api/capture/snapshot/${encodeURIComponent(snapshotId)}`),
+    getSnapshot: (snapshotId, includeImage = true) => client.get(
+        `/api/capture/snapshot/${encodeURIComponent(snapshotId)}`,
+        { params: { include_image: includeImage } }
+    ),
     close: snapshotId => client.post('/api/capture/close', { snapshot_id: snapshotId }),
     listDirectories: projectPath => client.get('/api/capture/directories', { params: { project_path: projectPath } }),
     saveAssets: payload => client.post('/api/capture/assets', payload),

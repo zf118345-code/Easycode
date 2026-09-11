@@ -124,7 +124,7 @@ v-if="currentDisplayUrl && !hasError"
             if (!grayOn) {
                 try {
                     await loadRawPreview(projPath, imgName, requestId)
-                } catch (err) {
+                } catch {
                     if (requestId === previewRequestId) hasError.value = true
                 }
                 return
@@ -143,7 +143,7 @@ v-if="currentDisplayUrl && !hasError"
                     console.error('二值化预览生成失败:', err)
                     try {
                         await loadRawPreview(projPath, imgName, requestId)
-                    } catch (previewError) {
+                    } catch {
                         if (requestId === previewRequestId) hasError.value = true
                     }
                 }

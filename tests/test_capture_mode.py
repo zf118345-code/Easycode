@@ -69,6 +69,42 @@ def test_build_selector_priority():
     assert capture_mode.build_selector(None) == ''
 
 
+def test_build_control_selector_projects_persistent_v6_shape():
+    selector = capture_mode.build_control_selector({
+        'name': '确定',
+        'automation_id': 'confirm-button',
+        'class_name': 'Button',
+        'control_type': 'button',
+        'rect': [10, 20, 110, 60],
+        'match_index': 2,
+        'ancestor_path': [{
+            'name': '设置', 'automation_id': '',
+            'class_name': 'Window', 'control_type': 'window',
+        }],
+    })
+    assert selector == {
+        'control_selector.field.schema_version': 1,
+        'control_selector.field.provider': 'windows_uia',
+        'control_selector.field.target_id': '',
+        'control_selector.field.package_name': '',
+        'control_selector.field.resource_id': '',
+        'control_selector.field.name': '确定',
+        'control_selector.field.text': '确定',
+        'control_selector.field.content_description': '',
+        'control_selector.field.automation_id': 'confirm-button',
+        'control_selector.field.class_name': 'Button',
+        'control_selector.field.control_type': 'button',
+        'control_selector.field.index': 2,
+        'control_selector.field.rect': {
+            'kind': 'rect', 'x': 10, 'y': 20, 'width': 100, 'height': 40,
+        },
+        'control_selector.field.ancestor_path': [{
+            'name': '设置', 'automation_id': '',
+            'class_name': 'Window', 'control_type': 'window',
+        }],
+    }
+
+
 def test_build_control_params_priority():
     assert capture_mode.build_control_params({'name': '确定'}) == {'by': 'uia_name', 'target': '确定'}
     assert capture_mode.build_control_params({'control_type': 'button'}) == {'by': 'uia_type', 'target': 'button'}
@@ -235,6 +271,23 @@ def test_recording_escape_registration_and_release_are_confirmed(monkeypatch):
     assert capture_mode.set_recording_escape_enabled(True)['ok'] is True
     released = capture_mode.set_recording_escape_enabled(False)
     assert released == {'ok': True, 'message': '录制 Esc 已释放'}
+
+
+def test_ensure_hotkey_thread_waits_until_dynamic_registration_can_be_delivered(monkeypatch):
+    class FakeHotkeyWindow:
+        def __init__(self, *, player_only=False):
+            self._hwnd = None
+            self.player_only = player_only
+
+        def run(self):
+            time.sleep(0.03)
+            self._hwnd = 12345
+
+    monkeypatch.setattr(capture_mode, '_HotkeyWindow', FakeHotkeyWindow)
+
+    assert capture_mode.ensure_hotkey_thread(player_only=True, ready_timeout=0.5) is True
+    assert capture_mode._hotkey_window.player_only is True
+    assert capture_mode._hotkey_window._hwnd == 12345
 
 
 def test_hotkey_register_multiple(monkeypatch):

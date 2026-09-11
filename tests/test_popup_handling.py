@@ -181,7 +181,6 @@ def test_check_popups_closes_and_recovers(monkeypatch):
     calls = {'n': 0}
 
     def fake_execute(page_node, ctx):
-        from core.node_executors.base.page_state import PageStateNodeExecutor
         # 只有弹窗页 C 命中，且只命中前 2 次
         if (page_node.params or {}).get('page_id') == 'pageC':
             calls['n'] += 1
@@ -280,7 +279,6 @@ def test_layered_evaluation_orders_neighbors_first(monkeypatch):
     ex._step_screen = 'FAKE_SCREEN'
 
     evaluated = []
-    from core.node_executors.base.page_state import PageStateNodeExecutor
     def fake_execute(page_node, ctx):
         evaluated.append((page_node.params or {}).get('page_id'))
         return {'success': False}

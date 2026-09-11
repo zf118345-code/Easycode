@@ -109,8 +109,9 @@ def test_ide_project_authoring_delivery_and_runtime_roundtrip(client, tmp_path):
     assert exported.status_code == 200, exported.text
     assert '.ecf' in exported.headers['content-disposition'].lower()
 
-    # Capability/runtime panels and history dialog have live backend surfaces.
-    assert client.get('/api/capabilities', headers=headers).status_code == 200
+    # The legacy capability editor was retired in favor of signed vNext
+    # extensions; keeping a dead frontend entry would be a false promise.
+    assert client.get('/api/capabilities', headers=headers).status_code == 404
     overview = client.get('/api/platform/overview', headers=headers)
     assert overview.status_code == 200, overview.text
     history = client.get('/api/history', headers=headers, params={'project_path': str(project)})

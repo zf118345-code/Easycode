@@ -3,6 +3,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Body, Header, HTTPException
 from fastapi.concurrency import run_in_threadpool
 
+from api.contracts.workspace import (
+    FileDialogRequest,
+    FolderDialogRequest,
+    ProjectWorkspaceOpenRequest,
+    ProjectWorkspacePathRequest,
+    ProjectWorkspaceRepairRequest,
+)
 from core.services.project_workspace_service import ProjectWorkspaceManager, WorkspaceError
 
 
@@ -49,22 +56,22 @@ def create_project_workspace_router(manager: ProjectWorkspaceManager):
             translate(exc)
 
     @router.post('/inspect')
-    async def inspect_project(data: dict = Body(...)):
+    async def inspect_project(payload: ProjectWorkspacePathRequest):
         try:
-            return await run_in_threadpool(manager.inspect, str(data.get('path') or ''))
+            return await run_in_threadpool(manager.inspect, payload.path)
         except WorkspaceError as exc:
             translate(exc)
 
     @router.post('/open')
-    async def open_project(data: dict = Body(...)):
+    async def open_project(payload: ProjectWorkspaceOpenRequest):
         try:
             result = await run_in_threadpool(
                 manager.open,
-                str(data.get('path') or ''),
-                initialize=bool(data.get('initialize', False)),
-                confirm_nonempty=bool(data.get('confirm_nonempty', False)),
-                project_name=str(data.get('project_name') or ''),
-                allow_read_only=bool(data.get('allow_read_only', True)),
+                payload.path,
+                initialize=payload.initialize,
+                confirm_nonempty=payload.confirm_nonempty,
+                project_name=payload.project_name,
+                allow_read_only=payload.allow_read_only,
             )
             workspace = result.get('workspace') or {}
             if workspace and not workspace.get('read_only'):
@@ -78,12 +85,12 @@ def create_project_workspace_router(manager: ProjectWorkspaceManager):
             translate(exc)
 
     @router.post('/repair')
-    async def repair_project(data: dict = Body(...)):
+    async def repair_project(payload: ProjectWorkspaceRepairRequest):
         try:
             return await run_in_threadpool(
                 manager.repair,
-                str(data.get('path') or ''),
-                confirmed=bool(data.get('confirmed', False)),
+                payload.path,
+                confirmed=payload.confirmed,
             )
         except WorkspaceError as exc:
             translate(exc)
@@ -96,27 +103,23 @@ def create_project_workspace_router(manager: ProjectWorkspaceManager):
             translate(exc)
 
     @router.delete('/recent')
-    async def remove_recent(data: dict = Body(...)):
+    async def remove_recent(payload: ProjectWorkspacePathRequest):
         try:
-            return {'projects': await run_in_threadpool(manager.remove_recent, str(data.get('path') or ''))}
+            return {'projects': await run_in_threadpool(manager.remove_recent, payload.path)}
         except WorkspaceError as exc:
             translate(exc)
 
     @router.post('/choose-folder')
-    async def choose_folder(data: dict | None = Body(default=None)):
+    async def choose_folder(payload: FolderDialogRequest = Body(default_factory=FolderDialogRequest)):
         try:
-            title = str((data or {}).get('title') or '选择 EasyCode 项目文件夹')
-            return {'path': await run_in_threadpool(manager.choose_folder, title)}
+            return {'path': await run_in_threadpool(manager.choose_folder, payload.title)}
         except WorkspaceError as exc:
             translate(exc)
 
     @router.post('/choose-file')
-    async def choose_file(data: dict | None = Body(default=None)):
+    async def choose_file(payload: FileDialogRequest = Body(default_factory=FileDialogRequest)):
         try:
-            payload = data or {}
-            title = str(payload.get('title') or '选择文件')
-            extensions = [str(item) for item in (payload.get('extensions') or [])]
-            return {'path': await run_in_threadpool(manager.choose_file, title, extensions)}
+            return {'path': await run_in_threadpool(manager.choose_file, payload.title, payload.extensions)}
         except WorkspaceError as exc:
             translate(exc)
 

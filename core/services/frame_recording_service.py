@@ -6,8 +6,9 @@
 
 from __future__ import annotations
 
-import json
+import contextlib
 import hashlib
+import json
 import logging
 import os
 import queue
@@ -15,6 +16,7 @@ import shutil
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
@@ -48,6 +50,8 @@ class FrameRecordingService:
         self._finishing = False
         self._previous_signature = None
         self._pending_event: dict[str, Any] | None = None
+        self._capture_provider: Callable[[], Any] | None = None
+        self._capture_release: Callable[[], None] | None = None
         self._state = self._empty_state()
         self._subscribers: list[queue.Queue] = []
 
@@ -95,6 +99,10 @@ class FrameRecordingService:
         state.pop('_started_monotonic', None)
         return state
 
+    def uses_capture_provider(self, provider: Callable[[], Any]) -> bool:
+        with self._lock:
+            return self._capture_provider is provider
+
     def subscribe(self) -> queue.Queue:
         subscriber = queue.Queue()
         with self._lock:
@@ -129,10 +137,8 @@ class FrameRecordingService:
         with self._lock:
             subscribers = list(self._subscribers)
         for subscriber in subscribers:
-            try:
+            with contextlib.suppress(Exception):
                 subscriber.put_nowait(payload)
-            except Exception:
-                pass
 
     @staticmethod
     def _load_context(project_path: str) -> dict[str, Any]:
@@ -195,10 +201,8 @@ class FrameRecordingService:
             raise FrameRecordingError(f'无法激活工作面板窗口: {exc}') from exc
         finally:
             for first, second in reversed(attached):
-                try:
+                with contextlib.suppress(Exception):
                     win32process.AttachThreadInput(first, second, False)
-                except Exception:
-                    pass
 
         deadline = time.monotonic() + 0.5
         while time.monotonic() < deadline:
@@ -297,7 +301,16 @@ class FrameRecordingService:
             'max_session_bytes': max_session_bytes,
         }
 
-    def start(self, project_path: str, options: dict[str, Any] | None = None) -> dict[str, Any]:
+    def start(
+        self,
+        project_path: str,
+        options: dict[str, Any] | None = None,
+        *,
+        capture_provider: Callable[[], Any] | None = None,
+        capture_release: Callable[[], None] | None = None,
+        target_title: str = '',
+        capture_backend: str = '',
+    ) -> dict[str, Any]:
         """启动录制；返回前已保存首帧，避免菜单点击后存在无保护空窗。"""
         try:
             from core.services.capture_session_service import capture_session_service
@@ -318,7 +331,7 @@ class FrameRecordingService:
             project_path = os.path.abspath(str(project_path or '').strip())
             if not project_path or not os.path.isdir(project_path):
                 raise FrameRecordingError('项目路径不存在，无法开始逐帧录制')
-            context = self._load_context(project_path)
+            context = {} if capture_provider is not None else self._load_context(project_path)
             normalized_options = self._normalize_options(options)
             session_id = f'frame_recording_{datetime.now():%Y%m%d_%H%M%S_%f}_{uuid.uuid4().hex[:6]}'
             recordings_root = assert_safe_path(project_path, os.path.join(project_path, 'recordings'))
@@ -337,6 +350,8 @@ class FrameRecordingService:
                 self._writer_error = None
                 self._previous_signature = None
                 self._pending_event = None
+                self._capture_provider = capture_provider
+                self._capture_release = capture_release
                 self._state = {
                     **self._empty_state(),
                     'active': True,
@@ -345,7 +360,7 @@ class FrameRecordingService:
                     'session_id': session_id,
                     'output_dir': output_dir,
                     'started_at': started_at,
-                    'target_title': str(context.get('window_title') or 'Windows 桌面'),
+                    'target_title': str(target_title or context.get('window_title') or 'Windows 桌面'),
                     'capture_backend': 'pending',
                     'queue_capacity': normalized_options['queue_capacity'],
                     'target_fps': normalized_options['target_fps'],
@@ -362,7 +377,10 @@ class FrameRecordingService:
                 escape = self._enable_escape()
                 if not escape.get('ok'):
                     raise FrameRecordingError(f'无法优先接管 Esc，已阻止录制: {escape.get("message", "未知错误")}')
-                _, backend = self._activate_target(context)
+                if capture_provider is None:
+                    _, backend = self._activate_target(context)
+                else:
+                    backend = str(capture_backend or 'vnext_target')
                 with self._lock:
                     self._state['status'] = 'recording'
                     self._state['capture_backend'] = backend
@@ -404,6 +422,7 @@ class FrameRecordingService:
             off_left = int(context.get('offset_left', 0) or 0)
             if work_mode == 'window' and context.get('window_title'):
                 import win32gui
+
                 from core.services.workspace_service import WorkspaceService
 
                 hwnd = WorkspaceService._resolve_context_window(context)
@@ -419,7 +438,9 @@ class FrameRecordingService:
     def _capture_packet(self) -> dict[str, Any]:
         with self._lock:
             context = dict(self._context)
-        image = self._capture_image(context).convert('RGB')
+            capture_provider = self._capture_provider
+        source = capture_provider() if capture_provider is not None else self._capture_image(context)
+        image = source.convert('RGB')
         signature = np.asarray(image.convert('L').resize((64, 36)), dtype=np.float32)
         with self._lock:
             frame_index = int(self._state['capture_count']) + 1
@@ -474,15 +495,14 @@ class FrameRecordingService:
         if packet.get('event'):
             record['event'] = dict(packet['event'])
         owns_index = index_file is None
-        if owns_index:
-            index_file = open(os.path.join(output_dir, 'frames.jsonl'), 'a', encoding='utf-8', buffering=1)
-        try:
-            index_file.write(json.dumps(record, ensure_ascii=False) + '\n')
+        with contextlib.ExitStack() as stack:
+            output_index = (
+                stack.enter_context(open(os.path.join(output_dir, 'frames.jsonl'), 'a', encoding='utf-8', buffering=1))
+                if owns_index else index_file
+            )
+            output_index.write(json.dumps(record, ensure_ascii=False) + '\n')
             if owns_index:
-                index_file.flush()
-        finally:
-            if owns_index:
-                index_file.close()
+                output_index.flush()
         with self._lock:
             self._state['frame_count'] = frame_index
             self._state['last_capture_at'] = record['captured_at']
@@ -697,7 +717,15 @@ class FrameRecordingService:
             self._thread = None
             self._writer_thread = None
             self._stop_event = None
+            release = self._capture_release
+            self._capture_release = None
+            self._capture_provider = None
         self._disable_escape()
+        if release is not None:
+            try:
+                release()
+            except Exception:
+                logger.exception('释放vNext录制目标失败')
         try:
             self._write_manifest(final=True)
         except Exception:

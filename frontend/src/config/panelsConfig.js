@@ -1,6 +1,6 @@
 // frontend/src/config/panelsConfig.js
 import { defineAsyncComponent } from 'vue'
-import { FolderTree, Braces, Map, Images, Boxes, Binary, ServerCog, Sliders, Terminal, Bug } from 'lucide-vue-next'
+import { FolderTree, Braces, Map, Images, Binary, ServerCog, Sliders, Terminal, Bug } from 'lucide-vue-next'
 
 export const leftPanelsConfig = [
     {
@@ -30,13 +30,6 @@ export const leftPanelsConfig = [
         group: 'assets',
         icon: Images,
         component: defineAsyncComponent(() => import('@/components/panels/ResourceLibraryPanel.vue'))
-    },
-    {
-        id: 'capabilities',
-        title: '能力库',
-        group: 'assets',
-        icon: Boxes,
-        component: defineAsyncComponent(() => import('@/components/panels/CapabilityLibraryPanel.vue'))
     },
     {
         id: 'variables',

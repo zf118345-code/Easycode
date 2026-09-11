@@ -377,7 +377,7 @@ position="right"
         try {
             await frameRecordingApi.mark('IDE 手动标记')
             ElMessage.success('已标记，下一帧将强制保留')
-        } catch (error) {
+        } catch {
             ElMessage.error(error?.message || '标记录制帧失败')
         }
     }
@@ -641,7 +641,7 @@ position="right"
                     ElMessage.success('已保留编辑器版本并写回磁盘')
                 }
             }
-        } catch (error) {
+        } catch {
             // Polling failures must not interrupt editing; normal API actions
             // still surface authoritative workspace errors.
         } finally {

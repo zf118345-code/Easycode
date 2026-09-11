@@ -7,8 +7,15 @@ from fastapi import APIRouter, Body, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response, StreamingResponse
 
-from core.schemas import ContextSaveRequestSchema, CropScreenshotRequestSchema
+from api.contracts.operations import (
+    AdbResolveRequest,
+    FrameRecordingMarkRequest,
+    FrameRecordingStartRequest,
+    FrameRecordingStopRequest,
+    ProjectSettingsRequest,
+)
 from api.workspace_context import assert_matching_legacy_path
+from core.schemas import ContextSaveRequestSchema, CropScreenshotRequestSchema
 
 logger = logging.getLogger(__name__)
 
@@ -47,24 +54,22 @@ def create_workspace_router(workspace_service, recording_service=None):
 
     # 逐帧录制：按保存策略筛选；落盘帧均无损、不覆盖且不自动清理。
     @router.post('/api/frame-recording/start')
-    async def start_frame_recording(request: Request, data: dict = Body(...)):
+    async def start_frame_recording(request: Request, payload: FrameRecordingStartRequest):
         if recording_service is None:
             _service_unavailable('FrameRecordingService')
         try:
-            path = assert_matching_legacy_path(request, data.get('project_path'), writable=True)
-            options = data.get('options') if isinstance(data.get('options'), dict) else None
-            if options:
-                return await run_in_threadpool(recording_service.start, path, options)
+            path = assert_matching_legacy_path(request, payload.project_path, writable=True)
+            if payload.options is not None:
+                return await run_in_threadpool(recording_service.start, path, payload.options.model_dump())
             return await run_in_threadpool(recording_service.start, path)
         except Exception as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
     @router.post('/api/frame-recording/stop')
-    async def stop_frame_recording(data: dict | None = Body(default=None)):
+    async def stop_frame_recording(payload: FrameRecordingStopRequest | None = Body(default=None)):
         if recording_service is None:
             _service_unavailable('FrameRecordingService')
-        data = data or {}
-        return await run_in_threadpool(recording_service.stop, data.get('reason', 'api'))
+        return await run_in_threadpool(recording_service.stop, payload.reason if payload else 'api')
 
     @router.get('/api/frame-recording/status')
     async def get_frame_recording_status():
@@ -73,12 +78,11 @@ def create_workspace_router(workspace_service, recording_service=None):
         return recording_service.get_state()
 
     @router.post('/api/frame-recording/mark')
-    async def mark_frame_recording_event(data: dict | None = Body(default=None)):
+    async def mark_frame_recording_event(payload: FrameRecordingMarkRequest | None = Body(default=None)):
         if recording_service is None:
             _service_unavailable('FrameRecordingService')
-        data = data or {}
         try:
-            return recording_service.mark_event(str(data.get('label') or '手动标记'))
+            return recording_service.mark_event(payload.label if payload else '手动标记')
         except Exception as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
 
@@ -121,32 +125,25 @@ def create_workspace_router(workspace_service, recording_service=None):
         return Response(content=content, media_type='image/png', headers={'Cache-Control': 'private, max-age=3600'})
 
     @router.post('/api/frame-recording/analyze')
-    async def analyze_recorded_frame(request: Request, data: dict = Body(...)):
-        from core.services.recording_replay_service import recording_replay_service
-
-        path = assert_matching_legacy_path(request, data.get('project_path'))
-        return await run_in_threadpool(
-            recording_replay_service.analyze_frame,
-            path,
-            str(data.get('session_id') or ''),
-            int(data.get('frame_index') or 0),
-            diagnostics=bool(data.get('diagnostics')),
+    async def analyze_recorded_frame_retired():
+        raise HTTPException(
+            status_code=410,
+            detail={
+                'code': 'topology_replay_retired',
+                'message': '旧页面拓扑回放已退役，请使用格式 6 ProgramDocument 回放接口',
+                'recovery': {'action': 'use_vnext_replay'},
+            },
         )
 
     @router.post('/api/frame-recording/analyze-session')
-    async def analyze_recording_session(request: Request, data: dict = Body(...)):
-        from core.services.recording_replay_service import recording_replay_service
-
-        path = assert_matching_legacy_path(request, data.get('project_path'))
-        return await run_in_threadpool(
-            recording_replay_service.analyze_session,
-            path,
-            str(data.get('session_id') or ''),
-            diagnostics=bool(data.get('diagnostics')),
-            changes_only=bool(data.get('changes_only')),
-            change_threshold=float(data.get('change_threshold') or 0.006),
-            step=int(data.get('step') or 1),
-            max_frames=int(data.get('max_frames') or 10000),
+    async def analyze_recording_session_retired():
+        raise HTTPException(
+            status_code=410,
+            detail={
+                'code': 'topology_replay_retired',
+                'message': '旧页面拓扑回放已退役，请使用格式 6 ProgramDocument 回放接口',
+                'recovery': {'action': 'use_vnext_replay'},
+            },
         )
 
     @router.get('/api/frame-recording/events')
@@ -179,14 +176,14 @@ def create_workspace_router(workspace_service, recording_service=None):
         return await run_in_threadpool(workspace_service.get_windows)
 
     @router.post('/api/adb/resolve')
-    async def resolve_adb_device(data: dict = Body(...)):
+    async def resolve_adb_device(payload: AdbResolveRequest):
         if workspace_service is None:
             _service_unavailable('WorkspaceService')
         return await run_in_threadpool(
             workspace_service.resolve_adb_device,
-            data.get('window_title', ''),
-            int(data.get('window_hwnd', 0) or 0),
-            int(data.get('process_id', 0) or 0),
+            payload.window_title,
+            payload.window_hwnd,
+            payload.process_id,
         )
 
     @router.get('/api/adb/devices')
@@ -220,13 +217,13 @@ def create_workspace_router(workspace_service, recording_service=None):
         return {'status': 'success', 'settings': settings, 'groups': SETTINGS_GROUPS}
 
     @router.put('/api/project/settings')
-    async def save_project_settings(request: Request, data: dict = Body(...)):
+    async def save_project_settings(request: Request, payload: ProjectSettingsRequest):
         from core.services.blueprint_service import BlueprintService
         from core.settings import merge_settings
 
-        project_path = assert_matching_legacy_path(request, data.get('project_path'), writable=True)
+        project_path = assert_matching_legacy_path(request, payload.project_path, writable=True)
         raw = BlueprintService.load_project_meta(project_path) or {}
-        raw['settings'] = merge_settings(data.get('settings'))
+        raw['settings'] = merge_settings(payload.settings)
         BlueprintService.save_project_meta(project_path, raw)
         return {'status': 'success', 'settings': raw['settings']}
 

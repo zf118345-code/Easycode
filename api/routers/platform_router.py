@@ -6,6 +6,19 @@ import secrets
 from fastapi import APIRouter, Body, Header, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
+from api.contracts.platform import (
+    LeaseAcquireRequest,
+    LeaseMutationRequest,
+    MessageAckRequest,
+    MessageClaimRequest,
+    MessagePublishRequest,
+    RemoteLeaseAcquireRequest,
+    RemoteLeaseMutationRequest,
+    RemoteMessageAckRequest,
+    RemoteMessageClaimRequest,
+    RemoteMessagePublishRequest,
+    ScheduleSaveRequest,
+)
 from api.workspace_context import request_project_path
 from core.services.platform_runtime_service import platform_runtime_service
 
@@ -55,17 +68,17 @@ def create_platform_router():
         return {'schedules': await run_in_threadpool(_local_store(request, scope).list_schedules)}
 
     @router.post('/api/platform/schedules')
-    async def save_schedule(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def save_schedule(request: Request, payload: ScheduleSaveRequest, scope: str = 'ide'):
         store = _local_store(request, scope)
         try:
             return await run_in_threadpool(
                 lambda: store.save_schedule(
-                    payload.get('name') or '未命名计划',
-                    payload.get('schedule_type') or 'daily',
-                    payload.get('schedule_value') or '00:00',
-                    payload.get('payload') or {},
-                    enabled=bool(payload.get('enabled', True)),
-                    schedule_id=payload.get('id'),
+                    payload.name,
+                    payload.schedule_type,
+                    payload.schedule_value,
+                    payload.payload,
+                    enabled=payload.enabled,
+                    schedule_id=payload.id or None,
                 )
             )
         except (TypeError, ValueError) as exc:
@@ -76,13 +89,13 @@ def create_platform_router():
         return {'deleted': await run_in_threadpool(_local_store(request, scope).delete_schedule, schedule_id)}
 
     @router.post('/api/platform/messages')
-    async def local_publish(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def local_publish(request: Request, payload: MessagePublishRequest, scope: str = 'ide'):
         store = _local_store(request, scope)
         return await run_in_threadpool(
             lambda: store.publish_message(
-                payload.get('channel') or 'default', payload.get('payload'),
-                sender=payload.get('sender') or '', ttl_seconds=int(payload.get('ttl_seconds') or 86400),
-                message_id=payload.get('id'),
+                payload.channel, payload.payload,
+                sender=payload.sender, ttl_seconds=payload.ttl_seconds,
+                message_id=payload.id,
             )
         )
 
@@ -91,25 +104,25 @@ def create_platform_router():
         return {'messages': await run_in_threadpool(_local_store(request, scope).list_messages, channel, limit)}
 
     @router.post('/api/platform/messages/claim')
-    async def local_claim(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def local_claim(request: Request, payload: MessageClaimRequest, scope: str = 'ide'):
         store = _local_store(request, scope)
         messages = await run_in_threadpool(
             lambda: store.claim_messages(
-                payload.get('channel') or 'default', payload.get('consumer') or 'default',
-                limit=int(payload.get('limit') or 20), lease_seconds=int(payload.get('lease_seconds') or 30),
+                payload.channel, payload.consumer,
+                limit=payload.limit, lease_seconds=payload.lease_seconds,
             )
         )
         return {'messages': messages}
 
     @router.post('/api/platform/messages/{message_id}/ack')
-    async def local_ack(message_id: str, request: Request, payload: dict = Body(...), scope: str = 'ide'):
-        return {'acked': await run_in_threadpool(_local_store(request, scope).ack_message, message_id, payload.get('consumer') or 'default')}
+    async def local_ack(message_id: str, request: Request, payload: MessageAckRequest, scope: str = 'ide'):
+        return {'acked': await run_in_threadpool(_local_store(request, scope).ack_message, message_id, payload.consumer)}
 
     @router.post('/api/platform/leases/acquire')
-    async def local_acquire(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def local_acquire(request: Request, payload: LeaseAcquireRequest, scope: str = 'ide'):
         lease = await run_in_threadpool(
             _local_store(request, scope).acquire_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', int(payload.get('ttl_seconds') or 30),
+            payload.resource_key, payload.owner, payload.ttl_seconds,
         )
         if lease is None:
             raise HTTPException(status_code=409, detail='资源正被其他实例占用')
@@ -120,57 +133,57 @@ def create_platform_router():
         return {'leases': await run_in_threadpool(_local_store(request, scope).list_leases)}
 
     @router.post('/api/platform/leases/release')
-    async def local_release(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def local_release(request: Request, payload: LeaseMutationRequest, scope: str = 'ide'):
         released = await run_in_threadpool(
             _local_store(request, scope).release_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', payload.get('token') or '',
+            payload.resource_key, payload.owner, payload.token,
         )
         return {'released': released}
 
     @router.post('/api/platform/leases/renew')
-    async def local_renew(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def local_renew(request: Request, payload: LeaseMutationRequest, scope: str = 'ide'):
         renewed = await run_in_threadpool(
             _local_store(request, scope).renew_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', payload.get('token') or '',
-            int(payload.get('ttl_seconds') or 30),
+            payload.resource_key, payload.owner, payload.token,
+            payload.ttl_seconds,
         )
         return {'renewed': renewed}
 
     @router.post('/api/platform/remote/messages')
-    async def remote_publish(request: Request, payload: dict = Body(...), scope: str = 'ide'):
+    async def remote_publish(request: Request, payload: RemoteMessagePublishRequest, scope: str = 'ide'):
         store = _local_store(request, scope)
         return await run_in_threadpool(
             lambda: platform_runtime_service.send_remote_message(
-                store, payload.get('endpoint') or '', payload.get('token') or '',
-                payload.get('channel') or 'default', payload.get('payload'),
-                sender=payload.get('sender') or '', ttl_seconds=int(payload.get('ttl_seconds') or 86400),
+                store, payload.endpoint, payload.token,
+                payload.channel, payload.payload,
+                sender=payload.sender, ttl_seconds=payload.ttl_seconds,
             )
         )
 
     @router.post('/api/platform/remote/messages/claim')
-    async def remote_claim_messages(payload: dict = Body(...)):
+    async def remote_claim_messages(payload: RemoteMessageClaimRequest):
         messages = await run_in_threadpool(
             lambda: platform_runtime_service.claim_remote_messages(
-                payload.get('endpoint') or '', payload.get('token') or '', payload.get('channel') or 'default',
-                payload.get('consumer') or 'default', limit=int(payload.get('limit') or 20),
-                lease_seconds=int(payload.get('lease_seconds') or 30),
+                payload.endpoint, payload.token, payload.channel,
+                payload.consumer, limit=payload.limit,
+                lease_seconds=payload.lease_seconds,
             )
         )
         return {'messages': messages}
 
     @router.post('/api/platform/remote/messages/{message_id}/ack')
-    async def remote_ack_message(message_id: str, payload: dict = Body(...)):
+    async def remote_ack_message(message_id: str, payload: RemoteMessageAckRequest):
         return {'acked': await run_in_threadpool(
             platform_runtime_service.ack_remote_message,
-            payload.get('endpoint') or '', payload.get('token') or '', message_id, payload.get('consumer') or 'default',
+            payload.endpoint, payload.token, message_id, payload.consumer,
         )}
 
     @router.post('/api/platform/remote/leases/acquire')
-    async def remote_acquire_lease(payload: dict = Body(...)):
+    async def remote_acquire_lease(payload: RemoteLeaseAcquireRequest):
         lease = await run_in_threadpool(
             lambda: platform_runtime_service.acquire_remote_lease(
-                payload.get('endpoint') or '', payload.get('token') or '', payload.get('resource_key') or '',
-                payload.get('owner') or '', ttl_seconds=int(payload.get('ttl_seconds') or 30),
+                payload.endpoint, payload.token, payload.resource_key,
+                payload.owner, ttl_seconds=payload.ttl_seconds,
             )
         )
         if lease is None:
@@ -178,20 +191,20 @@ def create_platform_router():
         return lease
 
     @router.post('/api/platform/remote/leases/renew')
-    async def remote_renew_lease(payload: dict = Body(...)):
+    async def remote_renew_lease(payload: RemoteLeaseMutationRequest):
         return {'renewed': await run_in_threadpool(
             lambda: platform_runtime_service.renew_remote_lease(
-                payload.get('endpoint') or '', payload.get('token') or '', payload.get('resource_key') or '',
-                payload.get('owner') or '', payload.get('lease_token') or '', ttl_seconds=int(payload.get('ttl_seconds') or 30),
+                payload.endpoint, payload.token, payload.resource_key,
+                payload.owner, payload.lease_token, ttl_seconds=payload.ttl_seconds,
             )
         )}
 
     @router.post('/api/platform/remote/leases/release')
-    async def remote_release_lease(payload: dict = Body(...)):
+    async def remote_release_lease(payload: RemoteLeaseMutationRequest):
         return {'released': await run_in_threadpool(
             platform_runtime_service.release_remote_lease,
-            payload.get('endpoint') or '', payload.get('token') or '', payload.get('resource_key') or '',
-            payload.get('owner') or '', payload.get('lease_token') or '',
+            payload.endpoint, payload.token, payload.resource_key,
+            payload.owner, payload.lease_token,
         )}
 
     @router.get('/api/platform/outbox')
@@ -201,60 +214,83 @@ def create_platform_router():
     # Coordinator endpoints are safe to expose on a LAN only when a secret is
     # configured.  They deliberately do not accept workspace headers/paths.
     @router.post('/api/platform/coord/messages')
-    async def coord_publish(payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_publish(
+        payload: MessagePublishRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
         store = platform_runtime_service.coordinator_store()
         return await run_in_threadpool(
             lambda: store.publish_message(
-                payload.get('channel') or 'default', payload.get('payload'),
-                sender=payload.get('sender') or '', ttl_seconds=int(payload.get('ttl_seconds') or 86400),
-                message_id=payload.get('id'),
+                payload.channel, payload.payload,
+                sender=payload.sender, ttl_seconds=payload.ttl_seconds,
+                message_id=payload.id,
             )
         )
 
     @router.post('/api/platform/coord/messages/claim')
-    async def coord_claim(payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_claim(
+        payload: MessageClaimRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
         messages = await run_in_threadpool(
             lambda: platform_runtime_service.coordinator_store().claim_messages(
-                payload.get('channel') or 'default', payload.get('consumer') or 'default',
-                limit=int(payload.get('limit') or 20), lease_seconds=int(payload.get('lease_seconds') or 30),
+                payload.channel, payload.consumer,
+                limit=payload.limit, lease_seconds=payload.lease_seconds,
             )
         )
         return {'messages': messages}
 
     @router.post('/api/platform/coord/messages/{message_id}/ack')
-    async def coord_ack(message_id: str, payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_ack(
+        message_id: str,
+        payload: MessageAckRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
-        acked = await run_in_threadpool(platform_runtime_service.coordinator_store().ack_message, message_id, payload.get('consumer') or 'default')
+        acked = await run_in_threadpool(
+            platform_runtime_service.coordinator_store().ack_message,
+            message_id,
+            payload.consumer,
+        )
         return {'acked': acked}
 
     @router.post('/api/platform/coord/leases/acquire')
-    async def coord_acquire(payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_acquire(
+        payload: LeaseAcquireRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
         lease = await run_in_threadpool(
             platform_runtime_service.coordinator_store().acquire_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', int(payload.get('ttl_seconds') or 30),
+            payload.resource_key, payload.owner, payload.ttl_seconds,
         )
         if lease is None:
             raise HTTPException(status_code=409, detail='资源正被其他实例占用')
         return lease
 
     @router.post('/api/platform/coord/leases/release')
-    async def coord_release(payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_release(
+        payload: LeaseMutationRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
         return {'released': await run_in_threadpool(
             platform_runtime_service.coordinator_store().release_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', payload.get('token') or '',
+            payload.resource_key, payload.owner, payload.token,
         )}
 
     @router.post('/api/platform/coord/leases/renew')
-    async def coord_renew(payload: dict = Body(...), x_easycode_token: str | None = Header(default=None)):
+    async def coord_renew(
+        payload: LeaseMutationRequest,
+        x_easycode_token: str | None = Header(default=None),
+    ):
         _require_coordinator_token(x_easycode_token)
         return {'renewed': await run_in_threadpool(
             platform_runtime_service.coordinator_store().renew_lease,
-            payload.get('resource_key') or '', payload.get('owner') or '', payload.get('token') or '',
-            int(payload.get('ttl_seconds') or 30),
+            payload.resource_key, payload.owner, payload.token,
+            payload.ttl_seconds,
         )}
 
     return router

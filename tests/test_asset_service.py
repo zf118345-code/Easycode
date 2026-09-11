@@ -12,7 +12,7 @@ from core.player.loader import PlayerAssetLoader
 
 
 def test_asset_registry_uses_stable_ids_and_purpose_directories(tmp_path):
-    root = AssetService.ensure_structure(str(tmp_path))
+    AssetService.ensure_structure(str(tmp_path))
     for name in ('image', 'ocr', 'page'):
         assert (tmp_path / 'templates' / name).is_dir()
     assert not (tmp_path / 'templates' / 'shared').exists()

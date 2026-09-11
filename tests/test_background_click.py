@@ -148,8 +148,10 @@ def test_background_input_service_coords(monkeypatch):
     import core.services.background_input as bg
 
     posts = []
+    sleeps = []
     monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (5, 6)))
-    monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append((h, m, w, l)))
+    monkeypatch.setattr(bg, '_send_mouse_message', lambda h, m, w, l: posts.append((h, m, w, l)) or True)
+    monkeypatch.setattr(bg.time, 'sleep', lambda seconds: sleeps.append(seconds))
 
     result = bg.background_click(42, 100, 100)
     assert result['ok'] is True
@@ -162,6 +164,7 @@ def test_background_input_service_coords(monkeypatch):
     assert posts[1][3] == (6 << 16) | 5  # 客户区 (5,6)：低位 x，高位 y
     assert posts[2][1] == win32con.WM_LBUTTONUP
     assert posts[2][3] == (6 << 16) | 5
+    assert sleeps == [bg._DEFAULT_CLICK_PRESS_SECONDS]
 
 
 def test_background_double_click_sends_two_pairs(monkeypatch):
@@ -169,8 +172,10 @@ def test_background_double_click_sends_two_pairs(monkeypatch):
     import core.services.background_input as bg
 
     posts = []
+    sleeps = []
     monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (0, 0)))
-    monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append(m))
+    monkeypatch.setattr(bg, '_send_mouse_message', lambda h, m, w, l: posts.append(m) or True)
+    monkeypatch.setattr(bg.time, 'sleep', lambda seconds: sleeps.append(seconds))
 
     result = bg.background_double_click(9, 10, 10)
     assert result['ok'] is True
@@ -181,6 +186,7 @@ def test_background_double_click_sends_two_pairs(monkeypatch):
     assert posts[3] == win32con.WM_MOUSEMOVE
     assert posts[4] == win32con.WM_LBUTTONDBLCLK  # ⚡ 第二次按下用 DBLCK（真双击语义）
     assert posts[5] == win32con.WM_LBUTTONUP
+    assert sleeps == [bg._DEFAULT_CLICK_PRESS_SECONDS, bg._DEFAULT_CLICK_PRESS_SECONDS]
 
 
 def test_background_input_no_hwnd_fails():
@@ -191,6 +197,50 @@ def test_background_input_no_hwnd_fails():
     assert '窗口句柄' in result['message']
 
 
+def test_background_horizontal_scroll_uses_mouse_hwheel(monkeypatch):
+    import core.services.background_input as bg
+
+    posts = []
+    monkeypatch.setattr(bg, '_message_target_at_point', lambda *_args: (52, (8, 9)))
+    monkeypatch.setattr(
+        bg,
+        '_send_mouse_message',
+        lambda hwnd, message, wparam, lparam: posts.append(
+            (hwnd, message, wparam, lparam)
+        ) or True,
+    )
+
+    result = bg.background_scroll(42, 100, 200, -3, horizontal=True)
+
+    assert result['ok'] is True
+    assert posts[0][0] == 52
+    assert posts[0][1] == getattr(bg.win32con, 'WM_MOUSEHWHEEL', 0x020E)
+    assert posts[0][2] == (((-3 * bg.win32con.WHEEL_DELTA) & 0xFFFF) << 16)
+    assert '水平' in result['message']
+
+
+def test_background_drag_uses_bounded_targeted_messages(monkeypatch):
+    import core.services.background_input as bg
+
+    messages = []
+    monkeypatch.setattr(bg, '_message_target_at_point', lambda *_args: (52, (1, 2)))
+    monkeypatch.setattr(bg.win32gui, 'ScreenToClient', lambda _hwnd, point: point)
+    monkeypatch.setattr(
+        bg,
+        '_send_mouse_message',
+        lambda hwnd, message, wparam, lparam: messages.append((hwnd, message, wparam, lparam)) or True,
+    )
+
+    result = bg.background_drag(42, (10, 20), (30, 40), duration_ms=0, steps=2)
+
+    assert result['ok'] is True
+    assert result['delivery'] == 'delivered_unverified'
+    assert all(item[0] == 52 for item in messages)
+    assert messages[0][1] == bg.win32con.WM_MOUSEMOVE
+    assert messages[1][1] == bg.win32con.WM_LBUTTONDOWN
+    assert messages[-1][1] == bg.win32con.WM_LBUTTONUP
+
+
 # ========== 4. 控件节点 / 图像识别点击 ==========
 
 def test_control_node_click_uses_background(monkeypatch):
@@ -199,7 +249,7 @@ def test_control_node_click_uses_background(monkeypatch):
 
     posts = []
     monkeypatch.setattr(bg, '_message_target_at_point', lambda h, x, y: (h, (3, 4)))
-    monkeypatch.setattr(bg.win32gui, 'PostMessage', lambda h, m, w, l: posts.append((h, m, w, l)))
+    monkeypatch.setattr(bg, '_send_mouse_message', lambda h, m, w, l: posts.append((h, m, w, l)) or True)
 
     from core.services.control_service import perform_action
 
@@ -291,7 +341,7 @@ def test_screenshot_service_falls_back_to_pyautogui(monkeypatch):
     assert img is not None
     assert calls == [None]
 
-    img2 = ss.capture(region=(10, 20, 110, 70))
+    ss.capture(region=(10, 20, 110, 70))
     assert calls[-1] == (10, 20, 100, 50)  # 转成 (left, top, w, h)
 
 

@@ -110,12 +110,37 @@ namespace Easycode.CaptureOverlay
         [DllImport("user32.dll")]
         internal static extern IntPtr SendMessage(IntPtr hwnd, int message, IntPtr wParam, IntPtr lParam);
 
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
+
+        [DllImport("dwmapi.dll")]
+        private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref uint value, int size);
+
         internal const int WM_NCLBUTTONDOWN = 0x00A1;
         internal const int HTCAPTION = 2;
+        private const int DWMWA_WINDOW_CORNER_PREFERENCE = 33;
+        private const int DWMWA_BORDER_COLOR = 34;
+        private const int DWMWCP_DONOTROUND = 1;
+        private const uint DWMWA_COLOR_NONE = 0xFFFFFFFE;
 
         internal static void EnablePerMonitorV2()
         {
             try { SetProcessDpiAwarenessContext(new IntPtr(-4)); }
+            catch { }
+        }
+
+        internal static void RemoveVisibleWindowFrame(Window window)
+        {
+            try
+            {
+                IntPtr hwnd = new WindowInteropHelper(window).Handle;
+                int cornerPreference = DWMWCP_DONOTROUND;
+                uint borderColor = DWMWA_COLOR_NONE;
+                DwmSetWindowAttribute(hwnd, DWMWA_WINDOW_CORNER_PREFERENCE,
+                    ref cornerPreference, sizeof(int));
+                DwmSetWindowAttribute(hwnd, DWMWA_BORDER_COLOR,
+                    ref borderColor, sizeof(uint));
+            }
             catch { }
         }
 
@@ -135,12 +160,16 @@ namespace Easycode.CaptureOverlay
         internal Dictionary<string, object> Raw;
         internal string Origin;
         internal string SnapshotPath;
+        internal string SnapshotTransport;
+        internal string SnapshotMapping;
+        internal int SnapshotStride;
         internal string SnapshotId;
         internal string SessionId;
         internal string ProjectPath;
         internal string ProjectName;
         internal string TargetName;
         internal string Backend;
+        internal string Presentation;
         internal int Width;
         internal int Height;
         internal int Left;
@@ -155,12 +184,16 @@ namespace Easycode.CaptureOverlay
             payload.Raw = data;
             payload.Origin = JsonUtil.String(data, "origin", "");
             payload.SnapshotPath = JsonUtil.String(data, "snapshot_path", "");
+            payload.SnapshotTransport = JsonUtil.String(data, "snapshot_transport", "png_file");
+            payload.SnapshotMapping = JsonUtil.String(data, "snapshot_mapping", "");
+            payload.SnapshotStride = Math.Max(0, JsonUtil.Int(data, "snapshot_stride", 0));
             payload.SnapshotId = JsonUtil.String(data, "snapshot_id", "");
             payload.SessionId = JsonUtil.String(data, "session_id", "");
             payload.ProjectPath = JsonUtil.String(data, "project_path", "");
             payload.ProjectName = JsonUtil.String(data, "project_name", "Easycode 项目");
             payload.TargetName = JsonUtil.String(data, "target_name", "");
             payload.Backend = JsonUtil.String(data, "backend", "");
+            payload.Presentation = JsonUtil.String(data, "presentation", "target_aligned");
             payload.Width = Math.Max(1, JsonUtil.Int(data, "width", 1));
             payload.Height = Math.Max(1, JsonUtil.Int(data, "height", 1));
             object[] region = JsonUtil.Array(data, "region");
@@ -172,6 +205,26 @@ namespace Easycode.CaptureOverlay
             if (payload.Right <= payload.Left || payload.Bottom <= payload.Top) throw new InvalidDataException("工作面板尺寸无效");
             payload.CaptureContext = JsonUtil.Object(data, "capture_context") ?? new Dictionary<string, object>();
             return payload;
+        }
+
+        internal void FitInside(System.Drawing.Rectangle workingArea)
+        {
+            // The toolbar floats over the frozen frame when necessary, so it
+            // must not permanently shrink every virtual target by a full row.
+            // Keep only a slim safety inset for the frame outline.
+            const int horizontalMargin = 6;
+            const int verticalMargin = 6;
+            int availableWidth = Math.Max(1, workingArea.Width - horizontalMargin * 2);
+            int availableHeight = Math.Max(1, workingArea.Height - verticalMargin * 2);
+            double scale = Math.Min(1.0, Math.Min(
+                availableWidth / (double)Math.Max(1, Width),
+                availableHeight / (double)Math.Max(1, Height)));
+            int displayWidth = Math.Max(1, (int)Math.Round(Width * scale));
+            int displayHeight = Math.Max(1, (int)Math.Round(Height * scale));
+            Left = workingArea.Left + (workingArea.Width - displayWidth) / 2;
+            Top = workingArea.Top + (workingArea.Height - displayHeight) / 2;
+            Right = Left + displayWidth;
+            Bottom = Top + displayHeight;
         }
     }
 
@@ -261,7 +314,10 @@ namespace Easycode.CaptureOverlay
                 else if (kind == "warm")
                 {
                     bool ready = await _resourceBrowser.PrewarmAsync(JsonUtil.String(command, "origin", ""));
-                    Reply(command, ready, ready ? "" : "资源管理器预热失败");
+                    Reply(command, ready, ready ? "" :
+                        (String.IsNullOrWhiteSpace(_resourceBrowser.LastFailureDetail)
+                            ? "资源管理器预热失败"
+                            : _resourceBrowser.LastFailureDetail));
                 }
                 else if (kind == "focus")
                 {
@@ -292,9 +348,17 @@ namespace Easycode.CaptureOverlay
         private void Show(CapturePayload payload)
         {
             Hide("", false);
-            if (!File.Exists(payload.SnapshotPath)) throw new FileNotFoundException("冻结帧文件不存在", payload.SnapshotPath);
-            Forms.Screen target = Forms.Screen.FromRectangle(new System.Drawing.Rectangle(
-                payload.Left, payload.Top, payload.Right - payload.Left, payload.Bottom - payload.Top));
+            bool shared = String.Equals(payload.SnapshotTransport, "shared_bgra", StringComparison.OrdinalIgnoreCase);
+            if (shared && String.IsNullOrWhiteSpace(payload.SnapshotMapping))
+                throw new InvalidDataException("冻结帧共享内存标识缺失");
+            if (!shared && !File.Exists(payload.SnapshotPath))
+                throw new FileNotFoundException("冻结帧文件不存在", payload.SnapshotPath);
+            bool centered = String.Equals(payload.Presentation, "centered_fit", StringComparison.OrdinalIgnoreCase);
+            Forms.Screen target = centered
+                ? Forms.Screen.FromPoint(Forms.Cursor.Position)
+                : Forms.Screen.FromRectangle(new System.Drawing.Rectangle(
+                    payload.Left, payload.Top, payload.Right - payload.Left, payload.Bottom - payload.Top));
+            if (centered) payload.FitInside(target.WorkingArea);
             if (!target.Bounds.Contains(new System.Drawing.Rectangle(
                 payload.Left, payload.Top, payload.Right - payload.Left, payload.Bottom - payload.Top)))
                 throw new InvalidOperationException("目标工作面板跨越了多个显示器，请将窗口完整移到一个显示器后重试");
@@ -380,6 +444,7 @@ namespace Easycode.CaptureOverlay
             DesktopShellWindow window = new DesktopShellWindow(
                 Argument(args, "--url", "http://127.0.0.1:8000/player.html"),
                 Argument(args, "--title", "Easycode 自动化运行助手"),
+                Argument(args, "--icon", ""),
                 IntegerArgument(args, "--width", 960),
                 IntegerArgument(args, "--height", 720));
             application.Run(window);

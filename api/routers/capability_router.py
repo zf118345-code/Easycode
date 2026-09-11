@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Body, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
+from api.contracts.capability import CapabilityPackageCreateRequest
 from api.workspace_context import request_project_path
 from core.services.capability_service import CapabilityService
 
@@ -24,17 +25,17 @@ def create_capability_router():
         return {'capabilities': capabilities, 'errors': errors}
 
     @router.post('/api/capabilities/packages')
-    async def create_capability_package(request: Request, payload: dict = Body(...)):
+    async def create_capability_package(request: Request, payload: CapabilityPackageCreateRequest):
         project_path = request_project_path(request, writable=True)
         try:
             return await run_in_threadpool(
                 lambda: CapabilityService.create_package(
                     project_path,
-                    scope=payload.get('scope') or 'project',
-                    package_id=payload.get('package_id') or '',
-                    function_name=payload.get('function_name') or 'run',
-                    display_name=payload.get('display_name') or '',
-                    description=payload.get('description') or '',
+                    scope=payload.scope,
+                    package_id=payload.package_id,
+                    function_name=payload.function_name,
+                    display_name=payload.display_name,
+                    description=payload.description,
                 )
             )
         except Exception as exc:

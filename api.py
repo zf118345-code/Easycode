@@ -2,6 +2,11 @@
 
 import sys
 
+if __name__ == '__main__':
+    import multiprocessing
+
+    multiprocessing.freeze_support()
+
 # The packaged executable also hosts killable custom-capability workers.
 # Branch before importing ``api.app``: importing the full server initializes
 # vision, capture and desktop integrations and would make every worker slow and
@@ -10,6 +15,14 @@ if __name__ == "__main__" and '--capability-worker' in sys.argv:
     from core.services.capability_worker import main as capability_worker_main
 
     raise SystemExit(capability_worker_main())
+
+# The reusable frozen Player runtime also hosts the single per-user schedule
+# Agent.  Branch before importing FastAPI/pywebview: a background wake process
+# must not create an IDE window or bind an HTTP port.
+if __name__ == "__main__" and '--player-hub-agent' in sys.argv:
+    from core.vnext.schedule_hub_v6 import main as player_hub_main
+
+    raise SystemExit(player_hub_main(['agent']))
 
 from api.app import app, start_webview  # noqa: E402
 
@@ -33,7 +46,15 @@ if __name__ == "__main__":
     parser.add_argument("--mode", type=str, default="dev", choices=["dev", "prod"])
     parser.add_argument("--host", default="127.0.0.1", help="监听地址；局域网协调服务可使用 0.0.0.0")
     parser.add_argument("--port", type=int, default=8000, help="监听端口")
+    parser.add_argument("--player-bundle", default="", help="要加载的 vNext .ecplayer 运行包")
+    parser.add_argument("--player-trust-root", default="", help="Player 固定的发布者信任根")
     args = parser.parse_args()
+
+    if args.player_bundle:
+        os.environ['EASYCODE_PLAYER_BUNDLE'] = os.path.abspath(args.player_bundle)
+    if args.player_trust_root:
+        os.environ['EASYCODE_PLAYER_TRUST_ROOT'] = os.path.abspath(args.player_trust_root)
+        os.environ['EASYCODE_PLAYER_REQUIRE_TRUST_ROOT'] = '1'
 
     if args.host not in {"127.0.0.1", "localhost", "::1"} and not os.environ.get("EASYCODE_COORDINATOR_TOKEN"):
         parser.error("监听非本机地址时必须设置 EASYCODE_COORDINATOR_TOKEN")

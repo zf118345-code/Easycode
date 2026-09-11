@@ -3,7 +3,7 @@
 import pytest
 
 from core.executor import GraphExecutor
-from core.models import Edge, Node, Project, Task
+from core.models import Node, Project, Task
 from core.registry import NodeExecutorRegistry
 
 

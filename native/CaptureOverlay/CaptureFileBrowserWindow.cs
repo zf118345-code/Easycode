@@ -5,8 +5,10 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Forms.Integration;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Effects;
+using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.WinForms;
 
@@ -27,6 +29,7 @@ namespace Easycode.CaptureOverlay
     internal sealed class CaptureFileBrowserWindow : Window
     {
         private readonly WebView2 _webView;
+        private readonly WindowsFormsHost _webViewHost;
         private readonly TextBlock _metadata;
         private readonly Grid _loadingLayer;
         private TaskCompletionSource<bool> _pageReady = NewSignal<bool>();
@@ -37,9 +40,11 @@ namespace Easycode.CaptureOverlay
         private bool _coreInitialized;
         private bool _allowClose;
         private bool _prewarmWindowShown;
+        private string _lastFailureDetail = "";
 
         internal bool IsPageReady { get { return _pageReady.Task.IsCompleted; } }
         internal bool HasPendingOperation { get { return _pending != null; } }
+        internal string LastFailureDetail { get { return _lastFailureDetail; } }
 
         internal CaptureFileBrowserWindow()
         {
@@ -110,7 +115,8 @@ namespace Easycode.CaptureOverlay
 
             Grid content = new Grid();
             _webView = new WebView2 { Dock = System.Windows.Forms.DockStyle.Fill };
-            content.Children.Add(new WindowsFormsHost { Child = _webView });
+            _webViewHost = new WindowsFormsHost { Child = _webView };
+            content.Children.Add(_webViewHost);
             _loadingLayer = new Grid { Background = Brush("#1F2033") };
             _loadingLayer.Children.Add(new TextBlock
             {
@@ -140,17 +146,38 @@ namespace Easycode.CaptureOverlay
 
         internal async Task<bool> PrewarmAsync(string origin)
         {
-            if (String.IsNullOrWhiteSpace(origin)) return false;
+            if (String.IsNullOrWhiteSpace(origin))
+            {
+                _lastFailureDetail = "资源页面地址为空";
+                return false;
+            }
             origin = origin.TrimEnd('/');
             try
             {
                 EnsureWindowHandleForPrewarm();
+                await EnsureHostedControlReadyAsync();
                 if (!_coreInitialized)
                 {
-                    CoreWebView2Environment environment = await WebViewEnvironmentProvider.GetAsync();
-                    await _webView.EnsureCoreWebView2Async(environment);
-                    ConfigureCore();
-                    _coreInitialized = true;
+                    Exception lastInitializationError = null;
+                    for (int attempt = 0; attempt < 2 && !_coreInitialized; attempt++)
+                    {
+                        try
+                        {
+                            CoreWebView2Environment environment = await WebViewEnvironmentProvider.GetAsync();
+                            await _webView.EnsureCoreWebView2Async(environment);
+                            ConfigureCore();
+                            _coreInitialized = true;
+                        }
+                        catch (Exception ex)
+                        {
+                            lastInitializationError = ex;
+                            _lastFailureDetail = "WebView2 初始化失败：" + Describe(ex);
+                            WebViewEnvironmentProvider.ResetAfterFailure();
+                        }
+                        if (!_coreInitialized && attempt == 0) await Task.Delay(120);
+                    }
+                    if (!_coreInitialized && lastInitializationError != null)
+                        throw lastInitializationError;
                 }
                 if (!String.Equals(_loadedOrigin, origin, StringComparison.OrdinalIgnoreCase))
                 {
@@ -163,11 +190,15 @@ namespace Easycode.CaptureOverlay
                 Task completed = await Task.WhenAny(_pageReady.Task, Task.Delay(8000));
                 bool ready = completed == _pageReady.Task && _pageReady.Task.Result;
                 if (ready) _loadingLayer.Visibility = Visibility.Collapsed;
+                else if (String.IsNullOrWhiteSpace(_lastFailureDetail))
+                    _lastFailureDetail = "资源页面在 8 秒内没有完成加载";
                 if (!HasPendingOperation && IsVisible) Hide();
                 return ready;
             }
-            catch
+            catch (Exception ex)
             {
+                if (String.IsNullOrWhiteSpace(_lastFailureDetail))
+                    _lastFailureDetail = "资源管理器准备失败：" + Describe(ex);
                 if (!HasPendingOperation && IsVisible) Hide();
                 return false;
             }
@@ -182,7 +213,10 @@ namespace Easycode.CaptureOverlay
         {
             if (HasPendingOperation) throw new InvalidOperationException("资源管理器已有正在处理的保存操作");
             bool ready = await PrewarmAsync(origin);
-            if (!ready) throw new InvalidOperationException("项目资源管理器预热失败，请检查 WebView2 运行环境");
+            if (!ready)
+                throw new InvalidOperationException(
+                    "项目资源管理器无法打开" +
+                    (String.IsNullOrWhiteSpace(_lastFailureDetail) ? "" : "：" + _lastFailureDetail));
 
             _metadata.Text = "· " + category + (count > 1 ? " · " + count + " 个范围" : "");
             _pending = NewSignal<CaptureFileBrowserResult>();
@@ -234,6 +268,37 @@ namespace Easycode.CaptureOverlay
             Show();
         }
 
+        private async Task EnsureHostedControlReadyAsync()
+        {
+            IntPtr windowHandle = new WindowInteropHelper(this).EnsureHandle();
+            if (windowHandle == IntPtr.Zero)
+                throw new InvalidOperationException("资源管理器窗口句柄尚未建立");
+
+            // WindowsFormsHost creates the child HWND during the WPF loaded
+            // layout pass.  Calling EnsureCoreWebView2Async before that pass
+            // produces ERROR_INVALID_WINDOW_HANDLE on some machines.
+            TaskCompletionSource<bool> ready = NewSignal<bool>();
+            Dispatcher.BeginInvoke(new Action(delegate
+            {
+                try
+                {
+                    if (!_webView.IsHandleCreated) _webView.CreateControl();
+                    ready.TrySetResult(_webViewHost.IsLoaded && _webView.IsHandleCreated);
+                }
+                catch (Exception ex)
+                {
+                    _lastFailureDetail = "资源管理器窗口准备失败：" + Describe(ex);
+                    ready.TrySetResult(false);
+                }
+            }), DispatcherPriority.Loaded);
+            Task completed = await Task.WhenAny(ready.Task, Task.Delay(2500));
+            if (completed != ready.Task || !ready.Task.Result)
+                throw new InvalidOperationException(
+                    String.IsNullOrWhiteSpace(_lastFailureDetail)
+                        ? "资源管理器窗口控件尚未就绪"
+                        : _lastFailureDetail);
+        }
+
         private void ConfigureCore()
         {
             CoreWebView2Settings settings = _webView.CoreWebView2.Settings;
@@ -249,8 +314,15 @@ namespace Easycode.CaptureOverlay
                     !String.Equals(target.GetLeftPart(UriPartial.Authority), _allowedOrigin, StringComparison.OrdinalIgnoreCase))
                     args.Cancel = true;
             };
-            _webView.CoreWebView2.ProcessFailed += delegate
+            _webView.CoreWebView2.NavigationCompleted += delegate(object sender, CoreWebView2NavigationCompletedEventArgs args)
             {
+                if (args.IsSuccess) return;
+                _lastFailureDetail = "资源页面加载失败（" + args.WebErrorStatus + "）";
+                _pageReady.TrySetResult(false);
+            };
+            _webView.CoreWebView2.ProcessFailed += delegate(object sender, CoreWebView2ProcessFailedEventArgs args)
+            {
+                _lastFailureDetail = "WebView2 进程异常（" + args.ProcessFailedKind + "）";
                 _pageReady = NewSignal<bool>();
                 if (HasPendingOperation) Complete(false, null, 0);
             };
@@ -264,6 +336,7 @@ namespace Easycode.CaptureOverlay
             string kind = JsonUtil.String(message, "event", "");
             if (kind == "capture-file-manager-ready")
             {
+                _lastFailureDetail = "";
                 _pageReady.TrySetResult(true);
                 _loadingLayer.Visibility = Visibility.Collapsed;
                 SendContext();
@@ -326,6 +399,13 @@ namespace Easycode.CaptureOverlay
         private static TaskCompletionSource<T> NewSignal<T>()
         {
             return new TaskCompletionSource<T>();
+        }
+
+        private static string Describe(Exception error)
+        {
+            if (error == null) return "未知错误";
+            return error.GetType().Name + "：" + error.Message +
+                "（HRESULT 0x" + error.HResult.ToString("X8") + "）";
         }
 
         private static SolidColorBrush Brush(string value)

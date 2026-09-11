@@ -7,9 +7,7 @@
 4. schema 默认值：wait ms / variable_op 只读与去类型标签 / 灰度默认关闭
 """
 
-import time
 
-import pytest
 
 from core.params import ALL_PARAMS
 

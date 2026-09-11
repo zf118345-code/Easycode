@@ -74,9 +74,6 @@ v-model:visible="condDialogVisible"
     import ControlFunctionSelect from './controls/ControlFunctionSelect.vue'
     import ControlCallInputBindings from './controls/ControlCallInputBindings.vue'
     import ControlCallOutputBindings from './controls/ControlCallOutputBindings.vue'
-    import ControlCapabilitySelect from './controls/ControlCapabilitySelect.vue'
-    import ControlCapabilityInputBindings from './controls/ControlCapabilityInputBindings.vue'
-    import ControlCapabilityOutputBindings from './controls/ControlCapabilityOutputBindings.vue'
     import ControlGesturePathEditor from './controls/ControlGesturePathEditor.vue'
     import ControlFunctionOutcomeSelect from './controls/ControlFunctionOutcomeSelect.vue'
     import ControlFunctionReturnBindings from './controls/ControlFunctionReturnBindings.vue'
@@ -105,9 +102,6 @@ v-model:visible="condDialogVisible"
         function_output_bindings: ControlCallOutputBindings,
         function_outcome_select: ControlFunctionOutcomeSelect,
         function_return_bindings: ControlFunctionReturnBindings,
-        capability_select: ControlCapabilitySelect,
-        capability_input_bindings: ControlCapabilityInputBindings,
-        capability_output_bindings: ControlCapabilityOutputBindings,
         gesture_path: ControlGesturePathEditor
     }
 
@@ -124,7 +118,6 @@ v-model:visible="condDialogVisible"
             'condition_list_editor', 'branch_candidate_editor',
             'condition_list', 'candidates', 'list_dict', 'textarea',
             'function_input_bindings', 'function_output_bindings', 'function_return_bindings',
-            'capability_input_bindings', 'capability_output_bindings',
             'gesture_path'
         ].includes(props.config.type)
     })

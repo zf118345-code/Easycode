@@ -8,8 +8,11 @@ always restores the adb forward/server session in ``finally``.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
 import json
 import os
+import platform
+from pathlib import Path
 import statistics
 import sys
 import time
@@ -131,12 +134,21 @@ def main() -> int:
     parser.add_argument('--scrcpy-input-taps', type=int, default=0)
     parser.add_argument('--tap-x', type=int, default=1)
     parser.add_argument('--tap-y', type=int, default=1)
+    parser.add_argument('--output', type=Path)
     args = parser.parse_args()
 
     valid, detail = validate_scrcpy_runtime()
     if not valid:
         raise RuntimeError(detail)
     result = {
+        'schema_version': 1,
+        'measured_at': datetime.now(timezone.utc).isoformat(),
+        'machine': {
+            'host': platform.node(),
+            'os': platform.platform(),
+            'python': platform.python_version(),
+        },
+        'device_id': args.device,
         'runtime': detail,
         'video': benchmark_video(args.device, max(1, args.frames), args.max_size, args.max_fps),
     }
@@ -156,7 +168,11 @@ def main() -> int:
             args.max_size,
             args.max_fps,
         )
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    rendered = json.dumps(result, ensure_ascii=False, indent=2)
+    if args.output is not None:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(rendered + '\n', encoding='utf-8')
+    print(rendered)
     return 0
 
 

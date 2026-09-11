@@ -1,7 +1,6 @@
 # tests/test_region_coords.py
 # ⚡ 回归：capture(region) 契约 (left, top, right, bottom)——
 # image_recognition / ocr_recognition 此前传 (x, y, w, h) 导致截图区域错误（智能跳转/识别匹配不到的主因之一）
-import io
 from types import SimpleNamespace
 import numpy as np
 import pytest
@@ -149,8 +148,6 @@ def test_page_state_logs_chinese_names():
     })()
     ctx = FakeContext()
     # 特征评估会走 image_exists → mock 掉 screenshot 路径
-    import core.conditions.handlers.image_exists as ie
-    import pytest
     ctx.get_window_rect = lambda: (0, 0, 1920, 1080)
 
     # 直接测 execute 的日志输出（patch evaluate_condition 返回 False）

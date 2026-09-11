@@ -1,7 +1,7 @@
 # core/services/background_input.py
 # ⚡ 后台输入服务：不抢占物理鼠标/键盘的多开友好输入
-# 原理：将屏幕坐标换算为目标窗口客户区坐标后，直接向窗口消息队列投递
-#       WM_MOUSEMOVE → WM_LBUTTONDOWN → WM_LBUTTONUP（PostMessage 异步），
+# 原理：将屏幕坐标换算为目标窗口客户区坐标后，以有界同步消息直接交给
+#       目标窗口过程（WM_MOUSEMOVE → WM_LBUTTONDOWN → WM_LBUTTONUP），
 #       全程不移动物理鼠标、不占用光标，多个窗口会话可并行互不干扰。
 # ⚡ 可靠性要点（成熟方案）：
 #   - 先发 WM_MOUSEMOVE：部分自绘/WebView 控件要求先收到移动消息才响应点击
@@ -16,6 +16,11 @@ import win32con
 import win32gui
 
 logger = logging.getLogger(__name__)
+
+# A zero user-configured hold still represents an ordinary physical click,
+# not a down/up pair collapsed into the same render frame. WeChat/Chromium and
+# DirectX shells commonly need one short frame-spanning press to observe it.
+_DEFAULT_CLICK_PRESS_SECONDS = 0.05
 
 
 def screen_to_client(hwnd, x: int, y: int):
@@ -55,7 +60,7 @@ def _lparam(cx, cy):
 def _message_target_at_point(hwnd, screen_x: int, screen_y: int):
     """解析目标窗口内部最深子句柄，并返回该句柄客户区坐标。
 
-    PostMessage 不会像真实鼠标那样自动把顶层窗口消息命中到渲染子窗口；
+    窗口消息不会像真实鼠标那样自动把顶层窗口消息命中到渲染子窗口；
     因此必须在目标进程树内逐级命中，避免把消息只投给外壳窗口。
     """
     if not hwnd or not win32gui.IsWindow(hwnd):
@@ -95,6 +100,31 @@ def _post(hwnd, msg, wparam, lparam):
         return False
 
 
+def _send_mouse_message(hwnd, msg, wparam, lparam, *, timeout_ms: int = 120):
+    """Synchronously dispatch one targeted mouse message without using the cursor.
+
+    Chromium/WebView and some game shells may accept ``PostMessage`` into the
+    queue while deferring or discarding it when the window is not foreground.
+    ``SendMessageTimeout`` executes the owning window procedure directly and
+    still remains isolated to the selected HWND.  A bounded timeout prevents a
+    hung game window from blocking the runtime indefinitely.
+    """
+
+    sender = getattr(win32gui, 'SendMessageTimeout', None)
+    if sender is None:
+        return _post(hwnd, msg, wparam, lparam)
+    try:
+        flags = (
+            getattr(win32con, 'SMTO_BLOCK', 0x0001)
+            | getattr(win32con, 'SMTO_ABORTIFHUNG', 0x0002)
+        )
+        sender(hwnd, msg, wparam, lparam, flags, max(20, int(timeout_ms or 120)))
+        return True
+    except Exception as exc:
+        logger.warning('SendMessageTimeout(%s) 失败 hwnd=%s: %s', msg, hwnd, exc)
+        return False
+
+
 def background_click(hwnd, screen_x: int, screen_y: int, button: str = 'left', clicks: int = 1) -> dict:
     """向指定窗口投递后台点击（默认左键，clicks=2 即双击），不移动物理鼠标。
 
@@ -127,16 +157,21 @@ def background_click(hwnd, screen_x: int, screen_y: int, button: str = 'left', c
         count = max(1, int(clicks or 1))
         posted = True
         for _ in range(count):
-            posted = _post(target_hwnd, win32con.WM_MOUSEMOVE, 0, lparam) and posted  # 移动消息前置
-            posted = _post(target_hwnd, down_msg, down_wparam, lparam) and posted
-            posted = _post(target_hwnd, up_msg, 0, lparam) and posted
+            posted = _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, 0, lparam) and posted
+            down_posted = _send_mouse_message(target_hwnd, down_msg, down_wparam, lparam)
+            posted = down_posted and posted
+            if down_posted:
+                time.sleep(_DEFAULT_CLICK_PRESS_SECONDS)
+            posted = _send_mouse_message(target_hwnd, up_msg, 0, lparam) and posted
             down_msg = double_msg  # 第二次按下使用对应按键的双击消息
         if not posted:
             return {'ok': False, 'method': 'background', 'message': '至少一条鼠标消息投递失败'}
         return {
             'ok': True,
             'method': 'background',
-            'message': f'后台消息投递到窗口(#{target_hwnd}) 屏幕({screen_x},{screen_y}) -> 客户区({cx},{cy})',
+            'delivery': 'delivered_unverified',
+            'verified': False,
+            'message': f'同步后台消息投递到窗口(#{target_hwnd}) 屏幕({screen_x},{screen_y}) -> 客户区({cx},{cy})，效果未验证',
         }
     except Exception as e:
         logger.warning('后台点击失败 hwnd=%s: %s', hwnd, e)
@@ -203,7 +238,7 @@ def background_hover(hwnd, screen_x: int, screen_y: int) -> dict:
     if resolved is None:
         return {'ok': False, 'method': 'background', 'message': '悬停坐标转客户区失败'}
     target_hwnd, point = resolved
-    if not _post(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(point[0], point[1])):
+    if not _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(point[0], point[1])):
         return {'ok': False, 'method': 'background', 'message': '鼠标移动消息投递失败'}
     return {
         'ok': True,
@@ -214,32 +249,43 @@ def background_hover(hwnd, screen_x: int, screen_y: int) -> dict:
     }
 
 
-def background_scroll(hwnd, screen_x: int, screen_y: int, delta_ticks: int = 1) -> dict:
-    """向指定窗口投递后台滚轮（WM_MOUSEWHEEL），不移动物理鼠标。
+def background_scroll(
+    hwnd,
+    screen_x: int,
+    screen_y: int,
+    delta_ticks: int = 1,
+    *,
+    horizontal: bool = False,
+) -> dict:
+    """向指定窗口投递后台滚轮，不移动物理鼠标。
 
-    :param delta_ticks: 滚动格数（正=向上，负=向下；每格 = WHEEL_DELTA 120）
+    :param delta_ticks: 滚动格数；垂直时正=上、负=下，水平时正=右、负=左。
+    :param horizontal: 使用 WM_MOUSEHWHEEL 而非 WM_MOUSEWHEEL。
     """
     if not hwnd:
         return {'ok': False, 'message': '缺少目标窗口句柄，无法后台滚轮'}
-    pt = screen_to_client(hwnd, screen_x, screen_y)
-    if pt is None:
-        return {'ok': False, 'message': '屏幕坐标转客户区失败，目标窗口可能已关闭'}
+    resolved = _message_target_at_point(hwnd, screen_x, screen_y)
+    if resolved is None:
+        return {'ok': False, 'message': '滚动坐标不在目标窗口客户区内或目标已关闭'}
+    target_hwnd, _point = resolved
     ticks = max(-100, min(100, int(delta_ticks or 0)))
     if ticks == 0:
         return {'ok': True, 'message': '滚动格数为 0，跳过'}
     delta = ticks * win32con.WHEEL_DELTA
-    # WM_MOUSEWHEEL：wParam 高位 = delta（有符号），lParam = 屏幕坐标
+    # WM_MOUSE(H)WHEEL：wParam 高位 = delta（有符号），lParam = 屏幕坐标
     wparam = (delta & 0xFFFF) << 16
     lparam = _lparam(int(screen_x), int(screen_y))
+    message_id = getattr(win32con, 'WM_MOUSEHWHEEL', 0x020E) if horizontal else win32con.WM_MOUSEWHEEL
+    direction_label = '水平' if horizontal else '垂直'
     try:
-        if not _post(hwnd, win32con.WM_MOUSEWHEEL, wparam, lparam):
+        if not _send_mouse_message(target_hwnd, message_id, wparam, lparam):
             return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': '后台滚轮消息投递失败'}
         return {
             'ok': True,
             'method': 'background',
             'delivery': 'delivered_unverified',
             'verified': False,
-            'message': f'后台滚轮窗口(#{hwnd}) 格数={ticks}，效果未验证',
+            'message': f'后台{direction_label}滚轮窗口(#{target_hwnd}) 格数={ticks}，效果未验证',
         }
     except Exception as e:
         logger.warning('后台滚轮失败 hwnd=%s: %s', hwnd, e)
@@ -296,8 +342,8 @@ def background_drag(
             time.sleep(min(0.02, max(0, deadline - time.monotonic())))
         return not interrupted()
 
-    posted = _post(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(*start_client))
-    posted = _post(target_hwnd, down_msg, down_mask, _lparam(*start_client)) and posted
+    posted = _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(*start_client))
+    posted = _send_mouse_message(target_hwnd, down_msg, down_mask, _lparam(*start_client)) and posted
     if not posted:
         return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': '拖拽按下消息投递失败'}
     try:
@@ -313,7 +359,7 @@ def background_drag(
                 client_x, client_y = win32gui.ScreenToClient(target_hwnd, (screen_x, screen_y))
             except Exception as exc:
                 return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': f'拖拽途中目标失效: {exc}'}
-            if not _post(target_hwnd, win32con.WM_MOUSEMOVE, down_mask, _lparam(client_x, client_y)):
+            if not _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, down_mask, _lparam(client_x, client_y)):
                 return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': '拖拽移动消息投递失败'}
             if step_delay:
                 time.sleep(step_delay)
@@ -329,7 +375,7 @@ def background_drag(
     finally:
         try:
             final_client = win32gui.ScreenToClient(target_hwnd, (end_x, end_y))
-            _post(target_hwnd, up_msg, 0, _lparam(*final_client))
+            _send_mouse_message(target_hwnd, up_msg, 0, _lparam(*final_client))
         except Exception:
             pass
 
@@ -388,8 +434,8 @@ def background_drag_path(
             return value * value * (3 - 2 * value)
         return value
 
-    posted = _post(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(*start_client))
-    posted = _post(target_hwnd, down_msg, down_mask, _lparam(*start_client)) and posted
+    posted = _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, 0, _lparam(*start_client))
+    posted = _send_mouse_message(target_hwnd, down_msg, down_mask, _lparam(*start_client)) and posted
     if not posted:
         return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': '拖拽按下消息投递失败'}
     final_point = normalized[-1]['point']
@@ -412,7 +458,7 @@ def background_drag_path(
                     client_x, client_y = win32gui.ScreenToClient(target_hwnd, (screen_x, screen_y))
                 except Exception as exc:
                     return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': f'拖拽途中目标失效: {exc}'}
-                if not _post(target_hwnd, win32con.WM_MOUSEMOVE, down_mask, _lparam(client_x, client_y)):
+                if not _send_mouse_message(target_hwnd, win32con.WM_MOUSEMOVE, down_mask, _lparam(client_x, client_y)):
                     return {'ok': False, 'method': 'background', 'delivery': 'failed', 'message': '拖拽移动消息投递失败'}
                 if delay:
                     time.sleep(delay)
@@ -429,7 +475,7 @@ def background_drag_path(
     finally:
         try:
             final_client = win32gui.ScreenToClient(target_hwnd, final_point)
-            _post(target_hwnd, up_msg, 0, _lparam(*final_client))
+            _send_mouse_message(target_hwnd, up_msg, 0, _lparam(*final_client))
         except Exception:
             pass
 

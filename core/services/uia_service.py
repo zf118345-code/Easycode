@@ -14,6 +14,7 @@ _MAX_FIND_WALK = 20000    # 查找遍历上限（Python BFS 兜底用；原生 C
 # 曾经为 8 层：每层 7 个 COM 属性调用，150ms 轮询下单次识别 60+ 次 COM 往返 → 卡顿元凶之一
 _ANCESTOR_DEPTH = 3
 _HIGHLIGHT_WINDOW_TITLE = 'EasycodeHighlight'  # 全局高亮窗口标题（防御：捕获时跳过自家窗口）
+_PHYSICAL_INPUT_LOCK = threading.Lock()
 
 # UIA TreeScope 常量（原生 COM 接口使用）
 _TREESCOPE_CHILDREN = 2
@@ -158,6 +159,240 @@ def inspect_point(x: int, y: int, with_ancestors: bool = False) -> dict:
             ancestors.append(pinfo)
 
     return {'available': True, 'control': info, 'ancestors': ancestors}
+
+
+def inspect_point_candidates(
+    x: int,
+    y: int,
+    *,
+    expected_hwnd: int = 0,
+    exclude_process_ids: set[int] | None = None,
+    max_depth: int = 20,
+) -> list[dict]:
+    """Resolve one Windows point into deepest-first UIA candidates.
+
+    Unlike the legacy hover inspector this is a bounded, one-shot operation.
+    It records a complete top-level-to-candidate path for every selectable
+    ancestor and refuses elements outside the explicitly selected window.
+    """
+
+    if not expected_hwnd and exclude_process_ids:
+        expected_hwnd = _window_at_point_excluding(
+            int(x), int(y), {int(value) for value in exclude_process_ids if int(value) > 0},
+        )
+        if not expected_hwnd:
+            return []
+
+    auto = _uia()
+    if auto is None:
+        return []
+    target_chain: list[object] = []
+    cached_info: dict[int, dict] = {}
+    try:
+        if expected_hwnd and getattr(auto, 'ControlFromHandle', None) is not None:
+            try:
+                target_chain, cached_info = _cached_target_chain(
+                    int(expected_hwnd), int(x), int(y), max_depth=max_depth,
+                )
+            except Exception as exc:
+                logger.debug('UIA 批量缓存命中不可用，回退兼容遍历: %s', exc)
+                root = auto.ControlFromHandle(int(expected_hwnd))
+                if root is None:
+                    return []
+                target_chain = [root]
+                cursor = root
+                for _ in range(max(1, min(64, int(max_depth))) - 1):
+                    try:
+                        children = cursor.GetChildren()
+                    except Exception:
+                        break
+                    containing = []
+                    for child in children or []:
+                        info = _element_info(child, light=True)
+                        rect = info.get('rect') or []
+                        if len(rect) != 4 or not (rect[0] <= x < rect[2] and rect[1] <= y < rect[3]):
+                            continue
+                        area = max(0, rect[2] - rect[0]) * max(0, rect[3] - rect[1])
+                        containing.append((area, child))
+                    if not containing:
+                        break
+                    cursor = min(containing, key=lambda item: item[0])[1]
+                    target_chain.append(cursor)
+            if not target_chain:
+                return []
+            current = target_chain[-1]
+            top = target_chain[0]
+        else:
+            current = auto.ControlFromPoint(int(x), int(y))
+            if current is None or _is_self_highlight_window(current):
+                return []
+            top = current.GetTopLevelControl()
+            top_hwnd = int(getattr(top, 'NativeWindowHandle', 0) or 0) if top is not None else 0
+            if expected_hwnd and top_hwnd != int(expected_hwnd):
+                return []
+    except Exception as exc:
+        logger.warning('UIA 控件点选失败: %s', exc)
+        return []
+
+    chain: list[tuple[object, dict]] = []
+    if target_chain:
+        chain = [
+            (element, cached_info.get(id(element)) or _element_info(element, light=True))
+            for element in reversed(target_chain)
+        ]
+    else:
+        cursor = current
+        for _ in range(max(1, min(64, int(max_depth)))):
+            if cursor is None:
+                break
+            info = _element_info(cursor, light=True)
+            rect = info.get('rect') or []
+            if len(rect) == 4 and rect[2] > rect[0] and rect[3] > rect[1]:
+                chain.append((cursor, info))
+            if cursor is top or str(info.get('control_type') or '') == 'window':
+                break
+            try:
+                cursor = cursor.GetParentControl()
+            except Exception:
+                break
+
+    if not chain:
+        return []
+    top_to_leaf = [info for _, info in reversed(chain)]
+    candidates: list[dict] = []
+    for index, (_, info) in enumerate(chain):
+        path_length = len(chain) - index
+        item = dict(info)
+        item['ancestor_path'] = [
+            {
+                'name': str(level.get('name') or ''),
+                'automation_id': str(level.get('automation_id') or ''),
+                'class_name': str(level.get('class_name') or ''),
+                'control_type': str(level.get('control_type') or ''),
+            }
+            for level in top_to_leaf[:path_length]
+        ]
+        candidates.append(item)
+    return candidates
+
+
+def _window_at_point_excluding(x: int, y: int, excluded_process_ids: set[int]) -> int:
+    """Return the first visible top-level window under a point, excluding hosts.
+
+    The frozen-capture overlay is intentionally topmost. Hiding it before every
+    UIA probe creates a visible flash and a fixed delay; resolving the first
+    underlying top-level window in z-order keeps the overlay stable while still
+    binding UIA traversal to the window represented by the frozen frame.
+    """
+
+    try:
+        import win32con
+        import win32gui
+        import win32process
+    except Exception:
+        return 0
+
+    result = 0
+
+    def visit(hwnd: int, _extra: object) -> bool:
+        nonlocal result
+        try:
+            if not win32gui.IsWindowVisible(hwnd):
+                return True
+            # IME/pen/tooltip surfaces can be technically visible and cover the
+            # screen while deliberately passing pointer input through. They do
+            # not represent the application shown in the frozen frame.
+            ex_style = int(win32gui.GetWindowLong(hwnd, win32con.GWL_EXSTYLE) or 0)
+            if ex_style & int(win32con.WS_EX_TRANSPARENT):
+                return True
+            _, process_id = win32process.GetWindowThreadProcessId(hwnd)
+            if int(process_id or 0) in excluded_process_ids:
+                return True
+            left, top, right, bottom = (int(value) for value in win32gui.GetWindowRect(hwnd))
+            if right <= left or bottom <= top or not (left <= x < right and top <= y < bottom):
+                return True
+            result = int(hwnd)
+            return False
+        except Exception:
+            return True
+
+    try:
+        # EnumWindows walks top-level windows in z-order (topmost first).
+        win32gui.EnumWindows(visit, None)
+    except Exception:
+        return 0
+    return result
+
+
+def _cached_target_chain(
+    hwnd: int,
+    x: int,
+    y: int,
+    *,
+    max_depth: int,
+) -> tuple[list[object], dict[int, dict]]:
+    """Descend an explicit UIA root with one cached property batch per level.
+
+    ``uiautomation.Control.GetChildren`` followed by five Python properties per
+    child turns every level into many provider COM round trips. The native UIA
+    ``FindAllBuildCache`` call returns the same direct children with the minimal
+    selector fields already cached. A compatibility fallback remains in the
+    caller for providers or library builds that do not expose build-cache APIs.
+    """
+
+    import uiautomation.uiautomation as native
+
+    client = native._AutomationClient.instance()
+    request = client.IUIAutomation.CreateCacheRequest()
+    request.TreeScope = 1  # TreeScope_Element: cache only each returned element.
+    for property_id in (
+        native.PropertyId.BoundingRectangleProperty,
+        native.PropertyId.ControlTypeProperty,
+        native.PropertyId.NameProperty,
+        native.PropertyId.AutomationIdProperty,
+        native.PropertyId.ClassNameProperty,
+        native.PropertyId.NativeWindowHandleProperty,
+    ):
+        request.AddProperty(property_id)
+    condition = client.IUIAutomation.CreateTrueCondition()
+    root = client.IUIAutomation.ElementFromHandleBuildCache(int(hwnd), request)
+    if root is None:
+        return [], {}
+
+    def info(element, window_title: str = '') -> dict:
+        rect = element.CachedBoundingRectangle
+        control_id = int(element.CachedControlType or 0)
+        return {
+            'name': str(element.CachedName or ''),
+            'control_type': str(native.ControlTypeNames.get(control_id, '')).replace('Control', '').lower(),
+            'automation_id': str(element.CachedAutomationId or ''),
+            'class_name': str(element.CachedClassName or ''),
+            'rect': [int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)],
+            'window_title': window_title,
+        }
+
+    root_info = info(root)
+    root_info['window_title'] = root_info['name']
+    chain: list[object] = [root]
+    infos: dict[int, dict] = {id(root): root_info}
+    cursor = root
+    for _ in range(max(1, min(64, int(max_depth))) - 1):
+        children = cursor.FindAllBuildCache(_TREESCOPE_CHILDREN, condition, request)
+        containing: list[tuple[int, object, dict]] = []
+        for index in range(int(children.Length or 0)):
+            child = children.GetElement(index)
+            child_info = info(child, root_info['name'])
+            rect = child_info['rect']
+            if not (rect[0] <= x < rect[2] and rect[1] <= y < rect[3]):
+                continue
+            area = max(0, rect[2] - rect[0]) * max(0, rect[3] - rect[1])
+            containing.append((area, child, child_info))
+        if not containing:
+            break
+        _, cursor, cursor_info = min(containing, key=lambda item: item[0])
+        chain.append(cursor)
+        infos[id(cursor)] = cursor_info
+    return chain, infos
 
 
 # ------------------------------------------------------------------ UIA 选择器查找
@@ -758,13 +993,34 @@ def perform_uia_action(info: dict, action: str, text: str = '', allow_physical_f
 
     def _physical_click(cx, cy, clicks=1) -> dict:
         """真实鼠标点击；仅在项目显式授权后调用。"""
+        if not _PHYSICAL_INPUT_LOCK.acquire(timeout=0.5):
+            return {'ok': False, 'method': 'physical', 'message': '物理输入通道正被其他任务占用'}
         try:
             import pyautogui
+            import win32con
+            import win32gui
 
-            pyautogui.click(int(cx), int(cy), clicks=clicks)
-            return {'ok': True, 'method': 'physical', 'message': f'物理点击 ({int(cx)}, {int(cy)})'}
+            original = pyautogui.position()
+            hwnd = int(info.get('hwnd') or 0)
+            if hwnd:
+                root = int(win32gui.GetAncestor(hwnd, getattr(win32con, 'GA_ROOT', 2)) or hwnd)
+                if win32gui.IsIconic(root):
+                    win32gui.ShowWindow(root, win32con.SW_RESTORE)
+                if win32gui.GetForegroundWindow() != root:
+                    win32gui.BringWindowToTop(root)
+                    win32gui.SetForegroundWindow(root)
+            try:
+                pyautogui.click(int(cx), int(cy), clicks=clicks)
+            finally:
+                pyautogui.moveTo(int(original[0]), int(original[1]))
+            return {
+                'ok': True, 'method': 'physical',
+                'message': f'物理点击 ({int(cx)}, {int(cy)})，已恢复鼠标位置',
+            }
         except Exception as e:
             return {'ok': False, 'method': 'physical', 'message': f'物理点击失败: {e}'}
+        finally:
+            _PHYSICAL_INPUT_LOCK.release()
 
     el = _resolve_action_element(info, auto)
     if el is None:
@@ -857,6 +1113,124 @@ def perform_uia_action(info: dict, action: str, text: str = '', allow_physical_f
         except Exception:
             pass
         return {'ok': True, 'value': el.Name or '', 'message': f'UIA 读取控件名: {el.Name!r}'}
+
+    if action == 'get_status':
+        def _property(name: str):
+            try:
+                return getattr(el, name)
+            except Exception:
+                return None
+
+        def _pattern(pattern_name: str):
+            try:
+                pattern_id = getattr(auto.PatternId, pattern_name)
+                return el.GetPattern(pattern_id)
+            except Exception:
+                return None
+
+        value_pattern = _pattern('ValuePattern')
+        toggle_pattern = _pattern('TogglePattern')
+        selection_pattern = _pattern('SelectionItemPattern')
+        current_value = None
+        editable = None
+        if value_pattern is not None:
+            try:
+                current_value = str(value_pattern.Value)
+            except Exception:
+                pass
+            try:
+                editable = not bool(value_pattern.IsReadOnly)
+            except Exception:
+                editable = None
+        if current_value is None:
+            try:
+                current_value = str(el.Name or '') or None
+            except Exception:
+                current_value = None
+        checked = None
+        if toggle_pattern is not None:
+            try:
+                # UIA ToggleState: 0=Off, 1=On, 2=Indeterminate.
+                state = int(toggle_pattern.ToggleState)
+                checked = True if state == 1 else False if state == 0 else None
+            except Exception:
+                pass
+        selected = None
+        if selection_pattern is not None:
+            try:
+                selected = bool(selection_pattern.IsSelected)
+            except Exception:
+                pass
+        current_rect = _property('BoundingRectangle')
+        if current_rect is not None:
+            try:
+                left, top, right, bottom = (
+                    int(current_rect.left), int(current_rect.top),
+                    int(current_rect.right), int(current_rect.bottom),
+                )
+            except Exception:
+                left, top, right, bottom = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+        else:
+            left, top, right, bottom = (int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]))
+        offscreen = _property('IsOffscreen')
+        return {
+            'ok': True,
+            'value': {
+                'control_status.field.enabled': _property('IsEnabled'),
+                'control_status.field.visible': None if offscreen is None else not bool(offscreen),
+                'control_status.field.checked': checked,
+                'control_status.field.selected': selected,
+                'control_status.field.editable': editable,
+                'control_status.field.focusable': _property('IsKeyboardFocusable'),
+                'control_status.field.focused': _property('HasKeyboardFocus'),
+                'control_status.field.current_value': current_value,
+                'control_status.field.rect': {
+                    'kind': 'rect', 'x': left, 'y': top,
+                    'width': max(0, right - left), 'height': max(0, bottom - top),
+                },
+            },
+            'message': '已读取控件状态',
+        }
+
+    if action == 'focus':
+        try:
+            el.SetFocus()
+            return {'ok': True, 'message': '已聚焦控件'}
+        except Exception as exc:
+            return {'ok': False, 'message': f'该控件不支持聚焦: {exc}'}
+
+    if action in ('set_value', 'select', 'toggle', 'scroll_into_view'):
+        pattern_names = {
+            'set_value': 'ValuePattern',
+            'select': 'SelectionItemPattern',
+            'toggle': 'TogglePattern',
+            'scroll_into_view': 'ScrollItemPattern',
+        }
+        method_names = {
+            'set_value': 'SetValue',
+            'select': 'Select',
+            'toggle': 'Toggle',
+            'scroll_into_view': 'ScrollIntoView',
+        }
+        labels = {
+            'set_value': '设置值',
+            'select': '选择项目',
+            'toggle': '切换开关',
+            'scroll_into_view': '滚动到控件',
+        }
+        try:
+            pattern_id = getattr(auto.PatternId, pattern_names[action])
+            pattern = el.GetPattern(pattern_id)
+            if pattern is None:
+                return {'ok': False, 'message': f'该控件不支持{labels[action]}'}
+            method = getattr(pattern, method_names[action])
+            if action == 'set_value':
+                method(text or '')
+            else:
+                method()
+            return {'ok': True, 'message': f'已{labels[action]}'}
+        except Exception as exc:
+            return {'ok': False, 'message': f'{labels[action]}失败: {exc}'}
 
     if action == 'input_text':
         try:

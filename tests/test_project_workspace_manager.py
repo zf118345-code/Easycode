@@ -18,6 +18,13 @@ def manager_for(tmp_path, name='app-state'):
     )
 
 
+def test_process_liveness_probe_never_terminates_the_current_windows_process(tmp_path):
+    manager = manager_for(tmp_path)
+
+    assert manager._pid_alive(os.getpid()) is True
+    assert manager._pid_alive(99999999) is False
+
+
 def test_app_data_directory_can_be_isolated_by_environment(tmp_path, monkeypatch):
     source = tmp_path / 'source'
     source.mkdir()

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.EasyCode" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowActionModeOverlay">true</item>
+        <item name="android:windowBackground">@color/ec_background</item>
+        <item name="android:colorAccent">@color/ec_accent</item>
+        <item name="android:navigationBarColor">@color/ec_background</item>
+        <item name="android:statusBarColor">@color/ec_background</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <style name="Theme.EasyCode.Capture" parent="Theme.EasyCode">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowDisablePreview">true</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+    </style>
+</resources>

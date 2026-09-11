@@ -237,17 +237,36 @@ def capture_window(hwnd):
     return image
 
 
-def crop_window_image(hwnd, image, screen_box):
-    """Map an absolute screen rectangle into a WGC/PrintWindow image safely.
+def _extended_frame_bounds(hwnd):
+    """Return DWM's real capture texture bounds when available.
 
-    Providers may expose either extended-window or client-area pixels. The
-    returned texture dimensions identify the correct origin and avoid DPI/title
-    bar offsets leaking into workspace coordinates.
+    ``GetWindowRect`` includes invisible resize borders on modern Windows,
+    whereas Windows Graphics Capture uses the DWM extended frame. Choosing
+    between only the outer and client rectangles can therefore shift a client
+    crop several pixels and reject an otherwise valid fresh frame.
     """
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        rect = wintypes.RECT()
+        result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            int(hwnd), 9, ctypes.byref(rect), ctypes.sizeof(rect),
+        )
+        bounds = (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
+        if result == 0 and bounds[2] > bounds[0] and bounds[3] > bounds[1]:
+            return bounds
+    except Exception:
+        pass
+    return None
+
+
+def window_image_screen_box(hwnd, image_size):
+    """Return the screen-space box represented by a captured window texture."""
     import win32gui
 
-    left, top, right, bottom = [int(value) for value in screen_box]
-    width, height = right - left, bottom - top
+    image_width, image_height = (int(image_size[0]), int(image_size[1]))
     outer_left, outer_top, outer_right, outer_bottom = win32gui.GetWindowRect(hwnd)
     client = win32gui.GetClientRect(hwnd)
     client_left, client_top = win32gui.ClientToScreen(hwnd, (client[0], client[1]))
@@ -256,11 +275,39 @@ def crop_window_image(hwnd, image, screen_box):
         (outer_left, outer_top, outer_right - outer_left, outer_bottom - outer_top),
         (client_left, client_top, client_right - client_left, client_bottom - client_top),
     ]
-    origins.sort(key=lambda item: abs(item[2] - image.width) + abs(item[3] - image.height))
+    extended = _extended_frame_bounds(hwnd)
+    if extended is not None:
+        extended_left, extended_top, extended_right, extended_bottom = extended
+        origins.append((
+            extended_left,
+            extended_top,
+            extended_right - extended_left,
+            extended_bottom - extended_top,
+        ))
+    origins.sort(key=lambda item: abs(item[2] - image_width) + abs(item[3] - image_height))
     origin_left, origin_top, _, _ = origins[0]
+    return origin_left, origin_top, origin_left + image_width, origin_top + image_height
+
+
+def crop_window_image(hwnd, image, screen_box):
+    """Map an absolute screen rectangle into a WGC/PrintWindow image safely.
+
+    Providers may expose either extended-window or client-area pixels. The
+    returned texture dimensions identify the correct origin and avoid DPI/title
+    bar offsets leaking into workspace coordinates.
+    """
+    left, top, right, bottom = [int(value) for value in screen_box]
+    width, height = right - left, bottom - top
+    origin_left, origin_top, image_right, image_bottom = window_image_screen_box(hwnd, image.size)
     crop = (left - origin_left, top - origin_top, right - origin_left, bottom - origin_top)
     if crop[0] < 0 or crop[1] < 0 or crop[2] > image.width or crop[3] > image.height:
-        if image.size == (width, height):
+        if left <= origin_left and top <= origin_top and right >= image_right and bottom >= image_bottom:
+            # GetWindowRect contains an invisible resize/shadow border on many
+            # modern windows.  The capture texture represents the DWM frame;
+            # a whole-window request must therefore return that complete frame
+            # instead of failing because of a few non-existent border pixels.
+            crop = (0, 0, image.width, image.height)
+        elif image.size == (width, height):
             crop = (0, 0, width, height)
         else:
             raise ValueError(f'后台截图裁剪区超出窗口图像: {crop}, image={image.size}')

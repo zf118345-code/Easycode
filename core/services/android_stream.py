@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import socket
 import struct
@@ -17,7 +18,6 @@ import cv2
 
 from core.services.runtime_session import FramePacket
 from core.utils import resource_path
-
 
 SCRCPY_SERVER_VERSION = '4.1'
 SCRCPY_SERVER_NAME = f'scrcpy-server-v{SCRCPY_SERVER_VERSION}'
@@ -493,20 +493,135 @@ class ScrcpyVideoSession:
             'message': f'scrcpy UTF-8 文本已投递设备[{self.device_id}]，长度={len(str(value or ""))}，效果待验证',
         }
 
-    def keyevent(self, keycode: int, *, metastate: int = 0) -> dict[str, Any]:
+    def keyevent(
+        self,
+        keycode: int,
+        *,
+        metastate: int = 0,
+        action: str = 'press',
+        hold_ms: int = 0,
+        stop_check=None,
+    ) -> dict[str, Any]:
         self.start()
         control = self._control_socket
         if control is None:
             return {'ok': False, 'method': 'scrcpy_control', 'delivery': 'failed', 'message': 'scrcpy 控制通道未建立'}
+        if action not in {'press', 'down', 'up'}:
+            return {'ok': False, 'method': 'scrcpy_control', 'delivery': 'blocked', 'message': f'不支持的按键动作：{action}'}
+        down = struct.pack('>BBIII', 0, 0, int(keycode), 0, int(metastate))
+        up = struct.pack('>BBIII', 0, 1, int(keycode), 0, int(metastate))
         try:
             # type:u8, action:u8, keycode:u32, repeat:u32, metastate:u32
-            down = struct.pack('>BBIII', 0, 0, int(keycode), 0, int(metastate))
-            up = struct.pack('>BBIII', 0, 1, int(keycode), 0, int(metastate))
             with self._control_lock:
-                control.sendall(down + up)
+                if action in {'press', 'down'}:
+                    control.sendall(down)
+                if action == 'press':
+                    deadline = time.monotonic() + max(0, int(hold_ms or 0)) / 1000.0
+                    cancelled = False
+                    while time.monotonic() < deadline:
+                        if stop_check and stop_check():
+                            cancelled = True
+                            break
+                        time.sleep(min(0.01, max(0.0, deadline - time.monotonic())))
+                    control.sendall(up)
+                    if cancelled:
+                        return {'ok': False, 'method': 'scrcpy_control', 'delivery': 'cancelled', 'message': 'scrcpy 按键已取消并释放'}
+                elif action == 'up':
+                    control.sendall(up)
         except OSError as exc:
             return {'ok': False, 'method': 'scrcpy_control', 'delivery': 'failed', 'message': f'scrcpy 按键投递失败: {exc}'}
-        return {'ok': True, 'method': 'scrcpy_control', 'delivery': 'delivered_unverified', 'verified': False, 'message': f'scrcpy keycode={int(keycode)} meta={int(metastate)} 已投递'}
+        return {'ok': True, 'method': 'scrcpy_control', 'delivery': 'delivered_unverified', 'verified': False, 'message': f'scrcpy keycode={int(keycode)} meta={int(metastate)} action={action} 已投递'}
+
+    def start_activity(
+        self,
+        package: str,
+        activity: str = '',
+        arguments: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Start only a typed Android package/activity; never execute free shell text."""
+
+        package = str(package or '').strip()
+        activity = str(activity or '').strip()
+        extras = list(arguments or ())
+        if extras:
+            return {
+                'ok': False, 'method': 'adb_activity', 'delivery': 'blocked',
+                'message': 'ADB 应用启动首版不接受自由参数；请只使用类型化包名和 Activity',
+            }
+        try:
+            if activity:
+                component = f'{package}/{activity}'
+            else:
+                resolved = self._run_adb([
+                    'shell', 'pm', 'resolve-activity', '--brief',
+                    '-c', 'android.intent.category.LAUNCHER', package,
+                ], timeout=10)
+                lines = [
+                    item.strip()
+                    for item in resolved.stdout.decode(errors='ignore').splitlines()
+                    if '/' in item
+                ]
+                component = lines[-1] if lines else ''
+                resolved_package, separator, resolved_activity = component.partition('/')
+                if (
+                    separator != '/' or resolved_package != package or
+                    not re.fullmatch(r'[A-Za-z0-9_.$]+', resolved_activity)
+                ):
+                    raise AndroidStreamError(f'找不到应用的启动 Activity：{package}')
+            self._run_adb(['shell', 'am', 'start', '-W', '-n', component], timeout=15)
+        except (AndroidStreamError, subprocess.TimeoutExpired) as exc:
+            return {
+                'ok': False, 'method': 'adb_activity', 'delivery': 'failed',
+                'message': f'ADB 应用启动失败：{exc}',
+            }
+        return {
+            'ok': True, 'method': 'adb_activity', 'delivery': 'delivered_unverified',
+            'verified': False,
+            'message': f'已向设备[{self.device_id}]投递应用启动：{package}{"/" + activity if activity else ""}',
+        }
+
+    def application_running(self, package: str) -> bool:
+        """Query one validated package without exposing a free-form shell API."""
+
+        package = str(package or '').strip()
+        if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', package):
+            raise AndroidStreamError('Android 包名格式无效')
+        result = subprocess.run(
+            ['adb', '-s', self.device_id, 'shell', 'pidof', package],
+            capture_output=True, timeout=5, **_no_window_flags(),
+        )
+        if result.returncode not in {0, 1}:
+            detail = (result.stderr or result.stdout or b'').decode(errors='ignore').strip()
+            raise AndroidStreamError(detail or 'ADB 应用状态查询失败')
+        return result.returncode == 0 and bool(result.stdout.decode(errors='ignore').strip())
+
+    def stop_application(self, package: str) -> dict[str, Any]:
+        """Force-stop one validated package; callers cannot inject shell text."""
+
+        package = str(package or '').strip()
+        if not re.fullmatch(r'[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+', package):
+            return {
+                'ok': False, 'method': 'adb_activity', 'delivery': 'blocked',
+                'message': 'Android 包名格式无效',
+            }
+        try:
+            self._run_adb(['shell', 'am', 'force-stop', package], timeout=10)
+            still_running = self.application_running(package)
+        except (AndroidStreamError, subprocess.TimeoutExpired) as exc:
+            return {
+                'ok': False, 'method': 'adb_activity', 'delivery': 'failed',
+                'message': f'ADB 应用停止失败：{exc}',
+            }
+        if still_running:
+            return {
+                'ok': False, 'method': 'adb_activity', 'delivery': 'failed',
+                'message': f'设备[{self.device_id}]仍报告应用在运行：{package}',
+            }
+        return {
+            'ok': True, 'method': 'adb_activity', 'delivery': 'verified',
+            'verified': True,
+            'message': f'已停止设备[{self.device_id}]中的应用：{package}',
+        }
 
     def _decode(self):
         try:
