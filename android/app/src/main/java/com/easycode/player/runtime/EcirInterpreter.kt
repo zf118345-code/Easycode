@@ -210,7 +210,8 @@ class EcirInterpreter(
                         instruction.get("network_authorization")?.let(JsonSupport::toAny),
                         instructionId,
                     )
-                "target.capture_frame", "color.read", "color.find", "vision.find", "vision.find_all", "text.recognize" ->
+                "target.capture_frame", "frame.crop_region", "vision.compare_samples",
+                "color.read", "color.find", "vision.find", "vision.find_all", "text.recognize" ->
                     vision.execute(opcode, evaluated(arguments, scope))
                 "frame.save" -> vision.saveFrame(evaluated(arguments, scope), fileRuntime)
                 "input.click", "input.text", "input.scroll", "input.drag", "input.key" ->

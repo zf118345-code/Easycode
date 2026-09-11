@@ -1064,5 +1064,103 @@ def test_color_read_and_find_use_rgba_tolerance_region_and_frozen_frame(monkeypa
             'official.color.read.parameter.frame': frozen,
         }, lambda: False)
     assert outside.value.error_id == 'target.invalid_point'
+
+
+def test_crop_region_and_compare_samples_reuse_exact_pixels_and_report_changes(monkeypatch) -> None:
+    from PIL import Image
+
+    driver = _windows_driver()
+    driver._frame_references = {}
+    driver._image_samples = {}
+    driver._ocr_analysis_cache = {}
+    driver._prepared_asset_cache = {}
+    driver._frame_sequence = 0
+    driver._image_sample_sequence = 0
+    driver.frame_is_bgr = False
+    current = Image.new('RGB', (6, 5), (10, 20, 30))
+    monkeypatch.setattr(driver, 'capture_frame', lambda: current.copy())
+
+    first_frame = driver.execute('target.capture_frame', {}, lambda: False)
+    first = driver.execute('frame.crop_region', {
+        'official.frame.crop_region.parameter.region': {
+            'kind': 'rect', 'x': 2, 'y': 1, 'width': 5, 'height': 3,
+        },
+        'official.frame.crop_region.parameter.frame': first_frame,
+    }, lambda: False)
+    assert first['image_sample.field.region'] == {
+        'kind': 'rect', 'x': 2, 'y': 1, 'width': 4, 'height': 3,
+    }
+
+    current.putpixel((3, 2), (110, 20, 30))
+    second_frame = driver.execute('target.capture_frame', {}, lambda: False)
+    second = driver.execute('frame.crop_region', {
+        'official.frame.crop_region.parameter.region': {
+            'kind': 'rect', 'x': 2, 'y': 1, 'width': 4, 'height': 3,
+        },
+        'official.frame.crop_region.parameter.frame': second_frame,
+    }, lambda: False)
+    comparison = driver.execute('vision.compare_samples', {
+        'official.image.compare.parameter.left': first,
+        'official.image.compare.parameter.right': second,
+        'official.image.compare.parameter.size_strategy': 'strict',
+        'official.image.compare.parameter.pixel_tolerance': 10,
+    }, lambda: False)
+
+    assert comparison['image_comparison.field.same_size'] is True
+    assert comparison['image_comparison.field.changed_pixel_ratio'] == pytest.approx(1 / 12)
+    assert comparison['image_comparison.field.difference_region'] == {
+        'kind': 'rect', 'x': 1, 'y': 1, 'width': 1, 'height': 1,
+    }
+    assert comparison['image_comparison.field.similarity'] == pytest.approx(
+        1.0 - 100.0 / (12 * 3 * 255)
+    )
+
+    driver.close()
+    with pytest.raises(RuntimeFailure) as expired:
+        driver.execute('vision.compare_samples', {
+            'official.image.compare.parameter.left': first,
+            'official.image.compare.parameter.right': second,
+        }, lambda: False)
+    assert expired.value.error_id == 'vision.sample_reference_expired'
+
+
+def test_compare_samples_has_explicit_size_strategies(monkeypatch) -> None:
+    from PIL import Image
+
+    driver = _windows_driver()
+    driver._frame_references = {}
+    driver._image_samples = {}
+    driver._frame_sequence = 0
+    driver._image_sample_sequence = 0
+    driver.frame_is_bgr = False
+    current = Image.new('RGB', (5, 5), (40, 50, 60))
+    monkeypatch.setattr(driver, 'capture_frame', lambda: current.copy())
+    frame = driver.execute('target.capture_frame', {}, lambda: False)
+
+    def sample(width: int, height: int) -> dict[str, object]:
+        return driver.execute('frame.crop_region', {
+            'official.frame.crop_region.parameter.region': {
+                'kind': 'rect', 'x': 0, 'y': 0, 'width': width, 'height': height,
+            },
+            'official.frame.crop_region.parameter.frame': frame,
+        }, lambda: False)
+
+    left, right = sample(5, 5), sample(3, 4)
+    with pytest.raises(RuntimeFailure) as mismatch:
+        driver.execute('vision.compare_samples', {
+            'official.image.compare.parameter.left': left,
+            'official.image.compare.parameter.right': right,
+            'official.image.compare.parameter.size_strategy': 'strict',
+        }, lambda: False)
+    assert mismatch.value.error_id == 'vision.sample_size_mismatch'
+
+    intersection = driver.execute('vision.compare_samples', {
+        'official.image.compare.parameter.left': left,
+        'official.image.compare.parameter.right': right,
+        'official.image.compare.parameter.size_strategy': 'intersection',
+    }, lambda: False)
+    assert intersection['image_comparison.field.compared_width'] == 3
+    assert intersection['image_comparison.field.compared_height'] == 4
+    assert intersection['image_comparison.field.similarity'] == 1.0
 def test_platform_runtime_opcode_set_is_fully_routed_by_session_runtime() -> None:
     assert _PLATFORM_RUNTIME_OPCODES == PlatformRuntimeV6._OPCODES

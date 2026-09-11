@@ -8,6 +8,7 @@ export { default as ProgramBottomFeedbackPanel } from './ProgramBottomFeedbackPa
 export type { BottomFeedbackTab } from './ProgramBottomFeedbackPanel.vue'
 export { default as ProgramProblemsPanel } from './ProgramProblemsPanel.vue'
 export { default as ProgramStructuredValueEditor } from './ProgramStructuredValueEditor.vue'
+export { default as ProgramFunctionSignatureDialog } from './ProgramFunctionSignatureDialog.vue'
 export { useProgramStore, ProgramApiError, ProgramProjectionError, ProgramStoreError } from './store'
 export { useProjectVariableStore, ProjectVariableStoreError } from './projectVariableStore'
 export { programApi } from './api'

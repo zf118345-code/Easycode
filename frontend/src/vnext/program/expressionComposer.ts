@@ -64,6 +64,14 @@ function optionalInner(typeId: string): string | null {
     return typeId.startsWith('optional<') && typeId.endsWith('>') ? typeId.slice(9, -1) : null
 }
 
+export function isConditionShorthandType(typeId: string): boolean {
+    return typeId === 'bool'
+        || Boolean(optionalInner(typeId))
+        || ['int64', 'float64', 'percentage', 'string'].includes(typeId)
+        || Boolean(genericParts(typeId, 'list'))
+        || Boolean(genericParts(typeId, 'map'))
+}
+
 export function isInlineExpressionValueType(typeId: string): boolean {
     let normalized = typeId
     while (optionalInner(normalized)) normalized = optionalInner(normalized) as string
@@ -969,6 +977,127 @@ function parseComparable(text: string, context: ParseContext, valueId: string): 
     return { value: literalNode(trimmed, 'string', valueId), error: '' }
 }
 
+function withValueId(value: ProgramValueNode, valueId: string): ProgramValueNode {
+    return { ...value, value_id: valueId }
+}
+
+function conditionFromValue(value: ProgramValueNode, valueId: string): ExpressionParseResult {
+    const valueType = value.value_type
+    if (valueType === 'bool') return { value: withValueId(value, valueId), error: '' }
+    const operand = withValueId(value, newProgramValueId('value_condition_operand'))
+    if (optionalInner(valueType)) {
+        const operationId = 'core.optional_has_value.v1'
+        return {
+            value: {
+                value_id: valueId, kind: 'computed', value_type: 'bool', operation_id: operationId,
+                operation_name: '结果.有结果', operation_input_names: { [`${operationId}.input.value`]: '值' },
+                inputs: { [`${operationId}.input.value`]: operand },
+            },
+            error: '',
+        }
+    }
+    if (['int64', 'float64', 'percentage'].includes(valueType)) {
+        return {
+            value: {
+                value_id: valueId, kind: 'compare', value_type: 'bool', operator: 'ne', left: operand,
+                right: literalNode(0, valueType, newProgramValueId('value_condition_zero')),
+            },
+            error: '',
+        }
+    }
+    if (valueType === 'string') {
+        return {
+            value: {
+                value_id: valueId, kind: 'compare', value_type: 'bool', operator: 'ne', left: operand,
+                right: literalNode('', 'string', newProgramValueId('value_condition_empty_text')),
+            },
+            error: '',
+        }
+    }
+    if (genericParts(valueType, 'list')) {
+        const operationId = 'core.list_is_empty.v1'
+        return {
+            value: {
+                value_id: valueId, kind: 'not', value_type: 'bool',
+                condition: {
+                    value_id: newProgramValueId('value_condition_empty'), kind: 'computed', value_type: 'bool',
+                    operation_id: operationId, operation_name: '列表.是否为空',
+                    operation_input_names: { [`${operationId}.input.list`]: '列表' },
+                    inputs: { [`${operationId}.input.list`]: operand },
+                },
+            },
+            error: '',
+        }
+    }
+    const mapTypes = genericParts(valueType, 'map')
+    if (mapTypes?.length === 2) {
+        const keysOperationId = 'core.map_keys.v1'
+        const emptyOperationId = 'core.list_is_empty.v1'
+        return {
+            value: {
+                value_id: valueId, kind: 'not', value_type: 'bool',
+                condition: {
+                    value_id: newProgramValueId('value_condition_empty'), kind: 'computed', value_type: 'bool',
+                    operation_id: emptyOperationId, operation_name: '列表.是否为空',
+                    operation_input_names: { [`${emptyOperationId}.input.list`]: '列表' },
+                    inputs: {
+                        [`${emptyOperationId}.input.list`]: {
+                            value_id: newProgramValueId('value_condition_keys'), kind: 'computed',
+                            value_type: `list<${mapTypes[0]}>`, operation_id: keysOperationId,
+                            operation_name: '字典.所有键', operation_input_names: { [`${keysOperationId}.input.map`]: '字典' },
+                            inputs: { [`${keysOperationId}.input.map`]: operand },
+                        },
+                    },
+                },
+            },
+            error: '',
+        }
+    }
+    return {
+        value: null,
+        error: `${programTypeDisplayName(valueType)}没有默认的条件含义；请选择它的具体字段或使用明确的判断操作。`,
+    }
+}
+
+function parseConditionShorthand(text: string, context: ParseContext, valueId: string): OptionalParseResult {
+    const normalized = stripOuterParentheses(text)
+    const member = parseMemberAccess(normalized, context, newProgramValueId('value_condition_source'))
+    if (member.handled) return member.value
+        ? { handled: true, ...conditionFromValue(member.value, valueId) }
+        : member
+    const reference = resolveReference(normalized, context.availableValues)
+    if (reference.value) {
+        return {
+            handled: true,
+            ...conditionFromValue(referenceProgramValue(
+                reference.value,
+                newProgramValueId('value_condition_source'),
+                reference.value.value_type,
+            ), valueId),
+        }
+    }
+    if (reference.error && /^(?:\[|@|(?:项目变量|项目|局部变量|局部)[·.])/.test(normalized)) {
+        return { handled: true, value: null, error: reference.error }
+    }
+    const call = parseFunctionCall(normalized, 'any', context, newProgramValueId('value_condition_source'))
+    if (call.handled) return call.value
+        ? { handled: true, ...conditionFromValue(call.value, valueId) }
+        : call
+    if (/^[+-]?\d+$/.test(normalized)) {
+        const parsed = parsePrimitive(normalized, 'int64', context, newProgramValueId('value_condition_source'))
+        return parsed.value ? { handled: true, ...conditionFromValue(parsed.value, valueId) } : { handled: true, ...parsed }
+    }
+    if (/^[+-]?(?:\d+\.\d*|\.\d+)$/.test(normalized)) {
+        const parsed = parsePrimitive(normalized, 'float64', context, newProgramValueId('value_condition_source'))
+        return parsed.value ? { handled: true, ...conditionFromValue(parsed.value, valueId) } : { handled: true, ...parsed }
+    }
+    if (/^[“"'].*[”"']$/.test(normalized)) {
+        const parsed = parsePrimitive(normalized, 'string', context, newProgramValueId('value_condition_source'))
+        return parsed.value ? { handled: true, ...conditionFromValue(parsed.value, valueId) } : { handled: true, ...parsed }
+    }
+    return { handled: false, value: null, error: '' }
+}
+
 function parseCondition(text: string, context: ParseContext, valueId: string): ExpressionParseResult {
     const normalized = stripOuterParentheses(text)
     const orSplit = splitTopLevel(normalized, ['||', '或'], true)
@@ -1020,7 +1149,8 @@ function parseCondition(text: string, context: ParseContext, valueId: string): E
         }
         return { value: { value_id: valueId, kind: 'compare', value_type: 'bool', operator, left: leftValue, right: rightValue }, error: '' }
     }
-    return parsePrimitive(normalized, 'bool', context, valueId)
+    const shorthand = parseConditionShorthand(normalized, context, valueId)
+    return shorthand.handled ? shorthand : parsePrimitive(normalized, 'bool', context, valueId)
 }
 
 function parseExpressionForType(
@@ -1043,8 +1173,11 @@ function parseExpressionForType(
     }
     const trimmed = normalizeExpressionPunctuation(rawTrimmed).trim()
     if (!trimmed) return { value: null, error: '请输入内容，或从候选中选择一个值。' }
-    const call = parseFunctionCall(trimmed, expectedType, context, valueId)
-    if (call.handled) return call
+    const call = parseFunctionCall(trimmed, expectedType === 'bool' ? 'any' : expectedType, context, valueId)
+    if (call.handled) {
+        if (expectedType === 'bool' && call.value) return conditionFromValue(call.value, valueId)
+        return call
+    }
     const list = parseListLiteral(trimmed, expectedType, context, valueId)
     if (list.handled) return list
     const innerOptionalType = optionalInner(expectedType)

@@ -41,7 +41,7 @@ _EXECUTABLE_OPCODES = {
     'target.wait_online',
     'target.status',
     'target.capture_frame',
-    'frame.save',
+    'frame.save', 'frame.crop_region', 'vision.compare_samples',
     'color.read',
     'color.find',
     'clipboard.read_text', 'clipboard.write_text',

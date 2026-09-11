@@ -199,6 +199,7 @@
                                         <VNextIconButton label="关闭查找" @click="closeFind"><X /></VNextIconButton>
                                     </div>
                                     <div v-else class="editor-header-actions">
+                                        <VNextIconButton class="icon-button" label="设置函数参数与返回值" :disabled="programStore.busy || programStore.readOnly || !activeProgram" @click="openProgramSignature"><SlidersHorizontal aria-hidden="true" /></VNextIconButton>
                                         <VNextIconButton class="icon-button" label="查找当前函数" :title="`查找当前函数（${ideShortcuts['edit.find'] || 'Ctrl+F'}）`" @click="openFind"><Search aria-hidden="true" /></VNextIconButton>
                                     </div></template>
                                 </VNextPaneHeader>
@@ -548,6 +549,15 @@
             </section>
         </div>
 
+        <ProgramFunctionSignatureDialog
+            :open="programSignatureOpen"
+            :program="activeProgram || null"
+            :busy="programStore.busy"
+            :error="programSignatureError"
+            @close="closeProgramSignature"
+            @save="saveProgramSignature"
+        />
+
         <div v-if="programStore.conflict && !conflictDialogDismissed" class="dialog-backdrop">
             <section class="conflict-dialog" role="alertdialog" aria-modal="true" aria-labelledby="conflict-title" @keydown="trapDialogFocus">
                 <header><CircleAlert :size="18" aria-hidden="true" /><h2 id="conflict-title">项目函数已在外部修改</h2></header>
@@ -623,6 +633,7 @@ import {
     Puzzle,
     ScanSearch,
     Search,
+    SlidersHorizontal,
     Square,
     StepForward,
     TerminalSquare,
@@ -646,6 +657,7 @@ import {
     ProgramFunctionLibrary,
     ProgramBottomFeedbackPanel,
     ProgramStructuredValueEditor,
+    ProgramFunctionSignatureDialog,
     programApi,
     availableValuesAtInsertion,
     availableValuesAtStatement,
@@ -839,6 +851,8 @@ const activeRightPanelOpen = computed(() => {
 })
 const resourceSelectionBusy = ref(false)
 const resourceCaptureBusy = ref(false)
+const programSignatureOpen = ref(false)
+const programSignatureError = ref('')
 const notice = reactive<{ tone: 'info' | 'success' | 'error'; message: string }>({ tone: 'info', message: '' })
 let runPollToken = 0
 let captureSessionWorkspaceKey = ''
@@ -847,6 +861,30 @@ let modifyVariablePickerOrigin: HTMLElement | null = null
 
 const activeProgram = computed(() => programStore.programs.find((item) => item.function_id === programStore.activeFunctionId))
 const activeProgramName = computed(() => programStore.document?.function.display_name || activeProgram.value?.display_name || '')
+
+function openProgramSignature(): void {
+    if (!activeProgram.value || programStore.busy || programStore.readOnly) return
+    programSignatureError.value = ''
+    programSignatureOpen.value = true
+}
+function closeProgramSignature(): void {
+    if (programStore.busy) return
+    programSignatureOpen.value = false
+    programSignatureError.value = ''
+}
+async function saveProgramSignature(payload: {
+    parameters: Array<{ parameter_id?: string | null; display_name: string; value_type: string; required: boolean; default_value: ProgramValueNode | null }>
+    returnType: string
+}): Promise<void> {
+    if (!activeProgram.value) return
+    programSignatureError.value = ''
+    try {
+        await programStore.updateProgramSignature(activeProgram.value.function_id, payload.parameters, payload.returnType)
+        programSignatureOpen.value = false
+    } catch (error) {
+        programSignatureError.value = error instanceof Error ? error.message : '无法保存函数参数'
+    }
+}
 const assignableVariables = computed<AvailableProgramValue[]>(() => {
     const documentModel = programStore.document
     const localValues = documentModel
@@ -901,6 +939,7 @@ const extensionFunctions = computed(() => programStore.availableFunctions
         parameters: item.parameters.map((parameter) => ({ name: parameter.name, display_name: parameter.display_name })),
         description: item.summary,
         implementation_state: item.implementation_state,
+        return_type: item.return_type,
     })))
 const quickInsertCandidates = computed(() => buildFunctionCatalog({
     officialFunctions: officialFunctions.value,
@@ -1538,7 +1577,9 @@ async function performFunctionInsert(selection: FunctionLibrarySelection): Promi
             target_id: activeTarget.value?.target_id,
         })
     } else {
-        await programStore.insertFunction(selection.function_id)
+        if (selection.intent === 'call_and_if') await programStore.insertFunctionAndIf(selection.function_id)
+        else if (selection.intent === 'execute_until') await programStore.insertExecuteUntil(selection.function_id)
+        else await programStore.insertFunction(selection.function_id)
     }
     return 'inserted'
 }

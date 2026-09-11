@@ -247,6 +247,33 @@ RECORD_TYPE_CONTRACTS: dict[str, RecordTypeV6] = {
             _field("frame_ref", "height", "高度", "int64"),
         ),
     ),
+    "image_sample": _reference_record(
+        type_id="image_sample",
+        display_name="画面区域样本",
+        fields=(
+            _field("image_sample", "sample_id", "样本 ID", "string", "仅在当前运行内有效的图片样本编号"),
+            _field("image_sample", "source_frame", "来源画面", "frame_ref"),
+            _field("image_sample", "source_target", "来源目标", "target_ref"),
+            _field("image_sample", "space_version", "空间版本", "string"),
+            _field("image_sample", "region", "实际区域", "rect"),
+            _field("image_sample", "width", "宽度", "int64"),
+            _field("image_sample", "height", "高度", "int64"),
+        ),
+    ),
+    "image_comparison": _reference_record(
+        type_id="image_comparison",
+        display_name="图像比较结果",
+        fields=(
+            _field("image_comparison", "similarity", "相似度", "percentage"),
+            _field("image_comparison", "same_size", "尺寸一致", "bool"),
+            _field("image_comparison", "compared_width", "比较宽度", "int64"),
+            _field("image_comparison", "compared_height", "比较高度", "int64"),
+            _field("image_comparison", "changed_pixel_ratio", "变化像素比例", "percentage"),
+            _field("image_comparison", "difference_region", "变化区域", "optional<rect>"),
+            _field("image_comparison", "left", "左侧样本", "image_sample"),
+            _field("image_comparison", "right", "右侧样本", "image_sample"),
+        ),
+    ),
     "image_match": _reference_record(
         type_id="image_match",
         display_name="图像匹配结果",

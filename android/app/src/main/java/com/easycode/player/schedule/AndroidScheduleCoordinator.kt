@@ -324,7 +324,7 @@ class AndroidScheduleCoordinator(private val app: EasyCodeApplication) : Runtime
 
     companion object {
         const val ACTION_ALARM = "com.easycode.player.action.SCHEDULE_ALARM"
-        private val CAPTURE_OPS = setOf("target.capture_frame", "frame.save", "color.read", "color.find", "vision.find", "vision.find_all", "standard.image.wait_visible", "standard.image.wait_hidden", "standard.image.click_once", "standard.image.click_until_hidden", "standard.image.click_position_until_visible", "standard.image.click_position_until_hidden")
+        private val CAPTURE_OPS = setOf("target.capture_frame", "frame.save", "frame.crop_region", "vision.compare_samples", "color.read", "color.find", "vision.find", "vision.find_all", "standard.image.wait_visible", "standard.image.wait_hidden", "standard.image.click_once", "standard.image.click_until_hidden", "standard.image.click_position_until_visible", "standard.image.click_position_until_hidden")
         private val INPUT_OPS = setOf(
             "input.click", "input.text", "input.scroll", "input.drag", "input.key",
             "control.find", "control.click", "control.read_text", "control.input_text",

@@ -5342,7 +5342,9 @@
                   "insert_assignment": "#/components/schemas/ProgramInsertAssignmentCommand",
                   "insert_break": "#/components/schemas/ProgramInsertBreakCommand",
                   "insert_call": "#/components/schemas/ProgramInsertCallCommand",
+                  "insert_call_and_if": "#/components/schemas/ProgramInsertCallAndIfCommand",
                   "insert_continue": "#/components/schemas/ProgramInsertContinueCommand",
+                  "insert_execute_until": "#/components/schemas/ProgramInsertExecuteUntilCommand",
                   "insert_fail": "#/components/schemas/ProgramInsertFailCommand",
                   "insert_if": "#/components/schemas/ProgramInsertIfCommand",
                   "insert_if_from_call_result": "#/components/schemas/ProgramInsertIfFromCallResultCommand",
@@ -5376,6 +5378,12 @@
               "oneOf": [
                 {
                   "$ref": "#/components/schemas/ProgramInsertCallCommand"
+                },
+                {
+                  "$ref": "#/components/schemas/ProgramInsertCallAndIfCommand"
+                },
+                {
+                  "$ref": "#/components/schemas/ProgramInsertExecuteUntilCommand"
                 },
                 {
                   "$ref": "#/components/schemas/ProgramInsertAssignmentCommand"
@@ -5518,7 +5526,9 @@
                 "insert_assignment": "#/components/schemas/ProgramInsertAssignmentCommand",
                 "insert_break": "#/components/schemas/ProgramInsertBreakCommand",
                 "insert_call": "#/components/schemas/ProgramInsertCallCommand",
+                "insert_call_and_if": "#/components/schemas/ProgramInsertCallAndIfCommand",
                 "insert_continue": "#/components/schemas/ProgramInsertContinueCommand",
+                "insert_execute_until": "#/components/schemas/ProgramInsertExecuteUntilCommand",
                 "insert_fail": "#/components/schemas/ProgramInsertFailCommand",
                 "insert_if": "#/components/schemas/ProgramInsertIfCommand",
                 "insert_if_from_call_result": "#/components/schemas/ProgramInsertIfFromCallResultCommand",
@@ -5552,6 +5562,12 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ProgramInsertCallCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ProgramInsertCallAndIfCommand"
+              },
+              {
+                "$ref": "#/components/schemas/ProgramInsertExecuteUntilCommand"
               },
               {
                 "$ref": "#/components/schemas/ProgramInsertAssignmentCommand"
@@ -6026,6 +6042,169 @@
         "title": "ProgramInsertBreakCommand",
         "type": "object"
       },
+      "ProgramInsertCallAndIfCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "asset_ref": "#/components/schemas/AssetReferenceValue",
+                  "bool": "#/components/schemas/BoolValue",
+                  "compare": "#/components/schemas/ComparisonValue",
+                  "condition_group": "#/components/schemas/ConditionGroupValue",
+                  "date": "#/components/schemas/DateValue",
+                  "datetime": "#/components/schemas/DateTimeValue",
+                  "duration": "#/components/schemas/DurationValue",
+                  "entity_ref": "#/components/schemas/EntityReferenceValue",
+                  "float64": "#/components/schemas/FloatValue",
+                  "int64": "#/components/schemas/IntValue",
+                  "json": "#/components/schemas/JsonValue",
+                  "list": "#/components/schemas/ListValue",
+                  "map": "#/components/schemas/MapValue",
+                  "member_access": "#/components/schemas/MemberAccessValue",
+                  "not": "#/components/schemas/NotValue",
+                  "null": "#/components/schemas/NullValue",
+                  "operation": "#/components/schemas/PureOperationValue",
+                  "path": "#/components/schemas/PathValue",
+                  "point": "#/components/schemas/PointValue",
+                  "project_variable_ref": "#/components/schemas/ProjectVariableReferenceValue",
+                  "record": "#/components/schemas/RecordValue",
+                  "rect": "#/components/schemas/RectValue",
+                  "selector": "#/components/schemas/SelectorValue",
+                  "string": "#/components/schemas/StringValue",
+                  "symbol_ref": "#/components/schemas/SymbolReferenceValue",
+                  "target_ref": "#/components/schemas/TargetReferenceValue",
+                  "time": "#/components/schemas/TimeValue",
+                  "unset": "#/components/schemas/UnsetValue"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/UnsetValue"
+                },
+                {
+                  "$ref": "#/components/schemas/NullValue"
+                },
+                {
+                  "$ref": "#/components/schemas/StringValue"
+                },
+                {
+                  "$ref": "#/components/schemas/IntValue"
+                },
+                {
+                  "$ref": "#/components/schemas/FloatValue"
+                },
+                {
+                  "$ref": "#/components/schemas/BoolValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DateValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DateTimeValue"
+                },
+                {
+                  "$ref": "#/components/schemas/TimeValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DurationValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PointValue"
+                },
+                {
+                  "$ref": "#/components/schemas/RectValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PathValue"
+                },
+                {
+                  "$ref": "#/components/schemas/SymbolReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ProjectVariableReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/AssetReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/TargetReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/EntityReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/MemberAccessValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ListValue"
+                },
+                {
+                  "$ref": "#/components/schemas/MapValue"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordValue"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PureOperationValue"
+                },
+                {
+                  "$ref": "#/components/schemas/SelectorValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ComparisonValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ConditionGroupValue"
+                },
+                {
+                  "$ref": "#/components/schemas/NotValue"
+                }
+              ]
+            },
+            "title": "Arguments",
+            "type": "object"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "function_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Function Id",
+            "type": "string"
+          },
+          "kind": {
+            "const": "insert_call_and_if",
+            "title": "Kind",
+            "type": "string"
+          },
+          "location": {
+            "$ref": "#/components/schemas/ProgramLocationRequest"
+          }
+        },
+        "required": [
+          "kind",
+          "function_id"
+        ],
+        "title": "ProgramInsertCallAndIfCommand",
+        "type": "object"
+      },
       "ProgramInsertCallCommand": {
         "additionalProperties": false,
         "properties": {
@@ -6192,6 +6371,176 @@
           "kind"
         ],
         "title": "ProgramInsertContinueCommand",
+        "type": "object"
+      },
+      "ProgramInsertExecuteUntilCommand": {
+        "additionalProperties": false,
+        "properties": {
+          "arguments": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "asset_ref": "#/components/schemas/AssetReferenceValue",
+                  "bool": "#/components/schemas/BoolValue",
+                  "compare": "#/components/schemas/ComparisonValue",
+                  "condition_group": "#/components/schemas/ConditionGroupValue",
+                  "date": "#/components/schemas/DateValue",
+                  "datetime": "#/components/schemas/DateTimeValue",
+                  "duration": "#/components/schemas/DurationValue",
+                  "entity_ref": "#/components/schemas/EntityReferenceValue",
+                  "float64": "#/components/schemas/FloatValue",
+                  "int64": "#/components/schemas/IntValue",
+                  "json": "#/components/schemas/JsonValue",
+                  "list": "#/components/schemas/ListValue",
+                  "map": "#/components/schemas/MapValue",
+                  "member_access": "#/components/schemas/MemberAccessValue",
+                  "not": "#/components/schemas/NotValue",
+                  "null": "#/components/schemas/NullValue",
+                  "operation": "#/components/schemas/PureOperationValue",
+                  "path": "#/components/schemas/PathValue",
+                  "point": "#/components/schemas/PointValue",
+                  "project_variable_ref": "#/components/schemas/ProjectVariableReferenceValue",
+                  "record": "#/components/schemas/RecordValue",
+                  "rect": "#/components/schemas/RectValue",
+                  "selector": "#/components/schemas/SelectorValue",
+                  "string": "#/components/schemas/StringValue",
+                  "symbol_ref": "#/components/schemas/SymbolReferenceValue",
+                  "target_ref": "#/components/schemas/TargetReferenceValue",
+                  "time": "#/components/schemas/TimeValue",
+                  "unset": "#/components/schemas/UnsetValue"
+                },
+                "propertyName": "kind"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/UnsetValue"
+                },
+                {
+                  "$ref": "#/components/schemas/NullValue"
+                },
+                {
+                  "$ref": "#/components/schemas/StringValue"
+                },
+                {
+                  "$ref": "#/components/schemas/IntValue"
+                },
+                {
+                  "$ref": "#/components/schemas/FloatValue"
+                },
+                {
+                  "$ref": "#/components/schemas/BoolValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DateValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DateTimeValue"
+                },
+                {
+                  "$ref": "#/components/schemas/TimeValue"
+                },
+                {
+                  "$ref": "#/components/schemas/DurationValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PointValue"
+                },
+                {
+                  "$ref": "#/components/schemas/RectValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PathValue"
+                },
+                {
+                  "$ref": "#/components/schemas/SymbolReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ProjectVariableReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/AssetReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/TargetReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/EntityReferenceValue"
+                },
+                {
+                  "$ref": "#/components/schemas/MemberAccessValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ListValue"
+                },
+                {
+                  "$ref": "#/components/schemas/MapValue"
+                },
+                {
+                  "$ref": "#/components/schemas/RecordValue"
+                },
+                {
+                  "$ref": "#/components/schemas/JsonValue"
+                },
+                {
+                  "$ref": "#/components/schemas/PureOperationValue"
+                },
+                {
+                  "$ref": "#/components/schemas/SelectorValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ComparisonValue"
+                },
+                {
+                  "$ref": "#/components/schemas/ConditionGroupValue"
+                },
+                {
+                  "$ref": "#/components/schemas/NotValue"
+                }
+              ]
+            },
+            "title": "Arguments",
+            "type": "object"
+          },
+          "condition_function_id": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Condition Function Id",
+            "type": "string"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "kind": {
+            "const": "insert_execute_until",
+            "title": "Kind",
+            "type": "string"
+          },
+          "location": {
+            "$ref": "#/components/schemas/ProgramLocationRequest"
+          },
+          "max_attempts": {
+            "default": 20,
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "title": "Max Attempts",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "kind",
+          "condition_function_id"
+        ],
+        "title": "ProgramInsertExecuteUntilCommand",
         "type": "object"
       },
       "ProgramInsertFailCommand": {
@@ -8262,6 +8611,209 @@
           "statement_id"
         ],
         "title": "ProgramSetStepLabelCommand",
+        "type": "object"
+      },
+      "ProgramSignatureParameterRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "default_value": {
+            "anyOf": [
+              {
+                "discriminator": {
+                  "mapping": {
+                    "asset_ref": "#/components/schemas/AssetReferenceValue",
+                    "bool": "#/components/schemas/BoolValue",
+                    "compare": "#/components/schemas/ComparisonValue",
+                    "condition_group": "#/components/schemas/ConditionGroupValue",
+                    "date": "#/components/schemas/DateValue",
+                    "datetime": "#/components/schemas/DateTimeValue",
+                    "duration": "#/components/schemas/DurationValue",
+                    "entity_ref": "#/components/schemas/EntityReferenceValue",
+                    "float64": "#/components/schemas/FloatValue",
+                    "int64": "#/components/schemas/IntValue",
+                    "json": "#/components/schemas/JsonValue",
+                    "list": "#/components/schemas/ListValue",
+                    "map": "#/components/schemas/MapValue",
+                    "member_access": "#/components/schemas/MemberAccessValue",
+                    "not": "#/components/schemas/NotValue",
+                    "null": "#/components/schemas/NullValue",
+                    "operation": "#/components/schemas/PureOperationValue",
+                    "path": "#/components/schemas/PathValue",
+                    "point": "#/components/schemas/PointValue",
+                    "project_variable_ref": "#/components/schemas/ProjectVariableReferenceValue",
+                    "record": "#/components/schemas/RecordValue",
+                    "rect": "#/components/schemas/RectValue",
+                    "selector": "#/components/schemas/SelectorValue",
+                    "string": "#/components/schemas/StringValue",
+                    "symbol_ref": "#/components/schemas/SymbolReferenceValue",
+                    "target_ref": "#/components/schemas/TargetReferenceValue",
+                    "time": "#/components/schemas/TimeValue",
+                    "unset": "#/components/schemas/UnsetValue"
+                  },
+                  "propertyName": "kind"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/UnsetValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NullValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/StringValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/IntValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/FloatValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/BoolValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DateValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DateTimeValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TimeValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/DurationValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PointValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RectValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PathValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SymbolReferenceValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ProjectVariableReferenceValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/AssetReferenceValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/TargetReferenceValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/EntityReferenceValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MemberAccessValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ListValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/MapValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RecordValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/JsonValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/PureOperationValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/SelectorValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ComparisonValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/ConditionGroupValue"
+                  },
+                  {
+                    "$ref": "#/components/schemas/NotValue"
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Default Value"
+          },
+          "display_name": {
+            "maxLength": 160,
+            "minLength": 1,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "parameter_id": {
+            "anyOf": [
+              {
+                "maxLength": 160,
+                "minLength": 1,
+                "pattern": "^[A-Za-z][A-Za-z0-9_.-]*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parameter Id"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "value_type": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Value Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "display_name",
+          "value_type"
+        ],
+        "title": "ProgramSignatureParameterRequest",
+        "type": "object"
+      },
+      "ProgramSignatureUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maxLength": 96,
+            "minLength": 1,
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "title": "Expected Revision",
+            "type": "string"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/ProgramSignatureParameterRequest"
+            },
+            "maxItems": 64,
+            "title": "Parameters",
+            "type": "array"
+          },
+          "return_type": {
+            "maxLength": 240,
+            "minLength": 1,
+            "title": "Return Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "return_type"
+        ],
+        "title": "ProgramSignatureUpdateRequest",
         "type": "object"
       },
       "ProgramUpdateArgumentCommand": {
@@ -23186,6 +23738,126 @@
           }
         },
         "summary": "Run Program",
+        "tags": [
+          "EasyCode vNext"
+        ]
+      }
+    },
+    "/api/vnext/programs/{function_id}/signature": {
+      "put": {
+        "operationId": "update_program_signature_api_vnext_programs__function_id__signature_put",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "function_id",
+            "required": true,
+            "schema": {
+              "title": "Function Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Workspace-ID",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "X-Workspace-Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Workspace-Generation",
+            "required": false,
+            "schema": {
+              "default": -1,
+              "title": "X-Workspace-Generation",
+              "type": "integer"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProgramSignatureUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "请求无效"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "资源不存在"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "状态冲突"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "已退役接口"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "字段校验失败"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            },
+            "description": "内部错误"
+          }
+        },
+        "summary": "Update Program Signature",
         "tags": [
           "EasyCode vNext"
         ]

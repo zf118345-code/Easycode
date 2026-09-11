@@ -7,6 +7,8 @@ from core.vnext.program_commands import (
     delete_statement,
     insert_assignment,
     insert_call,
+    insert_call_and_if,
+    insert_execute_until,
     insert_if,
     insert_if_from_call_result,
     insert_listen,
@@ -53,6 +55,7 @@ from core.vnext.program_types import (
     MemberAccessValue,
     MessageEventSource,
     NullValue,
+    NotValue,
     ProgramDocument,
     ProgramFunction,
     ProgramParameter,
@@ -692,6 +695,64 @@ def test_call_result_condition_supports_bool_and_rejects_other_results_without_m
     else:
         raise AssertionError('unit result must not create a condition')
     assert wait_call.document.function.statements[0].result_binding is None
+
+
+def test_call_and_if_command_creates_one_typed_structure_from_an_empty_document() -> None:
+    document = create_program_document(
+        '主程序', function_id='func_call_and_if', document_id='doc_call_and_if'
+    )
+
+    inserted = insert_call_and_if(
+        document,
+        official_function_registry_v6,
+        'official.image.find',
+        display_name='出战按钮',
+    )
+
+    call, condition = inserted.document.function.statements
+    assert call.kind == 'call'
+    assert call.result_binding is not None
+    assert call.result_binding.display_name == '出战按钮'
+    assert condition.kind == 'if'
+    assert isinstance(condition.condition, ComparisonValue)
+    assert condition.condition.operator == 'ne'
+    assert condition.condition.left.symbol_id == call.result_binding.symbol_id
+    assert inserted.selected_statement_id == condition.statement_id
+    assert call.statement_id in inserted.created_ids
+    assert condition.statement_id in inserted.created_ids
+
+
+def test_execute_until_is_a_bounded_observe_before_act_structure() -> None:
+    document = create_program_document(
+        '主程序', function_id='func_execute_until', document_id='doc_execute_until'
+    )
+
+    inserted = insert_execute_until(
+        document,
+        official_function_registry_v6,
+        'official.image.find',
+        display_name='出战按钮',
+        max_attempts=12,
+    )
+
+    declaration, loop, timeout_guard = inserted.document.function.statements
+    assert declaration.kind == 'assignment'
+    assert declaration.target.declare is True
+    assert declaration.value.value is False
+    assert loop.kind == 'loop'
+    assert loop.mode == 'repeat'
+    assert loop.source.value == 12
+    observation, result_guard = loop.body
+    assert observation.kind == 'call'
+    assert observation.function_id == 'official.image.find'
+    assert observation.result_binding.display_name == '出战按钮'
+    assert result_guard.kind == 'if'
+    assert [item.kind for item in result_guard.then_statements] == ['assignment', 'break']
+    assert inserted.selected_statement_id == result_guard.statement_id
+    assert timeout_guard.kind == 'if'
+    assert isinstance(timeout_guard.condition, NotValue)
+    assert timeout_guard.then_statements[0].kind == 'fail'
+    assert timeout_guard.then_statements[0].message.value == '达到最大尝试次数后，出战按钮仍未满足'
 
 
 def test_assignment_target_can_switch_between_local_and_project_variable() -> None:

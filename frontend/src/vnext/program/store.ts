@@ -23,6 +23,7 @@ import type {
     ProgramStatement,
     ProgramStatementState,
     ProgramValueDraft,
+    ProgramValueNode,
 } from './types'
 import type {
     AvailableFunctionContractDto,
@@ -32,6 +33,7 @@ import type {
     ProgramRunRequest,
     ProgramRunResponse,
     ProgramServerCommand,
+    ProgramSignatureParameterInput,
     ProgramSnapshotDto,
     ProgramStatementLocationDto,
     ProgramSummaryDto,
@@ -597,6 +599,59 @@ export const useProgramStore = defineStore('vnext-program', () => {
         })
     }
 
+    function updateProgramSignature(
+        functionId: string,
+        parameters: Array<{
+            parameter_id?: string | null
+            display_name: string
+            value_type: string
+            required: boolean
+            default_value: ProgramValueNode | null
+        }>,
+        returnType: string,
+    ): Promise<ProgramSnapshotDto> {
+        ensureWritable()
+        const normalizedReturnType = returnType.trim()
+        if (!normalizedReturnType) return Promise.reject(new ProgramStoreError('请选择返回类型'))
+        const currentScope = captureScope(false)
+        return enqueueMutation(async () => {
+            lifecycleBlocker.value = null
+            conflict.value = null
+            const summary = programs.value.find((item) => item.function_id === functionId)
+            if (!summary) throw new ProgramStoreError('项目函数已经不存在')
+            let snapshot: ProgramSnapshotDto
+            try {
+                snapshot = await programApi.updateProgramSignature(
+                    requireWorkspace(),
+                functionId,
+                summary.revision,
+                parameters.map((parameter): ProgramSignatureParameterInput => ({
+                    ...parameter,
+                    default_value: parameter.default_value
+                        ? uiProgramValueToServerValue(parameter.default_value)
+                        : null,
+                })),
+                    normalizedReturnType,
+                )
+            } catch (error) {
+                if (error instanceof ProgramApiError && error.code === 'program_revision_conflict') {
+                    const details = error.diagnostics[0] || {}
+                    conflict.value = {
+                        function_id: functionId,
+                        expected_revision: String(details.expected_revision || summary.revision),
+                        actual_revision: String(details.actual_revision || ''),
+                        message: error.message,
+                    }
+                }
+                throw error
+            }
+            assertScope(currentScope)
+            if (functionId === activeFunctionId.value) adoptSnapshot(snapshot)
+            else updateProgramSummary(snapshot)
+            return snapshot
+        })
+    }
+
     function deleteProgram(functionId: string): Promise<void> {
         ensureWritable()
         const currentScope = captureScope(false)
@@ -717,6 +772,49 @@ export const useProgramStore = defineStore('vnext-program', () => {
         return enqueueMutation(() => applyOne({
             kind: 'insert_call',
             function_id: functionId,
+            location: insertionLocation(),
+        }, scope))
+    }
+
+    function insertFunctionAndIf(functionId: string): Promise<ProgramSnapshotDto> {
+        if (!availableFunctionIds.value.has(functionId)) {
+            return Promise.reject(new ProgramStoreError('该函数尚未由后端确认可运行，不能插入'))
+        }
+        if (functionId === activeFunctionId.value) {
+            return Promise.reject(new ProgramStoreError('项目函数不能直接调用自身'))
+        }
+        const returnType = availableFunctions.value.find((item) => item.function_id === functionId)?.return_type
+            || programs.value.find((item) => item.function_id === functionId)?.return_type
+            || ''
+        if (returnType !== 'bool' && !returnType.startsWith('optional<')) {
+            return Promise.reject(new ProgramStoreError('只有布尔或可能无结果的函数可以直接添加判断'))
+        }
+        const scope = captureScope()
+        return enqueueMutation(() => applyOne({
+            kind: 'insert_call_and_if',
+            function_id: functionId,
+            location: insertionLocation(),
+        }, scope))
+    }
+
+    function insertExecuteUntil(functionId: string): Promise<ProgramSnapshotDto> {
+        if (!availableFunctionIds.value.has(functionId)) {
+            return Promise.reject(new ProgramStoreError('该函数尚未由后端确认可运行，不能作为终止条件'))
+        }
+        if (functionId === activeFunctionId.value) {
+            return Promise.reject(new ProgramStoreError('项目函数不能直接调用自身'))
+        }
+        const returnType = availableFunctions.value.find((item) => item.function_id === functionId)?.return_type
+            || programs.value.find((item) => item.function_id === functionId)?.return_type
+            || ''
+        if (returnType !== 'bool' && !returnType.startsWith('optional<')) {
+            return Promise.reject(new ProgramStoreError('执行直到的观察函数必须返回布尔或可能无结果的值'))
+        }
+        const scope = captureScope()
+        return enqueueMutation(() => applyOne({
+            kind: 'insert_execute_until',
+            condition_function_id: functionId,
+            max_attempts: 20,
             location: insertionLocation(),
         }, scope))
     }
@@ -1381,8 +1479,11 @@ export const useProgramStore = defineStore('vnext-program', () => {
         loadProgram,
         createProgram,
         renameProgram,
+        updateProgramSignature,
         deleteProgram,
         insertFunction,
+        insertFunctionAndIf,
+        insertExecuteUntil,
         insertStructure,
         applyUiCommand,
         extractStatements,

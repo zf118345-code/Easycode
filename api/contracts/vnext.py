@@ -388,6 +388,24 @@ class ProgramRenameRequest(StrictRequest):
     display_name: str = Field(min_length=1, max_length=160)
 
 
+class ProgramSignatureParameterRequest(StrictRequest):
+    parameter_id: StableId | None = None
+    display_name: str = Field(min_length=1, max_length=160)
+    value_type: str = Field(min_length=1, max_length=240)
+    required: bool = True
+    default_value: ValueNode | None = None
+
+
+class ProgramSignatureUpdateRequest(StrictRequest):
+    expected_revision: str = Field(
+        min_length=1,
+        max_length=96,
+        pattern=r'^sha256:[0-9a-f]{64}$',
+    )
+    parameters: list[ProgramSignatureParameterRequest] = Field(default_factory=list, max_length=64)
+    return_type: str = Field(min_length=1, max_length=240)
+
+
 class ProgramLocationRequest(StrictRequest):
     parent_statement_id: str | None = Field(default=None, max_length=160)
     block: Literal[
@@ -401,6 +419,23 @@ class ProgramInsertCallCommand(StrictRequest):
     kind: Literal['insert_call']
     function_id: str = Field(min_length=1, max_length=160)
     arguments: dict[str, ValueNode] = Field(default_factory=dict)
+    location: ProgramLocationRequest = Field(default_factory=ProgramLocationRequest)
+
+
+class ProgramInsertCallAndIfCommand(StrictRequest):
+    kind: Literal['insert_call_and_if']
+    function_id: str = Field(min_length=1, max_length=160)
+    arguments: dict[str, ValueNode] = Field(default_factory=dict)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    location: ProgramLocationRequest = Field(default_factory=ProgramLocationRequest)
+
+
+class ProgramInsertExecuteUntilCommand(StrictRequest):
+    kind: Literal['insert_execute_until']
+    condition_function_id: str = Field(min_length=1, max_length=160)
+    arguments: dict[str, ValueNode] = Field(default_factory=dict)
+    display_name: str | None = Field(default=None, min_length=1, max_length=160)
+    max_attempts: int = Field(default=20, ge=1, le=100_000)
     location: ProgramLocationRequest = Field(default_factory=ProgramLocationRequest)
 
 
@@ -648,6 +683,8 @@ class ProgramDeleteStatementsCommand(StrictRequest):
 
 ProgramCommandRequestValue = Annotated[
     ProgramInsertCallCommand
+    | ProgramInsertCallAndIfCommand
+    | ProgramInsertExecuteUntilCommand
     | ProgramInsertAssignmentCommand
     | ProgramInsertIfCommand
     | ProgramInsertIfFromCallResultCommand

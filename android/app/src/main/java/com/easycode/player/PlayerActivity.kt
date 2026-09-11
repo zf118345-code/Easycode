@@ -1005,7 +1005,8 @@ class PlayerActivity : Activity(), RuntimeObserver {
     }
 
     private fun ecirNeedsCapture(): Boolean = containsOpcode(setOf(
-        "target.capture_frame", "frame.save", "color.read", "color.find", "vision.find", "vision.find_all",
+        "target.capture_frame", "frame.save", "frame.crop_region", "vision.compare_samples",
+        "color.read", "color.find", "vision.find", "vision.find_all",
         "standard.image.wait_visible", "standard.image.wait_hidden",
         "standard.image.click_once", "standard.image.click_until_hidden",
         "standard.image.click_position_until_visible", "standard.image.click_position_until_hidden",

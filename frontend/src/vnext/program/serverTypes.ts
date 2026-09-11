@@ -44,6 +44,14 @@ export interface ServerProgramParameter {
     default_value: ServerProgramValueNode | null
 }
 
+export interface ProgramSignatureParameterInput {
+    parameter_id?: string | null
+    display_name: string
+    value_type: string
+    required: boolean
+    default_value: ServerProgramValueNode | null
+}
+
 export interface ServerProgramResultBinding { symbol_id: string; display_name: string; value_type: string; declare: boolean }
 export interface ServerLoopBinding { symbol_id: string; display_name: string; value_type: string }
 export type ServerAssignmentTarget =
@@ -252,6 +260,8 @@ export interface ProgramStatementLocationDto {
 }
 export type ProgramServerCommand =
     | { kind: 'insert_call'; function_id: string; arguments?: Record<string, ServerProgramValueNode>; location: ProgramStatementLocationDto }
+    | { kind: 'insert_call_and_if'; function_id: string; arguments?: Record<string, ServerProgramValueNode>; display_name?: string | null; location: ProgramStatementLocationDto }
+    | { kind: 'insert_execute_until'; condition_function_id: string; arguments?: Record<string, ServerProgramValueNode>; display_name?: string | null; max_attempts?: number; location: ProgramStatementLocationDto }
     | { kind: 'insert_assignment'; target: ServerAssignmentTarget; value: ServerProgramValueNode; location: ProgramStatementLocationDto }
     | { kind: 'insert_if'; condition: ServerProgramValueNode; location: ProgramStatementLocationDto }
     | { kind: 'insert_if_from_call_result'; statement_id: string; display_name?: string | null }

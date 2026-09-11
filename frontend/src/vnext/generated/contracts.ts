@@ -551,6 +551,14 @@ export type ProgramInsertBreakCommand = {
     "location"?: ProgramLocationRequest
 }
 
+export type ProgramInsertCallAndIfCommand = {
+    "kind": "insert_call_and_if"
+    "function_id": string
+    "arguments"?: Record<string, unknown>
+    "display_name"?: string | null
+    "location"?: ProgramLocationRequest
+}
+
 export type ProgramInsertCallCommand = {
     "kind": "insert_call"
     "function_id": string
@@ -560,6 +568,15 @@ export type ProgramInsertCallCommand = {
 
 export type ProgramInsertContinueCommand = {
     "kind": "insert_continue"
+    "location"?: ProgramLocationRequest
+}
+
+export type ProgramInsertExecuteUntilCommand = {
+    "kind": "insert_execute_until"
+    "condition_function_id": string
+    "arguments"?: Record<string, unknown>
+    "display_name"?: string | null
+    "max_attempts"?: number
     "location"?: ProgramLocationRequest
 }
 
@@ -697,6 +714,20 @@ export type ProgramSetStepLabelCommand = {
     "kind": "set_step_label"
     "statement_id": string
     "label"?: string | null
+}
+
+export type ProgramSignatureParameterRequest = {
+    "parameter_id"?: string | null
+    "display_name": string
+    "value_type": string
+    "required"?: boolean
+    "default_value"?: unknown | null
+}
+
+export type ProgramSignatureUpdateRequest = {
+    "expected_revision": string
+    "parameters"?: Array<ProgramSignatureParameterRequest>
+    "return_type": string
 }
 
 export type ProgramUpdateArgumentCommand = {

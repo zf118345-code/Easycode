@@ -15,13 +15,16 @@ from .program_contracts import (
 )
 from .program_types import (
     AssignmentStatement,
+    BoolValue,
     BreakStatement,
     CallStatement,
     CatchClause,
+    ComparisonValue,
     DurationValue,
     ContinueStatement,
     FailStatement,
     IfStatement,
+    IntValue,
     JsonValue,
     ListenStatement,
     ListValue,
@@ -32,6 +35,7 @@ from .program_types import (
     MapValue,
     MessageEventSource,
     NullValue,
+    NotValue,
     ProgramDocument,
     ProjectVariableAssignmentTarget,
     RecordValue,
@@ -39,6 +43,8 @@ from .program_types import (
     RetryPolicy,
     ReturnStatement,
     Statement,
+    StringValue,
+    SymbolReferenceValue,
     TargetScopeStatement,
     TryStatement,
     UnsetValue,
@@ -437,6 +443,189 @@ def insert_if_from_call_result(
         _validate_command_result(raw, registry),
         if_statement['statement_id'],
         tuple(created_ids),
+    )
+
+
+def insert_call_and_if(
+    document: ProgramDocument,
+    registry: FunctionContractProvider,
+    function_id: str,
+    *,
+    location: StatementLocation = StatementLocation(),
+    arguments: Mapping[str, ValueNode] | None = None,
+    display_name: str | None = None,
+) -> ProgramEditResult:
+    """Create one ordinary call and its adjacent result guard as one edit."""
+
+    inserted = insert_call(
+        document,
+        registry,
+        function_id,
+        location=location,
+        arguments=arguments,
+    )
+    guarded = insert_if_from_call_result(
+        inserted.document,
+        registry,
+        inserted.selected_statement_id,
+        display_name=display_name,
+    )
+    return ProgramEditResult(
+        guarded.document,
+        guarded.selected_statement_id,
+        tuple((*inserted.created_ids, *guarded.created_ids)),
+    )
+
+
+def insert_execute_until(
+    document: ProgramDocument,
+    registry: FunctionContractProvider,
+    condition_function_id: str,
+    *,
+    location: StatementLocation = StatementLocation(),
+    arguments: Mapping[str, ValueNode] | None = None,
+    display_name: str | None = None,
+    max_attempts: int = 20,
+) -> ProgramEditResult:
+    """Create a bounded observe-before-act loop from ordinary statements.
+
+    The selected statement is the inner result guard.  A subsequent ordinary
+    insertion therefore lands after that guard inside the loop body, which is
+    the action slot.  No special Runtime opcode or persisted source syntax is
+    introduced.
+    """
+
+    if isinstance(max_attempts, bool) or not 1 <= max_attempts <= 100_000:
+        raise ProgramCommandError('max_attempts must be between 1 and 100000')
+    try:
+        contract = require_contract(registry, condition_function_id)
+    except KeyError as exc:
+        raise ProgramCommandError(
+            f'function contract not found: {condition_function_id}'
+        ) from exc
+    result_type = str(getattr(contract, 'return_type', '') or '')
+    if result_type != 'bool' and not (
+        result_type.startswith('optional<') and result_type.endswith('>')
+    ):
+        raise ProgramCommandError(
+            'execute-until observation must return bool or optional'
+        )
+
+    provided = dict(arguments or {})
+    allowed = {item.parameter_id for item in contract.parameters}
+    unknown = sorted(set(provided) - allowed)
+    if unknown:
+        raise ProgramCommandError(
+            f'unknown parameters for {condition_function_id}: {", ".join(unknown)}'
+        )
+    encoded_arguments = {
+        parameter.parameter_id: provided.get(parameter.parameter_id) or _default_value(parameter)
+        for parameter in contract.parameters
+    }
+
+    completed_symbol_id = new_stable_id('symbol')
+    observation_symbol_id = new_stable_id('symbol')
+    completed_name = '直到条件已满足'
+    contract_name = str(
+        getattr(contract, 'name', '')
+        or getattr(contract, 'qualified_name', '')
+        or '条件'
+    )
+    observation_name = str(display_name or f'{contract_name}结果').strip()
+
+    completed_reference = SymbolReferenceValue(
+        value_id=new_stable_id('value'),
+        symbol_id=completed_symbol_id,
+        value_type='bool',
+    )
+    observation_reference = SymbolReferenceValue(
+        value_id=new_stable_id('value'),
+        symbol_id=observation_symbol_id,
+        value_type=result_type,
+    )
+    observation_condition: ValueNode
+    if result_type == 'bool':
+        observation_condition = observation_reference
+    else:
+        observation_condition = ComparisonValue(
+            value_id=new_stable_id('value'),
+            operator='ne',
+            left=observation_reference,
+            right=NullValue(value_id=new_stable_id('value')),
+        )
+
+    declare_completed = AssignmentStatement(
+        statement_id=new_stable_id('stmt'),
+        target=LocalAssignmentTarget(
+            symbol_id=completed_symbol_id,
+            display_name=completed_name,
+            value_type='bool',
+            declare=True,
+        ),
+        value=BoolValue(value_id=new_stable_id('value'), value=False),
+    )
+    observation_call = CallStatement(
+        statement_id=new_stable_id('stmt'),
+        function_id=condition_function_id,
+        arguments=encoded_arguments,
+        result_binding=ResultBinding(
+            symbol_id=observation_symbol_id,
+            display_name=observation_name,
+            value_type=result_type,
+        ),
+    )
+    mark_completed = AssignmentStatement(
+        statement_id=new_stable_id('stmt'),
+        target=LocalAssignmentTarget(
+            symbol_id=completed_symbol_id,
+            display_name=completed_name,
+            value_type='bool',
+            declare=False,
+        ),
+        value=BoolValue(value_id=new_stable_id('value'), value=True),
+    )
+    break_statement = BreakStatement(statement_id=new_stable_id('stmt'))
+    result_guard = IfStatement(
+        statement_id=new_stable_id('stmt'),
+        condition=observation_condition,
+        then_statements=(mark_completed, break_statement),
+    )
+    loop = LoopStatement(
+        statement_id=new_stable_id('stmt'),
+        mode='repeat',
+        source=IntValue(value_id=new_stable_id('value'), value=max_attempts),
+        body=(observation_call, result_guard),
+    )
+    timeout_failure = FailStatement(
+        statement_id=new_stable_id('stmt'),
+        error_id='ExecuteUntil.ConditionNotMet',
+        message=StringValue(
+            value_id=new_stable_id('value'),
+            value=f'达到最大尝试次数后，{observation_name}仍未满足',
+        ),
+    )
+    timeout_guard = IfStatement(
+        statement_id=new_stable_id('stmt'),
+        condition=NotValue(
+            value_id=new_stable_id('value'),
+            condition=completed_reference,
+        ),
+        then_statements=(timeout_failure,),
+    )
+
+    raw = document.model_dump(mode='json')
+    target = _target_block(raw, location)
+    payloads = [
+        declare_completed.model_dump(mode='json'),
+        loop.model_dump(mode='json'),
+        timeout_guard.model_dump(mode='json'),
+    ]
+    for payload in payloads:
+        _insert_into(target, payload, location.before_statement_id)
+    return ProgramEditResult(
+        _validate_command_result(raw, registry),
+        result_guard.statement_id,
+        tuple(item for payload in payloads for item in _owned_ids(payload)),
     )
 
 
@@ -1402,6 +1591,8 @@ __all__ = [
     'insert_assignment',
     'insert_break',
     'insert_call',
+    'insert_call_and_if',
+    'insert_execute_until',
     'insert_continue',
     'insert_fail',
     'insert_if',

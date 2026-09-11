@@ -22,7 +22,9 @@ from .program_commands import (
     insert_assignment,
     insert_break,
     insert_call,
+    insert_call_and_if,
     insert_continue,
+    insert_execute_until,
     insert_fail,
     insert_if,
     insert_if_from_call_result,
@@ -72,13 +74,16 @@ from .program_types import (
     ProgramDocument,
     ProjectVariableAssignmentTarget,
     ProjectVariableReferenceValue,
+    ProgramParameter,
     PureOperationValue,
     RecordValue,
     ResultBinding,
     RetryPolicy,
+    UnsetValue,
     ValueNode,
     create_program_document,
     iter_value_children,
+    new_stable_id,
     value_type,
 )
 from .program_validation import iter_statement_tree, iter_statement_values, types_compatible, validate_program_document
@@ -550,6 +555,195 @@ class ProgramServiceV6:
             return payload
 
     @staticmethod
+    def _parameter_usage(
+        repository: ProgramDocumentRepository,
+        function_id: str,
+        parameter: ProgramParameter,
+    ) -> list[dict[str, str]]:
+        """Locate every use which makes deleting a parameter unsafe.
+
+        Parameter identity is split between the callee-local ``symbol_id`` and
+        the caller-facing ``parameter_id``.  Both sides must be checked; using
+        display names here would make a rename accidentally look like a delete.
+        """
+
+        references: list[dict[str, str]] = []
+        owner = repository.load(function_id).document
+        for statement in iter_statement_tree(owner.function.statements):
+            for value in iter_statement_values(statement):
+                if (
+                    getattr(value, 'kind', '') == 'symbol_ref'
+                    and getattr(value, 'symbol_id', '') == parameter.symbol_id
+                ):
+                    references.append({
+                        'kind': 'function_body',
+                        'function_id': function_id,
+                        'statement_id': statement.statement_id,
+                        'field': 'symbol_id',
+                    })
+            target = getattr(statement, 'target', None)
+            if (
+                getattr(target, 'kind', '') == 'local'
+                and not bool(getattr(target, 'declare', True))
+                and getattr(target, 'symbol_id', '') == parameter.symbol_id
+            ):
+                references.append({
+                    'kind': 'function_body',
+                    'function_id': function_id,
+                    'statement_id': statement.statement_id,
+                    'field': 'target.symbol_id',
+                })
+        for document in ProgramServiceV6._documents(repository):
+            if document.function.function_id == function_id:
+                continue
+            for statement in iter_statement_tree(document.function.statements):
+                arguments = None
+                if isinstance(statement, CallStatement) and statement.function_id == function_id:
+                    arguments = statement.arguments
+                elif (
+                    isinstance(statement, ListenStatement)
+                    and statement.handler_function_id == function_id
+                ):
+                    arguments = statement.handler_arguments
+                if arguments is not None and parameter.parameter_id in arguments:
+                    references.append({
+                        'kind': 'caller_argument',
+                        'function_id': document.function.function_id,
+                        'statement_id': statement.statement_id,
+                        'field': f'arguments.{parameter.parameter_id}',
+                    })
+        return references
+
+    def update_signature(
+        self,
+        workspace_id: str,
+        generation: int,
+        function_id: str,
+        *,
+        expected_revision: str,
+        parameters: list[Mapping[str, Any]],
+        return_type: str,
+    ) -> dict[str, Any]:
+        """Update the typed project-function contract through one revision.
+
+        The first delivered slice intentionally refuses destructive signature
+        changes while a parameter is still consumed.  That is safer than
+        silently rewriting callers, and leaves room for a later project-wide
+        migration transaction with a single undo group.
+        """
+
+        workspace = self._workspace(workspace_id, generation, writable=True)
+        repository = ProgramDocumentRepository(workspace.project_path)
+        normalized_return = str(return_type or '').strip()
+        if not normalized_return:
+            raise ProgramCommandRequestError('请选择返回类型')
+        with self._lock:
+            current = repository.load(function_id)
+            if current.revision != expected_revision:
+                raise ProgramConflictError(function_id, expected_revision, current.revision)
+            existing = {
+                parameter.parameter_id: parameter
+                for parameter in current.document.function.parameters
+            }
+            seen_ids: set[str] = set()
+            seen_names: set[str] = set()
+            next_parameters: list[ProgramParameter] = []
+            for index, payload in enumerate(parameters):
+                display_name = str(payload.get('display_name') or '').strip()
+                declared_type = str(payload.get('value_type') or '').strip()
+                if not display_name:
+                    raise ProgramCommandRequestError(f'第 {index + 1} 个参数缺少名称')
+                name_key = display_name.casefold()
+                if name_key in seen_names:
+                    raise ProgramCommandRequestError(f'参数名称重复：{display_name}')
+                seen_names.add(name_key)
+                if not declared_type:
+                    raise ProgramCommandRequestError(f'参数“{display_name}”缺少类型')
+                requested_id = str(payload.get('parameter_id') or '').strip()
+                source = existing.get(requested_id) if requested_id else None
+                if requested_id and source is None:
+                    raise ProgramCommandRequestError(f'参数已经不存在：{requested_id}')
+                parameter_id = source.parameter_id if source else new_stable_id('param')
+                if parameter_id in seen_ids:
+                    raise ProgramCommandRequestError(f'参数重复：{display_name}')
+                seen_ids.add(parameter_id)
+                required = bool(payload.get('required', True))
+                default_payload = payload.get('default_value')
+                default_value = self._typed_value(
+                    default_payload,
+                    f'parameters[{index}].default_value',
+                    optional=True,
+                )
+                if isinstance(default_value, UnsetValue):
+                    raise ProgramCommandRequestError(f'参数“{display_name}”的默认值尚未配置')
+                if default_value is not None and not types_compatible(
+                    value_type(default_value), declared_type,
+                ):
+                    raise ProgramCommandRequestError(
+                        f'参数“{display_name}”默认值为 {value_type(default_value)}，需要 {declared_type}'
+                    )
+                if not required and default_value is None and not declared_type.startswith('optional<'):
+                    raise ProgramCommandRequestError(
+                        f'非必填参数“{display_name}”需要默认值，或使用 optional<T> 类型'
+                    )
+                if source is not None and source.value_type != declared_type:
+                    usage = self._parameter_usage(repository, function_id, source)
+                    if usage:
+                        raise ProgramCommandRequestError(
+                            f'参数“{source.display_name}”仍有 {len(usage)} 处使用，解除引用后才能修改类型'
+                        )
+                next_parameters.append(ProgramParameter(
+                    parameter_id=parameter_id,
+                    symbol_id=source.symbol_id if source else new_stable_id('symbol'),
+                    display_name=display_name,
+                    value_type=declared_type,
+                    required=required,
+                    default_value=default_value,
+                ))
+            removed = [
+                parameter for parameter_id, parameter in existing.items()
+                if parameter_id not in seen_ids
+            ]
+            for parameter in removed:
+                usage = self._parameter_usage(repository, function_id, parameter)
+                if usage:
+                    raise ProgramCommandRequestError(
+                        f'参数“{parameter.display_name}”仍有 {len(usage)} 处使用，解除引用后才能删除'
+                    )
+
+            raw = current.document.model_dump(mode='json')
+            raw['function']['parameters'] = [
+                parameter.model_dump(mode='json') for parameter in next_parameters
+            ]
+            raw['function']['return_type'] = normalized_return
+            try:
+                updated = ProgramDocument.model_validate(raw)
+            except ValidationError as exc:
+                raise ProgramCommandRequestError(f'项目函数契约无效：{exc}') from exc
+            diagnostics = validate_program_document(
+                updated,
+                self._linked_registry(repository, replacement=updated),
+            )
+            if diagnostics:
+                raise ProgramCommandRequestError('; '.join(item.message for item in diagnostics))
+            saved = repository.save(updated, expected_revision=expected_revision)
+            history = self._history.setdefault(
+                (workspace_id, generation, function_id),
+                _DocumentHistory(),
+            )
+            history.undo.append(_HistoryEntry(current.document))
+            del history.undo[:-self._history_limit]
+            history.redo.clear()
+            return self._snapshot_payload(
+                saved,
+                selected_statement_id='',
+                created_ids=[],
+                diagnostics=[],
+                can_undo=True,
+                can_redo=False,
+            )
+
+    @staticmethod
     def _function_references(
         repository: ProgramDocumentRepository,
         function_id: str,
@@ -671,6 +865,25 @@ class ProgramServiceV6:
                     str(command.get('function_id') or ''),
                     location=self._location(command.get('location')),
                     arguments=self._typed_values(command.get('arguments'), 'arguments'),
+                )
+            if kind == 'insert_call_and_if':
+                return insert_call_and_if(
+                    document,
+                    registry,
+                    str(command.get('function_id') or ''),
+                    location=self._location(command.get('location')),
+                    arguments=self._typed_values(command.get('arguments'), 'arguments'),
+                    display_name=command.get('display_name'),
+                )
+            if kind == 'insert_execute_until':
+                return insert_execute_until(
+                    document,
+                    registry,
+                    str(command.get('condition_function_id') or ''),
+                    location=self._location(command.get('location')),
+                    arguments=self._typed_values(command.get('arguments'), 'arguments'),
+                    display_name=command.get('display_name'),
+                    max_attempts=int(command.get('max_attempts', 20)),
                 )
             if kind == 'insert_assignment':
                 return insert_assignment(

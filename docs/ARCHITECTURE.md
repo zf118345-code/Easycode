@@ -265,9 +265,13 @@ Runtime Coordinator
 
 ## 15. 作者效率增强边界
 
+- 中文摘要、行内键盘意图和快捷组合都是 Program Service 命令的临时作者表面。它们可以把“调用并判断”“执行直到”等高频意图一次展开为普通 ProgramDocument 结构，但不保存为源码、宏文本或第二份流程事实；已有文档也不通过文本反向解析。
+- 条件快捷写法只对规范明确的类型开放，并在提交时物化为显式布尔值树。普通函数仍必须成为独立调用语句；结构化失败继续传播，不能借真假转换吞成 `false`。
+- 项目函数参数与返回值属于 ProgramDocument 函数契约，由 Program Service 事务维护稳定参数/符号身份、函数体引用与跨函数调用影响。前端不能直接改函数头 JSON。
 - `OperationRecordingSessionV1` 是编辑器临时状态；只有作者确认时，Program Service 才把草稿转换为一个可撤销的 ProgramDocument 命令。录制器不保存平权宏格式，也不推断条件、循环或扩展私有函数。
 - `ControlSelectorV2` 在一次控件捕获中保存同一控件的主策略与有序后备策略。Runtime 只接受唯一确定候选；歧义停止且不产生输入副作用。重新捕获通过项目事务更新引用。
 - `TriggerDefinitionV1` 是 IDE 项目控制面事实，首期绑定已有项目函数。触发服务只创建普通运行请求，防抖、冷却、并发和权限在创建运行前判定；开发机触发定义不进入 Player 发布包，Player 保持独立签名运行方案和计划控制面。
 - 浏览器 DOM 由第一方签名功能扩展贡献宿主、强类型 `DomSelectorV1`、函数契约和发布模块。它复用普通函数调用和检查器，不进入 HTTP 原子能力，也不修改 ProgramDocument Schema。
 - 新领域扩展先作为普通签名包完成导入、信任、启用、锁定、发布和卸载；提升为官方范围时复用相同 Manifest 与密封产物。
 - 详细需求、失败语义和完成门见 [`vnext/AUTHORING_AUTOMATION.md`](vnext/AUTHORING_AUTOMATION.md)。
+- 高效编排、条件简写、项目函数契约与运行期图片样本见 [`vnext/AUTHORING_LANGUAGE_V1.md`](vnext/AUTHORING_LANGUAGE_V1.md)。

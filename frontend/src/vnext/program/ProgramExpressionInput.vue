@@ -230,6 +230,7 @@ import {
 import {
     expressionSegments,
     expressionText,
+    isConditionShorthandType,
     isInlineExpressionEditable,
     parseExpressionDraft,
     preserveExpressionValueIds,
@@ -323,7 +324,7 @@ function editableText(value: ProgramValueNode): string {
 }
 const helpInstruction = computed(() => {
     if (props.expectedType === 'duration') return '直接填写“500 毫秒”“2 秒”或“1 分钟”；输入 @ 可选择已有持续时间。'
-    if (props.expectedType === 'bool') return '输入 @ 先选择变量或结果；选择结构化结果后输入 . 查看字段。多个条件可使用“且、或、非”。'
+    if (props.expectedType === 'bool') return '输入 @ 可直接选择布尔、结果、数值、文本、列表或字典；它们会保存为明确的“有结果、非零或非空”判断。多个条件可使用“且、或、非”。'
     if (['int64', 'float64', 'percentage'].includes(props.expectedType)) return '直接填写数字；输入 @ 先选择已有值，选择结构化结果后输入 . 查看字段；也可以进行加减或调用数值操作。'
     if (props.expectedType === 'string') return '直接填写文字；输入 @ 先选择变量或结果，选择后输入 . 查看它的字段；输入“文本.”可查找替换、提取等操作。'
     return '直接填写普通值；输入 @ 先选择变量或结果，选择后输入 . 查看它的字段；输入“类型.”查找兼容的纯值操作。'
@@ -332,7 +333,7 @@ const helpExamples = computed(() => {
     const matching = props.availableValues.filter((item) => isProgramTypeCompatible(item.value_type, props.expectedType))
     const token = (item: AvailableProgramValue) => `@${item.display_name}`
     if (props.expectedType === 'bool') {
-        const booleans = props.availableValues.filter((item) => isProgramTypeCompatible(item.value_type, 'bool'))
+        const booleans = props.availableValues.filter((item) => isConditionShorthandType(item.value_type))
         const numbers = props.availableValues.filter((item) => ['int64', 'float64', 'percentage'].includes(item.value_type))
         return [
             '开启',
@@ -614,11 +615,11 @@ const memberHeading = computed(() => {
 })
 const suggestionGroups = computed(() => {
     if (completionExpectedType.value !== 'bool') return [{ label: '可用值', items: filteredValues.value }]
-    const direct = filteredValues.value.filter((item) => isProgramTypeCompatible(item.value_type, 'bool'))
-    const comparable = filteredValues.value.filter((item) => !isProgramTypeCompatible(item.value_type, 'bool'))
+    const direct = filteredValues.value.filter((item) => isConditionShorthandType(item.value_type))
+    const comparable = filteredValues.value.filter((item) => !isConditionShorthandType(item.value_type))
     return [
         ...(direct.length ? [{ label: '可直接判断', items: direct }] : []),
-        ...(comparable.length ? [{ label: '用于比较', items: comparable }] : []),
+        ...(comparable.length ? [{ label: '选择字段或比较', items: comparable }] : []),
     ]
 })
 

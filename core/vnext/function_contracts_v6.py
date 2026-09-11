@@ -419,6 +419,11 @@ _ENUM_CHOICES: dict[str, tuple[dict[str, Any], ...]] = {
         {"label": "PNG（无损）", "value": "png"},
         {"label": "JPEG（体积较小）", "value": "jpeg"},
     ),
+    "enum<image_compare_size_strategy>": (
+        {"label": "尺寸必须一致", "value": "strict"},
+        {"label": "只比较重叠区域", "value": "intersection"},
+        {"label": "将右图缩放到左图", "value": "scale_right_nearest"},
+    ),
     "enum<window_display_state>": (
         {"label": "还原", "value": "restored", "platforms": ["windows"]},
         {"label": "最小化", "value": "minimized", "platforms": ["windows"]},
@@ -818,6 +823,14 @@ _FRAME_SAVE_ERRORS = _VISION_COMMON_ERRORS + _FILE_ERRORS + (
     ErrorContractV6("vision.image_quality_invalid", "permanent", "JPEG 质量不在允许范围"),
     ErrorContractV6("vision.image_encode_failed", "transient", "画面编码失败"),
 )
+_IMAGE_SAMPLE_ERRORS = _VISION_COMMON_ERRORS + (
+    ErrorContractV6("vision.sample_reference_invalid", "permanent", "图片样本引用格式或来源不一致"),
+    ErrorContractV6("vision.sample_reference_expired", "permanent", "图片样本不属于当前运行或已失效"),
+    ErrorContractV6("vision.sample_empty", "permanent", "取样区域与当前画面没有交集"),
+    ErrorContractV6("vision.sample_size_mismatch", "permanent", "两个图片样本尺寸不一致"),
+    ErrorContractV6("vision.compare_strategy_invalid", "permanent", "图片尺寸处理方式不受支持"),
+    ErrorContractV6("vision.pixel_tolerance_invalid", "permanent", "像素变化容差不在 0 到 255 范围"),
+)
 _COLOR_ERRORS = _VISION_COMMON_ERRORS + (
     ErrorContractV6("vision.color_invalid", "permanent", "颜色值或颜色通道无效"),
     ErrorContractV6("vision.color_tolerance_invalid", "permanent", "颜色容差不在 0 到 255 范围"),
@@ -1048,6 +1061,18 @@ def _official_contracts() -> tuple[FunctionContractV6, ...]:
         ], "file_ref<write>", "frame.save", targets=target_types, capabilities=vision_caps,
            permissions=("filesystem",), side_effects=("filesystem_write",), errors=_FRAME_SAVE_ERRORS,
            verified_platforms=("windows", "android_adb")),
+        _f("official.frame.crop_region", "画面", "截取区域", "截取画面{region}作为临时图片", [
+            _p("official.frame.crop_region", "region", "区域", "rect", control="region"),
+            _p("official.frame.crop_region", "frame", "画面", "optional<frame_ref>", required=False, default=None),
+        ], "image_sample", "frame.crop_region", targets=target_types, capabilities=vision_caps,
+           errors=_IMAGE_SAMPLE_ERRORS, verified_platforms=("windows", "android_adb")),
+        _f("official.image.compare", "图像", "比较", "比较{left}与{right}", [
+            _p("official.image.compare", "left", "图片一", "image_sample"),
+            _p("official.image.compare", "right", "图片二", "image_sample"),
+            _p("official.image.compare", "size_strategy", "尺寸处理", "enum<image_compare_size_strategy>", required=False, default="strict", control="select"),
+            _p("official.image.compare", "pixel_tolerance", "像素变化容差", "int64", required=False, default=0, control="number", constraints={"minimum": 0, "maximum": 255}),
+        ], "image_comparison", "vision.compare_samples", targets=target_types, capabilities=vision_caps,
+           errors=_IMAGE_SAMPLE_ERRORS, verified_platforms=("windows", "android_adb")),
         _f("official.color.read", "颜色", "读取", "读取{position}颜色", [
             _p("official.color.read", "position", "位置", "point", control="coordinate"),
             _p("official.color.read", "frame", "画面", "optional<frame_ref>", required=False, default=None),

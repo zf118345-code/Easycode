@@ -730,7 +730,7 @@ def test_android_visual_analysis_clips_regions_but_frame_export_stays_strict() -
         / 'android/app/src/main/java/com/easycode/player/capture/AndroidVisionHost.kt'
     ).read_text(encoding='utf-8')
 
-    assert source.count('clipToFrame = true') == 3
+    assert source.count('clipToFrame = true') == 4
     assert 'private fun region(value: Any?, bitmap: Bitmap, clipToFrame: Boolean = false)' in source
     assert 'if (!clipToFrame)' in source
     assert 'val clippedRight = right.coerceIn(0L, bitmap.width.toLong())' in source

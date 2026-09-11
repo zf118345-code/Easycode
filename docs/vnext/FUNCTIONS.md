@@ -104,6 +104,7 @@ Android 发布只能使用函数契约声明的 Android 驱动实现或已构建
 | `目标.读取状态` | `official.target.read_status` | A | 目标引用 → `TargetInfo` | W/A | `target.registry` |
 | `目标.获取画面` | `official.target.capture_frame` | A | 当前目标 → `FrameReference` | W/A | `frame.read` |
 | `画面.保存` | `official.frame.save` | A | 文件、可选画面、可选裁剪区域、格式、质量 → `FileReference` | W/A | `frame.read`、`filesystem` |
+| `画面.截取区域` | `official.frame.crop_region` | A | 区域、可选画面 → 当前运行内 `ImageSample` | W/A | `frame.read` |
 | `颜色.读取` | `official.color.read` | A | 坐标、可选画面 → `Color` | W/A | `frame.read` |
 | `颜色.查找` | `official.color.find` | A | 颜色、容差、可选区域、可选画面 → `optional<Point>` | W/A | `frame.read` |
 | `应用.启动` | `official.application.start` | A | `ApplicationReference`、参数 → `ApplicationRunReference` | W/A | `application.launch` |
@@ -129,6 +130,7 @@ Android 发布只能使用函数契约声明的 Android 驱动实现或已构建
 | --- | --- | --- | --- | --- | --- |
 | `图像.查找` | `official.image.find` | A | 图片、区域、相似度、可选帧 → `optional<ImageMatch>` | W/A | `frame.read` |
 | `图像.查找全部` | `official.image.find_all` | A | 图片、区域、相似度、上限、可选帧 → `list<ImageMatch>` | W/A | `frame.read` |
+| `图像.比较` | `official.image.compare` | A | 两个当前运行内图片样本、尺寸策略、像素容差 → `ImageComparison` | W/A | `frame.read` |
 | `图像.等待出现` | `official.image.wait_visible` | S | 图片、区域、相似度、超时 → `optional<ImageMatch>` | W/A | `frame.read` |
 | `图像.等待消失` | `official.image.wait_hidden` | S | 图片、区域、相似度、超时 → `bool` | W/A | `frame.read` |
 | `图像.点击一次` | `official.image.click_once` | S | 图片、区域、相似度、点击设置 → `optional<ImageMatch>` | W/A | `frame.read + input.point` |
@@ -178,7 +180,9 @@ Android 发布只能使用函数契约声明的 Android 驱动实现或已构建
 
 视觉/OCR 原子切片已使用固定种子合成帧自动验证 Windows RGB 与 ADB BGR 适配：`图像.查找 / 查找全部` 真实裁剪区域、边缘部分越界自动取交集、完全无交集正常空结果、全量结果去重与上限、普通调用逐次取新帧、显式 `FrameReference` 同像素复用、资源哈希失败和结构化错误均已闭环；`文字.识别` 通过 RapidOCR/ddddocr 统一适配返回固定 `OCRResult/OCRLine`，同帧同实际区域同预处理缓存，空文字或无交集返回空全文/空行而不是异常，用户日志只显示文字与实际区域。Windows Player 规格已显式收集两类 OCR 模型与 ONNX Runtime 动态库，并有静态闭包测试；离线回放已有这三个原子函数的独立纯帧适配器。`exact / contains / regex` 已由标准文字匹配和等待函数使用；无效正则是结构化错误，未命中或到期是正常空结果。
 
-官方 v1 目录的 83 个函数已全部进入 `complete/available`。其中 `窗口.等待出现`、`控件.等待出现/等待消失`、六个图像等待/点击组合、`文字.匹配`、`文字.等待出现` 以及既有 `目标.等待在线` 都具有可由 Compiler 验证和降低的规范 `ProgramDocument`。性能融合路径与规范组合逐项比较返回、原子调用轨迹、正常超时、取消和日志；每次控件、视觉或 OCR 检查都重新读取当前宿主状态，稳定帧计数不复用隐式缓存。图像点击标准函数只组合图像查找与 `输入.点击`，没有第二套隐藏输入语义。
+官方 v1 目录的 85 个函数已全部进入 `complete/available`。其中 `窗口.等待出现`、`控件.等待出现/等待消失`、六个图像等待/点击组合、`文字.匹配`、`文字.等待出现` 以及既有 `目标.等待在线` 都具有可由 Compiler 验证和降低的规范 `ProgramDocument`。性能融合路径与规范组合逐项比较返回、原子调用轨迹、正常超时、取消和日志；每次控件、视觉或 OCR 检查都重新读取当前宿主状态，稳定帧计数不复用隐式缓存。图像点击标准函数只组合图像查找与 `输入.点击`，没有第二套隐藏输入语义。
+
+`画面.截取区域` 把当前帧的指定区域保存为仅在本次运行中有效的 `ImageSample`，不写文件、不进入项目变量或 Player 配置；区域部分越界时按实际画面裁剪，完全无交集返回结构化错误。`图像.比较` 比较两个样本并返回相似度、变化像素比例、比较尺寸和最小变化区域。尺寸不同时必须显式选择“报错 / 只比较重叠区域 / 右图最近邻缩放”，不得静默猜测。运行结束或热目标会话关闭后样本立即失效，防止把像素引用误当成可持久化业务数据。
 
 `时间.今天` 是原子宿主时间能力：默认使用系统时区，也可显式使用 IANA 时区/UTC，日历日由宿主 `tzdb` 处理 DST，无效时区返回结构化错误。`项目.数据目录` 在 IDE 映射到当前项目 `.easycode/data`，在 Player 映射到当前产品的独立私有 `project-data`；两者都不因此自动取得递归删除权限。
 
@@ -272,6 +276,7 @@ Android 发布只能使用函数契约声明的 Android 驱动实现或已构建
 - `[REQ-FUNC-FRAME-001]` 普通视觉调用自动取得调用开始后的当前目标新帧，不能消费上一调用的隐式截图缓存。
 - `[REQ-FUNC-FRAME-002]` 显式 `frame_ref` 可供多个图像/OCR调用复用完全相同的像素，并使所有结果继承来源目标与空间版本。
 - `[REQ-FUNC-FRAME-003]` 可选画面字段可从显式引用清空为“自动获取最新画面”，保存后不得恢复旧引用或阻止运行。
+- `[REQ-FUNC-FRAME-004]` 可从显式或当前帧截取一个运行期 `ImageSample`，并在同一运行内比较两个样本；样本不持久化，尺寸策略显式，比较结果包含相似度、变化比例与变化区域。
 - `[REQ-FUNC-VISION-DIAG-001]` 图像匹配一次分析同时产生命中结果与阈值前最高相似度；预览和运行日志在命中、未命中及到期时显示实际分值与阈值，不增加第二次扫描。
 - `[REQ-FUNC-VISION-REGION-001]` 图像、OCR 与颜色分析使用作者区域和当前帧的交集；部分越界继续分析，完全无交集返回类型对应的正常空结果，格式错误或非正宽高才是 `vision.region_invalid`。正式运行、无副作用预览、离线回放、Windows/ADB 与 Android 本机保持一致；测试返图必须是实际分析区域而不是整帧，并显示实际区域坐标/尺寸与裁剪状态；`画面.保存` 保持严格裁剪。
 - `[REQ-FUNC-VISION-ACTION-001]` “点击位置直到出现/消失”在首次和每次点击前读取当前目标新帧；后置条件已满足时必须零点击返回，未满足时只点击作者指定位置，不偷换成匹配中心。
@@ -286,7 +291,7 @@ Android 发布只能使用函数契约声明的 Android 驱动实现或已构建
 - `[REQ-FUNC-RETRY-001]` 用户程序重试只能通过异常区域可选策略表达；函数目录不存在独立重试函数，普通函数契约不复制通用重试参数。
 - `[REQ-FUNC-DIR-001]` 官方目录函数集合与 `FILES.md` 的七项首版契约一致；普通目录删除不能通过参数、别名或旧名称取得递归删除权限。
 - `[REQ-FUNC-REPLAY-001]` 录制与回放不进入普通函数目录；首版可回放标记仅由官方无外部副作用、输入可完全固定且存在跨平台专用实现的图像/OCR 分析声明使用。
-- `[REQ-FUNC-CATALOG-001]` 官方 v1 注册表必须与第 5 节 83 个稳定 `function_id` 一致；不得缺项、重复 ID、注册同义规范名或出现第 5.7 节禁止命名空间。
+- `[REQ-FUNC-CATALOG-001]` 官方 v1 注册表必须与第 5 节 85 个稳定 `function_id` 一致；不得缺项、重复 ID、注册同义规范名或出现第 5.7 节禁止命名空间。
 - `[REQ-FUNC-CATALOG-002]` 原子/标准实现层级属于锁定契约元数据；标准函数的 ProgramDocument 定义与任何融合实现必须通过返回、异常、超时、取消、日志和调试等价性测试。
 - `[REQ-FUNC-MATRIX-001]` 每个函数分别声明宿主要求和目标能力；Windows/Windows、Windows/ADB、Android 本机和无目标结论由两者交集产生，不能使用单一 Android 布尔值。
 - `[REQ-FUNC-TYPE-001]` `date`、`TargetInfo`、`FrameReference`、`ImageMatch`、`OCRLine` 和 `OCRResult` 按第 5.6 节建立稳定类型/字段契约，并由成员选择器而非字符串键访问。

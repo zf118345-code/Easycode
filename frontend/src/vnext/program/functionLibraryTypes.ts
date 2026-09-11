@@ -19,9 +19,11 @@ export interface ExtensionFunctionLibraryItem {
     parameters?: Array<{ name: string; display_name: string }>
     description?: string
     implementation_state: 'available' | 'planned' | string
+    return_type?: string
 }
 
 export interface FunctionLibrarySelection {
     source: FunctionLibrarySource
     function_id: string
+    intent?: 'call' | 'call_and_if' | 'execute_until'
 }

@@ -72,7 +72,7 @@ _CONSTRAINT_KEYS = frozenset({
     'choices', 'pattern',
 })
 _RUNTIME_ONLY_REFERENCE_PREFIXES = (
-    'frame_ref', 'process_ref', 'window_ref', 'file_ref', 'directory_ref',
+    'frame_ref', 'image_sample', 'process_ref', 'window_ref', 'file_ref', 'directory_ref',
     'received_message', 'message_batch', 'application_run_ref',
 )
 

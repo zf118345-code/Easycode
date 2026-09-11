@@ -74,6 +74,18 @@ def test_project_variable_registry_is_strict_and_rejects_dynamic_defaults() -> N
             ),
         )
 
+    with pytest.raises(ValidationError, match='static typed value'):
+        ProjectVariableDefinition(
+            variable_id='variable_sample',
+            display_name='运行图片样本',
+            value_type='image_sample',
+            default_value=EntityReferenceValue(
+                value_id='value_sample',
+                reference_id='sample_runtime_only',
+                reference_type='image_sample',
+            ),
+        )
+
     with pytest.raises(ValidationError, match='duplicate project-variable name'):
         ProjectVariableRegistry(variables=(
             ProjectVariableDefinition(

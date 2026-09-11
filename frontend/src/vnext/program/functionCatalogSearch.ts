@@ -84,6 +84,57 @@ function normalizedTerms(terms: Array<string | undefined>): string[] {
     return terms.filter((term): term is string => Boolean(term?.trim())).map((term) => term.toLocaleLowerCase('zh-CN'))
 }
 
+function supportsResultCondition(returnType: string | undefined): boolean {
+    return returnType === 'bool' || Boolean(returnType?.startsWith('optional<') && returnType.endsWith('>'))
+}
+
+function addCallAndIfCandidate(
+    candidates: FunctionCatalogCandidate[],
+    candidate: FunctionCatalogCandidate,
+    returnType: string | undefined,
+): void {
+    if (!supportsResultCondition(returnType) || candidate.disabledReason) return
+    candidates.push({
+        ...candidate,
+        key: `${candidate.key}:call-and-if`,
+        selection: { ...candidate.selection, intent: 'call_and_if' },
+        label: `如果${candidate.label}`,
+        sourceLabel: '快捷结构',
+        description: `调用一次并根据${returnType === 'bool' ? '结果是否成立' : '是否有结果'}添加条件`,
+        parts: [semanticPart('如果'), ...candidate.parts],
+        searchTerms: normalizedTerms([
+            ...candidate.searchTerms, `如果${candidate.label}`, `${candidate.label}并判断`, '调用并判断', '有结果',
+        ]),
+    })
+}
+
+function addExecuteUntilCandidate(
+    candidates: FunctionCatalogCandidate[],
+    candidate: FunctionCatalogCandidate,
+    returnType: string | undefined,
+): void {
+    if (!supportsResultCondition(returnType) || candidate.disabledReason) return
+    const visualActionAliases = candidate.selection.function_id === 'official.image.find'
+        ? ['向左拖动直到图片出现', '向右拖动直到图片出现', '滑动直到图像出现', '滚动直到图像出现']
+        : []
+    candidates.push({
+        ...candidate,
+        key: `${candidate.key}:execute-until`,
+        selection: { ...candidate.selection, intent: 'execute_until' },
+        label: `重复操作直到${candidate.label}`,
+        sourceLabel: '快捷结构',
+        description: '先检查条件；未满足时执行你随后加入的动作，最多 20 次，仍未满足则明确报错',
+        parts: [semanticPart('重复操作直到'), ...candidate.parts],
+        searchTerms: normalizedTerms([
+            ...candidate.searchTerms,
+            `重复操作直到${candidate.label}`,
+            `执行直到${candidate.label}`,
+            `${candidate.label}出现前重复`,
+            '执行直到', '重复直到', '直到出现', ...visualActionAliases,
+        ]),
+    })
+}
+
 function matchScore(candidate: FunctionCatalogCandidate, query: string): number | null {
     if (!query) return 0
     const label = candidate.label.toLocaleLowerCase('zh-CN')
@@ -115,7 +166,7 @@ export function buildFunctionCatalog(options: {
         searchTerms: normalizedTerms([item.group, item.label, item.description, ...item.aliases, ...item.parts.map((part) => part.text)]),
     }))
     for (const item of options.projectFunctions || []) {
-        candidates.push({
+        const candidate: FunctionCatalogCandidate = {
             key: `project:${item.function_id}`,
             selection: { source: 'project', function_id: item.function_id },
             label: item.display_name,
@@ -123,16 +174,22 @@ export function buildFunctionCatalog(options: {
             sourceLabel: '项目',
             description: `${item.statement_count} 条语句`,
             parts: [semanticPart(item.display_name)],
-            searchTerms: normalizedTerms([item.display_name]),
+            searchTerms: normalizedTerms([
+                item.display_name, '调用项目函数',
+                ...item.parameters.map((parameter) => parameter.display_name),
+            ]),
             disabledReason: item.function_id === options.activeFunctionId
                 ? '项目函数不能直接调用自身'
                 : item.insert_disabled_reason || (item.insertable === false ? '当前项目函数不可插入' : undefined),
-        })
+        }
+        candidates.push(candidate)
+        addCallAndIfCandidate(candidates, candidate, item.return_type)
+        addExecuteUntilCandidate(candidates, candidate, item.return_type)
     }
     for (const item of options.officialFunctions || []) {
         if (item.implementation_state !== 'available') continue
         const parts = semanticFunctionParts(item)
-        candidates.push({
+        const candidate: FunctionCatalogCandidate = {
             key: `official:${item.function_id}`,
             selection: { source: 'official', function_id: item.function_id },
             label: parts.map((part) => part.text).join(''),
@@ -144,12 +201,15 @@ export function buildFunctionCatalog(options: {
                 item.qualified_name, item.namespace, item.name, item.summary,
                 ...item.parameters.flatMap((parameter) => [parameter.name, parameter.display_name]),
             ]),
-        })
+        }
+        candidates.push(candidate)
+        addCallAndIfCandidate(candidates, candidate, item.return_type)
+        addExecuteUntilCandidate(candidates, candidate, item.return_type)
     }
     for (const item of options.extensionFunctions || []) {
         if (item.implementation_state !== 'available') continue
         const parts = semanticExtensionParts(item)
-        candidates.push({
+        const candidate: FunctionCatalogCandidate = {
             key: `extension:${item.function_id}`,
             selection: { source: 'extension', function_id: item.function_id },
             label: parts.map((part) => part.text).join(''),
@@ -161,7 +221,10 @@ export function buildFunctionCatalog(options: {
                 item.display_name, item.qualified_name, item.namespace, item.summary, item.description,
                 ...(item.parameters?.flatMap((parameter) => [parameter.name, parameter.display_name]) || []),
             ]),
-        })
+        }
+        candidates.push(candidate)
+        addCallAndIfCandidate(candidates, candidate, item.return_type)
+        addExecuteUntilCandidate(candidates, candidate, item.return_type)
     }
     return candidates
 }

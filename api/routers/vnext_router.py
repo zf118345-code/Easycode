@@ -46,6 +46,7 @@ from api.contracts.vnext import (
     ProgramHistoryRestoreRequest,
     ProgramRenameRequest,
     ProgramRevisionRequest,
+    ProgramSignatureUpdateRequest,
     ProgramRunRequest,
     ProgramValueCatalogRequest,
     ProjectVariableCreateRequest,
@@ -576,6 +577,26 @@ def create_vnext_router() -> APIRouter:
                 function_id,
                 expected_revision=payload.expected_revision,
                 display_name=payload.display_name,
+            )
+        except Exception as exc:
+            translate_program(exc)
+
+    @router.put('/programs/{function_id}/signature')
+    async def update_program_signature(
+        function_id: str,
+        payload: ProgramSignatureUpdateRequest,
+        x_workspace_id: str = Header(default='', alias='X-Workspace-ID'),
+        x_workspace_generation: int = Header(default=-1, alias='X-Workspace-Generation'),
+    ):
+        try:
+            return await run_in_threadpool(
+                vnext_workspace_manager.update_program_signature,
+                x_workspace_id,
+                x_workspace_generation,
+                function_id,
+                expected_revision=payload.expected_revision,
+                parameters=[item.model_dump(mode='json') for item in payload.parameters],
+                return_type=payload.return_type,
             )
         except Exception as exc:
             translate_program(exc)

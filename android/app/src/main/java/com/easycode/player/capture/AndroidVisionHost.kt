@@ -39,7 +39,15 @@ class AndroidVisionHost(
             return true
         }
     }
+    private val samples = object : LinkedHashMap<String, Sample>(36, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Sample>?): Boolean {
+            if (size <= 32) return false
+            eldest?.value?.bitmap?.recycle()
+            return true
+        }
+    }
     private var sequence = 0L
+    private var sampleSequence = 0L
     private val ocrRecognizerDelegate = lazy {
         TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
     }
@@ -70,6 +78,8 @@ class AndroidVisionHost(
 
     fun execute(opcode: String, arguments: Map<String, Any?>): Any? = when (opcode) {
         "target.capture_frame" -> captureFrame()
+        "frame.crop_region" -> cropRegion(arguments)
+        "vision.compare_samples" -> compareSamples(arguments)
         "color.read" -> readColor(arguments)
         "color.find" -> findColor(arguments)
         "vision.find" -> find(arguments, "official.image.find", 1).firstOrNull()
@@ -80,6 +90,142 @@ class AndroidVisionHost(
         }
         "text.recognize" -> recognize(arguments)
         else -> throw RuntimeFailure("vision.unsupported", "Android 图像宿主不支持：$opcode")
+    }
+
+    private fun cropRegion(arguments: Map<String, Any?>): Map<String, Any?> {
+        control.checkpoint()
+        val owner = "official.frame.crop_region"
+        val frame = resolveFrame(arguments["$owner.parameter.frame"])
+        val area = region(arguments["$owner.parameter.region"], frame.bitmap, clipToFrame = true)
+        if (area.width == 0 || area.height == 0) {
+            throw RuntimeFailure("vision.sample_empty", "取样区域与当前画面没有交集")
+        }
+        val view = Bitmap.createBitmap(frame.bitmap, area.x, area.y, area.width, area.height)
+        val bitmap = try {
+            view.copy(Bitmap.Config.ARGB_8888, false)
+        } finally {
+            if (view !== frame.bitmap) view.recycle()
+        }
+        val id = "sample.${++sampleSequence}"
+        val reference = mapOf(
+            "kind" to "image_sample",
+            "image_sample.field.sample_id" to id,
+            "image_sample.field.source_frame" to frame.reference.toMap(),
+            "image_sample.field.source_target" to frame.reference["frame_ref.field.source_target"],
+            "image_sample.field.space_version" to frame.reference["frame_ref.field.space_version"],
+            "image_sample.field.region" to mapOf(
+                "kind" to "rect", "x" to area.x, "y" to area.y,
+                "width" to area.width, "height" to area.height,
+            ),
+            "image_sample.field.width" to area.width,
+            "image_sample.field.height" to area.height,
+        )
+        samples[id] = Sample(bitmap, reference)
+        return reference.toMap()
+    }
+
+    private fun resolveSample(value: Any?): Sample {
+        val supplied = value as? Map<*, *>
+            ?: throw RuntimeFailure("vision.sample_reference_invalid", "图片样本引用格式无效")
+        if (supplied["kind"] != "image_sample") {
+            throw RuntimeFailure("vision.sample_reference_invalid", "图片样本引用格式无效")
+        }
+        val id = supplied["image_sample.field.sample_id"]?.toString().orEmpty()
+        val stored = samples[id]
+            ?: throw RuntimeFailure("vision.sample_reference_expired", "图片样本已失效")
+        if (stored.reference != supplied) {
+            throw RuntimeFailure("vision.sample_reference_invalid", "图片样本元数据已被修改")
+        }
+        return stored
+    }
+
+    private fun compareSamples(arguments: Map<String, Any?>): Map<String, Any?> {
+        control.checkpoint()
+        val owner = "official.image.compare"
+        val left = resolveSample(arguments["$owner.parameter.left"])
+        val right = resolveSample(arguments["$owner.parameter.right"])
+        val strategy = arguments["$owner.parameter.size_strategy"]?.toString() ?: "strict"
+        val tolerance = integral(
+            arguments["$owner.parameter.pixel_tolerance"] ?: 0,
+            "vision.pixel_tolerance_invalid",
+            "像素变化容差",
+        )
+        if (tolerance !in 0..255) {
+            throw RuntimeFailure("vision.pixel_tolerance_invalid", "像素变化容差必须是 0 到 255 的整数")
+        }
+        val sameSize = left.bitmap.width == right.bitmap.width && left.bitmap.height == right.bitmap.height
+        val width: Int
+        val height: Int
+        val rightBitmap: Bitmap
+        var recycleRight = false
+        when (strategy) {
+            "strict" -> {
+                if (!sameSize) throw RuntimeFailure("vision.sample_size_mismatch", "两个图片样本尺寸不一致")
+                width = left.bitmap.width
+                height = left.bitmap.height
+                rightBitmap = right.bitmap
+            }
+            "intersection" -> {
+                width = min(left.bitmap.width, right.bitmap.width)
+                height = min(left.bitmap.height, right.bitmap.height)
+                rightBitmap = right.bitmap
+            }
+            "scale_right_nearest" -> {
+                width = left.bitmap.width
+                height = left.bitmap.height
+                rightBitmap = Bitmap.createScaledBitmap(right.bitmap, width, height, false)
+                recycleRight = rightBitmap !== right.bitmap
+            }
+            else -> throw RuntimeFailure("vision.compare_strategy_invalid", "图片尺寸处理方式不受支持")
+        }
+        try {
+            val leftPixels = IntArray(width * height)
+            val rightPixels = IntArray(width * height)
+            left.bitmap.getPixels(leftPixels, 0, width, 0, 0, width, height)
+            rightBitmap.getPixels(rightPixels, 0, width, 0, 0, width, height)
+            var totalDifference = 0L
+            var changedCount = 0L
+            var minX = width
+            var minY = height
+            var maxX = -1
+            var maxY = -1
+            for (index in leftPixels.indices) {
+                if (index % max(1, width * 64) == 0) control.checkpoint()
+                val a = leftPixels[index]
+                val b = rightPixels[index]
+                val red = kotlin.math.abs(Color.red(a) - Color.red(b))
+                val green = kotlin.math.abs(Color.green(a) - Color.green(b))
+                val blue = kotlin.math.abs(Color.blue(a) - Color.blue(b))
+                totalDifference += red + green + blue
+                if (max(red, max(green, blue)) > tolerance) {
+                    changedCount++
+                    val x = index % width
+                    val y = index / width
+                    minX = min(minX, x)
+                    minY = min(minY, y)
+                    maxX = max(maxX, x)
+                    maxY = max(maxY, y)
+                }
+            }
+            val pixelCount = width.toLong() * height.toLong()
+            val similarity = (1.0 - totalDifference.toDouble() / (255.0 * 3.0 * pixelCount)).coerceIn(0.0, 1.0)
+            val differenceRegion = if (changedCount == 0L) null else mapOf(
+                "kind" to "rect", "x" to minX, "y" to minY,
+                "width" to maxX - minX + 1, "height" to maxY - minY + 1,
+            )
+            return mapOf(
+                "image_comparison.field.similarity" to similarity,
+                "image_comparison.field.same_size" to sameSize,
+                "image_comparison.field.compared_width" to width,
+                "image_comparison.field.compared_height" to height,
+                "image_comparison.field.changed_pixel_ratio" to changedCount.toDouble() / pixelCount,
+                "image_comparison.field.difference_region" to differenceRegion,
+                "image_comparison.field.left" to left.reference.toMap(),
+                "image_comparison.field.right" to right.reference.toMap(),
+            )
+        } finally {
+            if (recycleRight) rightBitmap.recycle()
+        }
     }
 
     internal fun saveFrame(arguments: Map<String, Any?>, files: SafFileRuntime): Map<String, Any?> {
@@ -544,11 +690,14 @@ class AndroidVisionHost(
     override fun close() {
         frames.values.forEach { it.bitmap.recycle() }
         frames.clear()
+        samples.values.forEach { it.bitmap.recycle() }
+        samples.clear()
         ocrCache.clear()
         if (ocrRecognizerDelegate.isInitialized()) ocrRecognizer.close()
     }
 
     private data class Frame(val bitmap: Bitmap, val reference: Map<String, Any?>)
+    private data class Sample(val bitmap: Bitmap, val reference: Map<String, Any?>)
     private data class Region(val x: Int, val y: Int, val width: Int, val height: Int)
     private data class OcrPreprocess(
         val grayscale: Boolean = false,

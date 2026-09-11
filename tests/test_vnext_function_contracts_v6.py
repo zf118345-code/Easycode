@@ -38,7 +38,7 @@ def test_approved_function_catalog_and_runtime_registry_have_exact_stable_id_par
         for item in official_function_registry_v6.complete_catalog()
     }
 
-    assert len(approved) == 83
+    assert len(approved) == 85
     assert implemented == approved
 
 
@@ -52,6 +52,23 @@ def test_complete_v1_contract_catalog_is_stable_unique_and_scope_correct() -> No
     assert not any(item['namespace'] == '页面' for item in catalog)
     assert not any(item['namespace'] in {'存储', '租约'} for item in catalog)
     assert not any(item['qualified_name'] in {'图像.存在', '控件.存在', '输入.长按'} for item in catalog)
+
+
+def test_runtime_image_samples_are_typed_reference_only_and_discoverable() -> None:
+    sample = record_type_contract('image_sample')
+    comparison = record_type_contract('image_comparison')
+    crop = official_function_registry_v6.require('official.frame.crop_region')
+    compare = official_function_registry_v6.require('official.image.compare')
+
+    assert sample is not None and sample.authoring_mode == 'reference_only'
+    assert comparison is not None and comparison.authoring_mode == 'reference_only'
+    assert crop.return_type == 'image_sample'
+    assert compare.return_type == 'image_comparison'
+    size_strategy = next(
+        item for item in compare.parameters
+        if item.parameter_id == 'official.image.compare.parameter.size_strategy'
+    )
+    assert size_strategy.default == 'strict'
 
 
 def test_statement_summaries_are_typed_and_reference_only_declared_parameters() -> None:

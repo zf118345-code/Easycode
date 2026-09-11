@@ -568,6 +568,55 @@ describe('format-6 program Pinia store', () => {
         )
     })
 
+    it('inserts a callable result guard as one server-side edit', async () => {
+        apiMocks.listAvailableFunctions.mockResolvedValueOnce([{
+            ...contract(),
+            function_id: 'official.file.exists',
+            return_type: 'bool',
+        }])
+        const store = useProgramStore()
+        await store.connect(workspace)
+        apiMocks.applyCommand.mockResolvedValueOnce({ ...snapshot(), revision: `sha256:${'c'.repeat(64)}` })
+
+        await store.insertFunctionAndIf('official.file.exists')
+
+        expect(apiMocks.applyCommand).toHaveBeenCalledWith(
+            workspace,
+            'func-main',
+            `sha256:${'a'.repeat(64)}`,
+            {
+                kind: 'insert_call_and_if',
+                function_id: 'official.file.exists',
+                location: { parent_statement_id: null, block: 'root', before_statement_id: null },
+            },
+        )
+    })
+
+    it('inserts execute-until as one bounded structural transaction', async () => {
+        apiMocks.listAvailableFunctions.mockResolvedValueOnce([{
+            ...contract(),
+            function_id: 'official.image.find',
+            return_type: 'optional<image_match>',
+        }])
+        const store = useProgramStore()
+        await store.connect(workspace)
+        apiMocks.applyCommand.mockResolvedValueOnce({ ...snapshot(), revision: `sha256:${'d'.repeat(64)}` })
+
+        await store.insertExecuteUntil('official.image.find')
+
+        expect(apiMocks.applyCommand).toHaveBeenCalledWith(
+            workspace,
+            'func-main',
+            `sha256:${'a'.repeat(64)}`,
+            {
+                kind: 'insert_execute_until',
+                condition_function_id: 'official.image.find',
+                max_attempts: 20,
+                location: { parent_statement_id: null, block: 'root', before_statement_id: null },
+            },
+        )
+    })
+
     it('copies without mutating and pastes a structural snapshot after the current anchor', async () => {
         const original = twoWaitSnapshot()
         apiMocks.getProgram.mockResolvedValueOnce(original)

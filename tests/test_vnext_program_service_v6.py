@@ -119,6 +119,105 @@ def test_program_service_rejects_unknown_command_kind(tmp_path) -> None:
         )
 
 
+def test_program_service_updates_project_function_signature_with_stable_ids(tmp_path) -> None:
+    service, workspace, initial = _service(tmp_path)
+
+    configured = service.update_signature(
+        workspace.workspace_id,
+        workspace.generation,
+        'function_main',
+        expected_revision=initial.revision,
+        parameters=[{
+            'display_name': '最大战斗次数',
+            'value_type': 'int64',
+            'required': True,
+            'default_value': None,
+        }],
+        return_type='bool',
+    )
+    parameter = configured['document']['function']['parameters'][0]
+    assert parameter['display_name'] == '最大战斗次数'
+    assert parameter['parameter_id'].startswith('param_')
+    assert parameter['symbol_id'].startswith('symbol_')
+    assert configured['document']['function']['return_type'] == 'bool'
+
+    renamed = service.update_signature(
+        workspace.workspace_id,
+        workspace.generation,
+        'function_main',
+        expected_revision=configured['revision'],
+        parameters=[{
+            'parameter_id': parameter['parameter_id'],
+            'display_name': '最多战斗次数',
+            'value_type': 'int64',
+            'required': True,
+            'default_value': None,
+        }],
+        return_type='bool',
+    )
+    updated = renamed['document']['function']['parameters'][0]
+    assert updated['parameter_id'] == parameter['parameter_id']
+    assert updated['symbol_id'] == parameter['symbol_id']
+    summary = next(item for item in service.list_documents(
+        workspace.workspace_id, workspace.generation,
+    ) if item['function_id'] == 'function_main')
+    assert summary['parameters'][0]['display_name'] == '最多战斗次数'
+    assert summary['return_type'] == 'bool'
+
+    undone = service.undo(
+        workspace.workspace_id,
+        workspace.generation,
+        'function_main',
+        renamed['revision'],
+    )
+    assert undone['document']['function']['parameters'][0]['display_name'] == '最大战斗次数'
+
+
+def test_program_service_refuses_to_delete_a_consumed_function_parameter(tmp_path) -> None:
+    service, workspace, initial = _service(tmp_path)
+    configured = service.update_signature(
+        workspace.workspace_id,
+        workspace.generation,
+        'function_main',
+        expected_revision=initial.revision,
+        parameters=[{
+            'display_name': '最大战斗次数',
+            'value_type': 'int64',
+            'required': True,
+            'default_value': None,
+        }],
+        return_type='null',
+    )
+    parameter = configured['document']['function']['parameters'][0]
+    used = service.apply_command(
+        workspace.workspace_id,
+        workspace.generation,
+        'function_main',
+        configured['revision'],
+        {
+            'kind': 'insert_assignment',
+            'target': {
+                'kind': 'local', 'symbol_id': 'symbol_copy',
+                'display_name': '次数副本', 'value_type': 'int64', 'declare': True,
+            },
+            'value': {
+                'value_id': 'value_parameter', 'kind': 'symbol_ref',
+                'symbol_id': parameter['symbol_id'], 'value_type': 'int64',
+            },
+        },
+    )
+
+    with pytest.raises(ProgramCommandRequestError, match='解除引用后才能删除'):
+        service.update_signature(
+            workspace.workspace_id,
+            workspace.generation,
+            'function_main',
+            expected_revision=used['revision'],
+            parameters=[],
+            return_type='null',
+        )
+
+
 def test_program_service_extract_is_undoable_across_both_documents(tmp_path) -> None:
     service, workspace, initial = _service(tmp_path)
     inserted = service.apply_command(

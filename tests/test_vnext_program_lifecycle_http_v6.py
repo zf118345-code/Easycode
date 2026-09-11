@@ -79,6 +79,33 @@ def test_program_history_can_restore_without_losing_the_current_version(tmp_path
     assert any(item['display_name'] == '第二版主程序' for item in history_after['items'])
 
 
+def test_program_signature_endpoint_persists_parameters_and_return_type(tmp_path: Path) -> None:
+    client, opened, headers = _open(tmp_path)
+    function_id = opened['inspection']['entry_function_id']
+    revision = opened['programs'][0]['revision']
+
+    response = client.put(
+        f'/api/vnext/programs/{function_id}/signature',
+        headers=headers,
+        json={
+            'expected_revision': revision,
+            'parameters': [{
+                'display_name': '最大战斗次数',
+                'value_type': 'int64',
+                'required': False,
+                'default_value': {'value_id': 'value-default-max-battles', 'kind': 'int64', 'value': 20},
+            }],
+            'return_type': 'bool',
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload['document']['function']['return_type'] == 'bool'
+    assert payload['document']['function']['parameters'][0]['display_name'] == '最大战斗次数'
+    assert payload['document']['function']['parameters'][0]['default_value']['value'] == 20
+
+
 def test_damaged_program_enters_explicit_preopen_recovery_instead_of_auto_repair(tmp_path: Path) -> None:
     client, opened, headers = _open(tmp_path)
     project_path = tmp_path / 'program-lifecycle'

@@ -9,6 +9,7 @@ import type {
     ProgramRunRequest,
     ProgramRunResponse,
     ProgramServerCommand,
+    ProgramSignatureParameterInput,
     ProgramSnapshotDto,
     ProgramSummaryDto,
     ProgramValueCatalogDto,
@@ -278,6 +279,24 @@ export const programApi = {
             method: 'PATCH',
             headers: workspaceHeaders(workspace),
             body: JSON.stringify({ expected_revision: expectedRevision, display_name: displayName }),
+        })
+    },
+
+    updateProgramSignature(
+        workspace: WorkspaceIdentity,
+        functionId: string,
+        expectedRevision: string,
+        parameters: ProgramSignatureParameterInput[],
+        returnType: string,
+    ): Promise<ProgramSnapshotDto> {
+        return request(`/api/vnext/programs/${encodeURIComponent(functionId)}/signature`, {
+            method: 'PUT',
+            headers: workspaceHeaders(workspace),
+            body: JSON.stringify({
+                expected_revision: expectedRevision,
+                parameters,
+                return_type: returnType,
+            }),
         })
     },
 

@@ -10,6 +10,9 @@ const values: AvailableProgramValue[] = [
     { source: 'project', id: 'variable_levels', display_name: '副本等级', value_type: 'list<int64>' },
     { source: 'local', id: 'symbol_click_point', display_name: '登录按钮中心', value_type: 'point' },
     { source: 'local', id: 'symbol_read_file', display_name: '账号文件', value_type: 'file_ref<read>' },
+    { source: 'local', id: 'symbol_optional_match', display_name: '出战匹配', value_type: 'optional<image_match>' },
+    { source: 'local', id: 'symbol_status', display_name: '状态文字', value_type: 'string' },
+    { source: 'local', id: 'symbol_task_map', display_name: '任务配置', value_type: 'map<string,bool>' },
 ]
 
 describe('inline expression field selection', () => {
@@ -85,6 +88,35 @@ describe('structured expression composer', () => {
         if (!result.value) throw new Error('expected value')
         expect(JSON.stringify(result.value)).not.toContain('大于等于')
         expect(expressionSegments(result.value).map((item) => item.text).join(' ')).toContain('当前体力')
+    })
+
+    it('normalizes safe condition shorthand to explicit typed boolean trees', () => {
+        expect(parseExpressionDraft('@出战匹配', 'bool', 'condition_optional', values).value).toMatchObject({
+            value_id: 'condition_optional', kind: 'computed', value_type: 'bool', operation_id: 'core.optional_has_value.v1',
+            inputs: { 'core.optional_has_value.v1.input.value': { kind: 'symbol_ref', symbol_id: 'symbol_optional_match' } },
+        })
+        expect(parseExpressionDraft('@当前体力', 'bool', 'condition_number', values).value).toMatchObject({
+            value_id: 'condition_number', kind: 'compare', operator: 'ne', right: { kind: 'literal', value: 0 },
+        })
+        expect(parseExpressionDraft('@状态文字', 'bool', 'condition_text', values).value).toMatchObject({
+            value_id: 'condition_text', kind: 'compare', operator: 'ne', right: { kind: 'literal', value: '' },
+        })
+        expect(parseExpressionDraft('@副本等级', 'bool', 'condition_list', values).value).toMatchObject({
+            value_id: 'condition_list', kind: 'not', condition: { kind: 'computed', operation_id: 'core.list_is_empty.v1' },
+        })
+        expect(parseExpressionDraft('@任务配置', 'bool', 'condition_map', values).value).toMatchObject({
+            value_id: 'condition_map', kind: 'not',
+            condition: {
+                kind: 'computed', operation_id: 'core.list_is_empty.v1',
+                inputs: { 'core.list_is_empty.v1.input.list': { kind: 'computed', operation_id: 'core.map_keys.v1' } },
+            },
+        })
+    })
+
+    it('does not guess truthiness for coordinates or other reference objects', () => {
+        const result = parseExpressionDraft('@登录按钮中心', 'bool', 'condition_point', values)
+        expect(result.value).toBeNull()
+        expect(result.error).toContain('没有默认的条件含义')
     })
 
     it.each([

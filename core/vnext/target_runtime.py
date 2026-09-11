@@ -40,8 +40,10 @@ class TargetDriver:
         self._ocr_frame_cache: dict[str, Any] = {}
         self._ocr_analysis_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
         self._frame_references: dict[str, Any] = {}
+        self._image_samples: dict[str, dict[str, Any]] = {}
         self._prepared_asset_cache: dict[str, tuple[str, Any]] = {}
         self._frame_sequence = 0
+        self._image_sample_sequence = 0
         self._last_image_match_diagnostic: dict[str, Any] = {}
 
     def _load_assets(self) -> dict[str, dict[str, Any]]:
@@ -73,7 +75,8 @@ class TargetDriver:
     @staticmethod
     def supports(opcode: str) -> bool:
         return opcode in {
-            'target.capture_frame', 'frame.save', 'color.read', 'color.find',
+            'target.capture_frame', 'frame.save', 'frame.crop_region',
+            'vision.compare_samples', 'color.read', 'color.find',
             'vision.find', 'vision.find_all', 'input.click', 'input.drag',
             'input.text', 'input.scroll', 'input.key', 'text.recognize',
         }
@@ -165,6 +168,10 @@ class TargetDriver:
             return self._capture_frame_reference()
         if opcode == 'frame.save':
             return self._execute_frame_save(arguments, cancelled)
+        if opcode == 'frame.crop_region':
+            return self._execute_frame_crop_region(arguments)
+        if opcode == 'vision.compare_samples':
+            return self._execute_image_compare(arguments, cancelled)
         if opcode == 'color.read':
             return self._execute_color_read(arguments)
         if opcode == 'color.find':
@@ -329,6 +336,136 @@ class TargetDriver:
             arguments.get(f'{owner}.parameter.file'), content, cancelled,
         )
         self._set_message(f'已保存{image.size[0]}×{image.size[1]} {image_format.upper()} 画面')
+        return result
+
+    def _execute_frame_crop_region(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Keep a clipped region as an in-memory image for the current run."""
+
+        owner = 'official.frame.crop_region'
+        frame, frame_reference, _ = self._frame_for_v6_call(arguments, owner)
+        try:
+            region = self._v6_rect(arguments.get(f'{owner}.parameter.region'))
+        except RuntimeFailure as exc:
+            raise RuntimeFailure(str(exc), error_id='vision.region_invalid') from exc
+        if region is None:
+            raise RuntimeFailure('截取区域不能为空', error_id='vision.region_invalid')
+        cropped, offset_x, offset_y, crop_meta = self._analysis_crop(frame, region)
+        if cropped is None:
+            raise RuntimeFailure('取样区域与当前画面没有交集', error_id='vision.sample_empty')
+        pixels = frame_to_bgr(cropped, frame_is_bgr=self.frame_is_bgr).copy()
+        height, width = (int(item) for item in pixels.shape[:2])
+        self._image_sample_sequence += 1
+        sample_id = f'sample.{self._image_sample_sequence}'
+        reference = {
+            'kind': 'image_sample',
+            'image_sample.field.sample_id': sample_id,
+            'image_sample.field.source_frame': frame_reference,
+            'image_sample.field.source_target': frame_reference.get('frame_ref.field.source_target'),
+            'image_sample.field.space_version': frame_reference.get('frame_ref.field.space_version'),
+            'image_sample.field.region': {
+                'kind': 'rect', 'x': offset_x, 'y': offset_y,
+                'width': width, 'height': height,
+            },
+            'image_sample.field.width': width,
+            'image_sample.field.height': height,
+        }
+        self._image_samples[sample_id] = {'pixels': pixels, 'reference': reference}
+        while len(self._image_samples) > 32:
+            self._image_samples.pop(next(iter(self._image_samples)))
+        clip_note = '（已按当前画面裁剪）' if crop_meta.get('region_clipped') else ''
+        self._set_message(f'已截取 {width}×{height} 画面区域{clip_note}')
+        return deepcopy(reference)
+
+    def _resolve_image_sample(self, value: Any) -> tuple[Any, dict[str, Any]]:
+        if not isinstance(value, dict) or value.get('kind') != 'image_sample':
+            raise RuntimeFailure('图片样本引用格式无效', error_id='vision.sample_reference_invalid')
+        sample_id = str(value.get('image_sample.field.sample_id') or '')
+        if not sample_id:
+            raise RuntimeFailure('图片样本缺少样本 ID', error_id='vision.sample_reference_invalid')
+        stored = self._image_samples.get(sample_id)
+        if not isinstance(stored, dict):
+            raise RuntimeFailure('图片样本已失效', error_id='vision.sample_reference_expired')
+        canonical = stored.get('reference')
+        if not isinstance(canonical, dict) or canonical != value:
+            raise RuntimeFailure('图片样本元数据与当前运行不一致', error_id='vision.sample_reference_invalid')
+        source_target = canonical.get('image_sample.field.source_target')
+        source_target_id = str(source_target.get('target_id') or '') if isinstance(source_target, dict) else ''
+        if source_target_id != str(self.target.get('target_id') or ''):
+            raise RuntimeFailure('图片样本来自其他操作目标', error_id='vision.sample_reference_invalid')
+        return stored['pixels'], deepcopy(canonical)
+
+    def _execute_image_compare(
+        self,
+        arguments: dict[str, Any],
+        cancelled: Callable[[], bool],
+    ) -> dict[str, Any]:
+        import cv2
+        import numpy as np
+
+        owner = 'official.image.compare'
+        left_pixels, left_reference = self._resolve_image_sample(
+            arguments.get(f'{owner}.parameter.left')
+        )
+        right_pixels, right_reference = self._resolve_image_sample(
+            arguments.get(f'{owner}.parameter.right')
+        )
+        strategy = str(arguments.get(f'{owner}.parameter.size_strategy') or 'strict')
+        tolerance = arguments.get(f'{owner}.parameter.pixel_tolerance', 0)
+        if isinstance(tolerance, bool) or not isinstance(tolerance, int) or not 0 <= tolerance <= 255:
+            raise RuntimeFailure('像素变化容差必须是 0 到 255 的整数', error_id='vision.pixel_tolerance_invalid')
+        if cancelled():
+            raise RuntimeFailure('图片比较已取消', error_id='runtime.cancelled')
+
+        left_height, left_width = (int(item) for item in left_pixels.shape[:2])
+        right_height, right_width = (int(item) for item in right_pixels.shape[:2])
+        same_size = left_width == right_width and left_height == right_height
+        if strategy == 'strict':
+            if not same_size:
+                raise RuntimeFailure('两个图片样本尺寸不一致', error_id='vision.sample_size_mismatch')
+            left_compared, right_compared = left_pixels, right_pixels
+        elif strategy == 'intersection':
+            width, height = min(left_width, right_width), min(left_height, right_height)
+            left_compared = left_pixels[:height, :width]
+            right_compared = right_pixels[:height, :width]
+        elif strategy == 'scale_right_nearest':
+            left_compared = left_pixels
+            right_compared = cv2.resize(
+                right_pixels, (left_width, left_height), interpolation=cv2.INTER_NEAREST,
+            )
+        else:
+            raise RuntimeFailure('图片尺寸处理方式不受支持', error_id='vision.compare_strategy_invalid')
+
+        height, width = (int(item) for item in left_compared.shape[:2])
+        difference = np.abs(
+            left_compared[:, :, :3].astype(np.int16) - right_compared[:, :, :3].astype(np.int16)
+        )
+        similarity = max(0.0, min(1.0, 1.0 - float(difference.mean()) / 255.0))
+        changed = np.max(difference, axis=2) > tolerance
+        changed_ratio = float(changed.mean())
+        difference_region = None
+        positions = np.argwhere(changed)
+        if positions.size:
+            top, left = (int(item) for item in positions.min(axis=0))
+            bottom, right = (int(item) for item in positions.max(axis=0))
+            difference_region = {
+                'kind': 'rect', 'x': left, 'y': top,
+                'width': right - left + 1, 'height': bottom - top + 1,
+            }
+        if cancelled():
+            raise RuntimeFailure('图片比较已取消', error_id='runtime.cancelled')
+        result = {
+            'image_comparison.field.similarity': similarity,
+            'image_comparison.field.same_size': same_size,
+            'image_comparison.field.compared_width': width,
+            'image_comparison.field.compared_height': height,
+            'image_comparison.field.changed_pixel_ratio': changed_ratio,
+            'image_comparison.field.difference_region': difference_region,
+            'image_comparison.field.left': left_reference,
+            'image_comparison.field.right': right_reference,
+        }
+        self._set_message(
+            f'图像.比较：相似度 {similarity:.3f}，变化像素 {changed_ratio:.3f}'
+        )
         return result
 
     @staticmethod
@@ -1066,6 +1203,7 @@ class TargetDriver:
 
     def close(self) -> None:
         self._frame_references.clear()
+        getattr(self, '_image_samples', {}).clear()
         self._ocr_analysis_cache.clear()
         self._prepared_asset_cache.clear()
         return None

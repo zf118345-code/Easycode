@@ -552,6 +552,26 @@ class VNextWorkspaceManager:
                 display_name=display_name,
             )
 
+    def update_program_signature(
+        self,
+        workspace_id: str,
+        generation: int,
+        function_id: str,
+        *,
+        expected_revision: str,
+        parameters: list[dict[str, Any]],
+        return_type: str,
+    ) -> dict[str, Any]:
+        with self._lock:
+            return self._programs.update_signature(
+                workspace_id,
+                generation,
+                function_id,
+                expected_revision=expected_revision,
+                parameters=parameters,
+                return_type=return_type,
+            )
+
     def delete_program(
         self,
         workspace_id: str,
